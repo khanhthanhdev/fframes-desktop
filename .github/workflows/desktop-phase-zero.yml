@@ -5,12 +5,27 @@ on:
     paths:
       - "desktop/**"
       - "fframes-studio-*/**"
+      - "fframes/**"
+      - "fframes-media/**"
+      - "svgr-macro/**"
+      - "media-dir-macro/**"
+      - "webvtt-parser/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
       - ".github/workflows/desktop-phase-zero.yml"
   push:
     branches: [main]
     paths:
       - "desktop/**"
       - "fframes-studio-*/**"
+      - "fframes/**"
+      - "fframes-media/**"
+      - "svgr-macro/**"
+      - "media-dir-macro/**"
+      - "webvtt-parser/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/desktop-phase-zero.yml"
   workflow_dispatch:
 
 permissions:
@@ -41,9 +56,10 @@ jobs:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
       CARGO_PROFILE_TEST_DEBUG: "0"
-      CARGO_TARGET_DIR: ${{ runner.temp }}/studio-native
     steps:
       - uses: actions/checkout@v4
+      - name: Set native build directory
+        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/studio-native" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
