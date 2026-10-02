@@ -12,6 +12,28 @@ Read the documents in this order:
 2. [Product and technical architecture](architecture.md): user workflow, process boundaries, project format, selection-to-code retrieval, style presets, preview and recovery.
 3. [Implementation plan](implementation-plan.md): ordered milestones, concrete work items, acceptance criteria, release matrix and unresolved decisions.
 
+## Run the implemented foundation
+
+The [M1 foundation](../../plans/261002-0434-desktop-phase-one-foundation/plan.md) provides a native project workspace, create/open/import, copied assets, SDK setup/status, recent projects, saved checkpoints and interrupted-job recovery. Preview/playback, compiled timeline, agent editing and presets are not connected in the product shell yet; their regions show explicit empty states.
+
+```sh
+cargo run --locked --manifest-path desktop/Cargo.toml -p fframes-studio
+# Existing Phase 0 development/qualification view:
+cargo run --locked --manifest-path desktop/Cargo.toml -p fframes-studio -- spike-ui
+```
+
+Create chooses a new folder. Import Rust selects the package's `Cargo.toml` (not a virtual workspace root), preserves existing files/instructions/Git and adds only `studio.json`. Missing worker bridges remain navigable. Managed builds support contained workspace dependencies; external paths, symlinks, inherited Cargo configuration and Cargo overrides need explicit compatibility repair rather than hidden rewrites. Exact portable dependency versions must be available for standalone Cargo; Studio's isolated SDK-bound build does not require publishing development versions.
+
+Source and copied assets travel with the folder; local history does not. App data is `${XDG_DATA_HOME:-~/.local/share}/fframes-studio` on Linux, `~/Library/Application Support/fframes-studio` on macOS and `%LOCALAPPDATA%/fframes-studio` on Windows. It contains SQLite metadata, durable per-project journals, immutable checkpoint objects, retained drafts and build copies. A checkpoint saves bytes, not proof of a successful build. Recovery never replaces current source. **Restore as copy** exports a separately identified folder; Remove recent removes only list metadata. Locate reconnects a moved, unchanged project; duplicate IDs or changed relocated content require an explicit independent-copy choice.
+
+If source becomes invalid while open, Studio interrupts obsolete work and preserves the saved checkpoint and draft. **Restore as copy** exports the checkpoint selected when its picker opened; it does not require a successful current-source scan. Repair source before checkpointing or running other source-sensitive operations. Reopening still requires readable, compatible `studio.json` metadata to identify the project safely.
+
+Checkpoint inventories now record an explicit format version. Both earlier unversioned formats remain readable without rewriting history. The oldest format never recorded executable permissions: its exports restore file bytes without inventing executable bits. Relinking to that format requires non-executable current files; otherwise use an independent copy and explicitly repair script permissions.
+
+SDK setup reuses the [Phase 0 local bundle procedure](phase-zero-feasibility.md); `FFRAMES_SDK_BUNDLE` selects an assembled bundle. Opening a project never installs an SDK or runs Cargo. Filesystem and setup work run in the background. Tab/Shift-Tab navigate commands; Enter/Space activate them.
+
+Linux X11 software-rendered native flows and real SDK worker regressions were exercised. Physical GPU/display/IME, Windows/macOS interactive behavior and authenticated configurable ACP adapters remain unqualified. This is local development evidence, not release certification.
+
 ## Proposed experience
 
 The user installs Studio, connects a coding agent, chooses a style preset, and writes “Make a 30-second announcement for this product.” Studio creates a normal Rust video project and passes the brief, assets, selected style and fframes guidance to the agent. Once the result compiles and passes basic inspection, the preview and timeline update.
@@ -64,4 +86,4 @@ Three short experiments should precede a broad editor implementation:
 
 The source-selection experiment follows immediately: assign stable IDs to a small scene and prove that selecting an object retrieves the exact source region that produced it.
 
-This package is a researched design and implementation backlog. It does not claim that the desktop app, provider compatibility, managed SDK or installers have been implemented or tested.
+The broader authoring experience remains a roadmap. See [Phase 0 evidence](phase-zero-feasibility.md) and the M1 execution plan for implemented paths and the limits of their verification.

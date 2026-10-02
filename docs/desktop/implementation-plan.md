@@ -49,6 +49,10 @@ Record cold/warm build times, SDK size, frame rendering/conversion/upload time, 
 
 ### M1 — Native shell, portable project and recovery foundation
 
+Execution detail: [Phase 1 step-by-step foundation plan](../../plans/261002-0434-desktop-phase-one-foundation/plan.md). Its four execution stages belong to M1 and reuse the Phase 0 implementation; remaining platform and authenticated-provider qualification gates stay explicit.
+
+Implemented and exercised on Linux X11 software rendering on 2026-10-02: native create/open/import, asset copy/relocation, SDK installation, recent/relink controls and interrupted recovery. Automated tests cover actual killed-child durability boundaries and real SDK worker builds for standalone and contained-workspace projects. This completes the development foundation, not consumer-release qualification. Checkpoints save source bytes; restore creates an independent copy and never resets the user's checkout.
+
 Add the standalone desktop workspace, typed protocol/model crates and GPUI app. Build a workspace with project/assets/style navigation, preview area, timeline region and agent panel. Prefer standard opaque editor windows initially; decorative platform materials can wait.
 
 Implement project create/open/import, a schema-versioned studio.json, copied media import, SDK discovery/setup status and persistent recent projects. Scaffold a normal Rust crate with the worker bridge entry and versioned project instructions. Build artifacts and app sessions must stay out of portable source.
