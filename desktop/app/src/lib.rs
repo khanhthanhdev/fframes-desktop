@@ -19,5 +19,7 @@ pub mod presentation_stress;
 pub mod preview_element;
 
 pub mod agent_spike;
+pub mod project_view;
 pub mod stress_metrics;
+pub mod studio_shell;
 pub mod worker_project;

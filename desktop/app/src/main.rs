@@ -14,7 +14,8 @@ struct PresentationQualification {
 }
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    match args.get(1).map(String::as_str).unwrap_or("spike-ui") {
+    match args.get(1).map(String::as_str).unwrap_or("studio") {
+        "studio" => run_studio(),
         "spike-ui" | "--spike-ui" => run_spike_ui(None),
         "qualify-presentation" => {
             let result = (|| -> Result<_, Box<dyn std::error::Error>> {
@@ -63,6 +64,7 @@ fn main() {
             }
         }
         "help" | "--help" | "-h" => {
+            println!("fframes-studio [studio] — native project workspace");
             println!("fframes-studio spike-ui");
             println!(
                 "fframes-studio qualify-presentation --bundle DIR --sdk-home DIR --project DIR --output FILE"
@@ -74,6 +76,27 @@ fn main() {
             std::process::exit(1);
         }
     }
+}
+
+fn run_studio() {
+    gpui_platform::application().run(|cx: &mut App| {
+        cx.on_window_closed(|cx, _| cx.quit()).detach();
+        let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
+        cx.open_window(
+            WindowOptions {
+                window_bounds: Some(WindowBounds::Windowed(bounds)),
+                titlebar: Some(gpui::TitlebarOptions {
+                    title: Some("fframes Studio".into()),
+                    appears_transparent: false,
+                    traffic_light_position: None,
+                }),
+                ..Default::default()
+            },
+            |window, cx| cx.new(|cx| fframes_studio::studio_shell::StudioShell::new(window, cx)),
+        )
+        .expect("failed to open Studio");
+        cx.activate(true);
+    });
 }
 
 fn run_spike_ui(qualification: Option<PresentationQualification>) {

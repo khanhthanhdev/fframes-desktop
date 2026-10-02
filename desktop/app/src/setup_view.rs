@@ -73,7 +73,8 @@ pub struct SetupView {
 }
 
 impl SetupView {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    /// Shared discovery for the spike and product shell; callers run this off the UI thread.
+    pub fn defaults() -> Result<(CompatibilityManifest, PathBuf), String> {
         let packaged_manifest = std::env::var_os("FFRAMES_SDK_BUNDLE")
             .map(PathBuf::from)
             .map(|p| p.join("compatibility.json"))
@@ -91,18 +92,30 @@ impl SetupView {
                     CompatibilityManifest::from_json_str(&json).map_err(|e| e.to_string())
                 })
         });
-        let manifest = match &manifest_result {
-            Some(Ok(manifest)) => manifest.clone(),
-            _ => CompatibilityManifest::default_linux_x64(),
-        };
+        Ok((
+            manifest_result
+                .transpose()?
+                .unwrap_or_else(CompatibilityManifest::default_linux_x64),
+            default_sdk_home(),
+        ))
+    }
+
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let defaults = Self::defaults();
+        let (manifest, sdk_home) = defaults.as_ref().cloned().unwrap_or_else(|_| {
+            (
+                CompatibilityManifest::default_linux_x64(),
+                default_sdk_home(),
+            )
+        });
         let mut view = Self {
             state: SetupState::Checking,
             manifest,
-            sdk_home: default_sdk_home(),
+            sdk_home,
             projects_root: default_projects_root(),
             process_tree: ProcessTreeManager::new(),
         };
-        if let Some(Err(error)) = manifest_result {
+        if let Err(error) = defaults {
             view.state = SetupState::Failed { error };
         } else {
             view.run_preflight(cx);
@@ -131,7 +144,11 @@ impl SetupView {
 
         let active_path = self.sdk_home.join("active");
         if active_path.exists() {
-            let candidate_report = Doctor::verify_candidate_sdk(&active_path, &self.manifest);
+            let candidate_report = Doctor::verify_candidate_sdk_with_processes(
+                &active_path,
+                &self.manifest,
+                Some(&self.process_tree),
+            );
             if candidate_report.is_ready() {
                 self.state = SetupState::SdkReady {
                     active_path,
@@ -192,13 +209,13 @@ impl SetupView {
         .detach();
     }
 
-    fn execute_install_and_build_pipeline(
-        manifest: CompatibilityManifest,
-        sdk_home: PathBuf,
-        projects_root: PathBuf,
-        process_tree: ProcessTreeManager,
-    ) -> Result<(PathBuf, Duration, Duration), String> {
-        let installer = SdkInstaller::new(&sdk_home);
+    /// Install only the SDK. Product setup must not regenerate the spike fixture.
+    pub fn install_sdk(
+        manifest: &CompatibilityManifest,
+        sdk_home: &std::path::Path,
+        processes: &ProcessTreeManager,
+    ) -> Result<PathBuf, String> {
+        let installer = SdkInstaller::new(sdk_home).with_process_manager(processes.clone());
         let active_sdk = installer.active_sdk_dir();
 
         // 1. Resolve artifacts strictly from manifest across candidate directories
@@ -243,7 +260,8 @@ impl SetupView {
 
         // 2. Validate existing SDK or install cleanly from local artifacts
         let need_install = if active_sdk.exists() {
-            let candidate_report = Doctor::verify_candidate_sdk(&active_sdk, &manifest);
+            let candidate_report =
+                Doctor::verify_candidate_sdk_with_processes(&active_sdk, manifest, Some(processes));
             !candidate_report.is_ready()
         } else {
             true
@@ -251,10 +269,20 @@ impl SetupView {
 
         if need_install {
             installer
-                .install_from_local_artifacts(&manifest, &artifact_files)
+                .install_from_local_artifacts(manifest, &artifact_files)
                 .map_err(|e| format!("SDK installation failed: {e}"))?;
         }
 
+        Ok(active_sdk)
+    }
+
+    fn execute_install_and_build_pipeline(
+        manifest: CompatibilityManifest,
+        sdk_home: PathBuf,
+        projects_root: PathBuf,
+        process_tree: ProcessTreeManager,
+    ) -> Result<(PathBuf, Duration, Duration), String> {
+        let active_sdk = Self::install_sdk(&manifest, &sdk_home, &process_tree)?;
         // 3. Generate template project using the managed SDK's standalone framework
         fs::create_dir_all(&projects_root).map_err(|e| e.to_string())?;
         let project_dir = projects_root.join("phase-zero-template-video");
