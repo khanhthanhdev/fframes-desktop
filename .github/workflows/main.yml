@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Spellcheck
         uses: crate-ci/typos@master
@@ -71,7 +71,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up pnpm
         uses: pnpm/action-setup@v4
@@ -268,9 +268,10 @@ jobs:
         run: cargo doc --no-deps -p fframes-media -p fframes --features fframes/cli,fframes/compile-time-svgtree,fframes/exif
 
   release:
+    # Forks build from source and must not publish the upstream crates or npm package.
     # A push to main publishes a nightly, a v* tag publishes that version (scripts/release-version.sh)
     name: Publish release
-    if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
+    if: github.repository == 'dmtrKovalenko/fframes' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))
     runs-on: ubuntu-latest
     # npm trusted publishing: the job proves its identity to npm with an OIDC token instead of a secret
     permissions:
@@ -307,7 +308,8 @@ jobs:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
           git fetch --tags --force
-          scripts/publish.sh "$(scripts/release-version.sh)"
+          version=$(scripts/release-version.sh)
+          scripts/publish.sh "$version"
 
       - name: GitHub release
         if: startsWith(github.ref, 'refs/tags/v')

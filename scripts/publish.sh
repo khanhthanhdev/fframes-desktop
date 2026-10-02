@@ -5,6 +5,10 @@
 #
 #   scripts/publish.sh 1.0.0
 set -euo pipefail
+if [[ $# != 1 || -z "${1:-}" ]]; then
+  echo "Error: Expected a non-empty release version. Usage: scripts/publish.sh VERSION" >&2
+  exit 1
+fi
 VERSION="$1"
 echo "Publishing version $VERSION"
 

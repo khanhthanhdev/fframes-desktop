@@ -17,7 +17,10 @@ if [[ "$ref" == v[0-9]* ]] && git rev-parse -q --verify "refs/tags/$ref" >/dev/n
   exit 0
 fi
 
-tag=$(git describe --tags --abbrev=0)
+if ! tag=$(git describe --tags --abbrev=0); then
+  echo "Error: No reachable release tag. Core publishing requires upstream release tags; desktop builds do not." >&2
+  exit 1
+fi
 last=${tag#v}
 count=$(git rev-list --count "$tag..HEAD")
 if [[ "$last" == *-* ]]; then
