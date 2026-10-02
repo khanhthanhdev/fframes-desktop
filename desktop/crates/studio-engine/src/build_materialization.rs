@@ -1,0 +1,267 @@
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
+use studio_project::{
+    OpenProject, ProjectError, ProjectPath, SourceInventory,
+    checkpoint::copy_draft,
+    lifecycle::{atomic_write, read_cargo},
+};
+use studio_sdk::{CompatibilityManifest, environment::SdkEnvironment};
+
+pub struct MaterializedBuild {
+    pub root: PathBuf,
+    pub environment: SdkEnvironment,
+    pub package: String,
+    pub worker_target: String,
+    pub manifest: PathBuf,
+    pub isolated_bin_dir: PathBuf,
+}
+
+pub fn sdk_pin(manifest: &CompatibilityManifest) -> studio_project::manifest::SdkPin {
+    studio_project::manifest::SdkPin {
+        release: manifest.sdk_id.clone(),
+        compatibility_sha256: manifest.digest(),
+    }
+}
+
+/// SDK binding never mutates portable source, its lock/config, or the installed SDK.
+pub fn materialize(
+    project: &OpenProject,
+    sdk: &Path,
+    compatibility: CompatibilityManifest,
+    app_builds: &Path,
+) -> Result<MaterializedBuild, ProjectError> {
+    let error = |path: &Path, reason: String| {
+        ProjectError::new(
+            path,
+            "managed build",
+            reason,
+            "Choose a compatible SDK or copy/relink dependencies inside the workspace",
+        )
+    };
+    compatibility
+        .validate()
+        .map_err(|e| error(sdk, e.to_string()))?;
+    if project.manifest.sdk != sdk_pin(&compatibility) {
+        return Err(error(sdk, "SDK pin mismatch".into()));
+    }
+    if !project.worker_available {
+        return Err(error(
+            &project.root,
+            "Worker bridge missing; add an explicit worker entry before building".into(),
+        ));
+    }
+    let sdk = fs::canonicalize(sdk).map_err(|e| error(sdk, e.to_string()))?;
+    for ancestor in project.root.ancestors().skip(1) {
+        if ancestor.join(".cargo/config.toml").exists() || ancestor.join(".cargo/config").exists() {
+            return Err(error(
+                ancestor,
+                "Inherited Cargo configuration is not portable".into(),
+            ));
+        }
+    }
+    for file in &project.inventory.files {
+        if matches!(file.path.as_str(), ".cargo/config.toml" | ".cargo/config") {
+            return Err(error(
+                &project.root.join(file.path.as_str()),
+                "Imported Cargo configuration conflicts with SDK binding; original retained".into(),
+            ));
+        }
+    }
+    let build_key = app_builds
+        .join(String::from(project.manifest.project_id.clone()))
+        .join(project.inventory.revision.as_str())
+        .join(compatibility.digest())
+        .join(&compatibility.target_triple);
+    fs::create_dir_all(&build_key).map_err(|e| error(&build_key, e.to_string()))?;
+    let staging = tempfile::Builder::new()
+        .prefix("build-")
+        .tempdir_in(&build_key)
+        .map_err(|e| error(&build_key, e.to_string()))?;
+    let root = staging.path().join("project");
+    copy_draft(&project.root, &root)?;
+    if SourceInventory::scan(&root)?.revision != project.inventory.revision
+        || SourceInventory::scan(&project.root)?.revision != project.inventory.revision
+    {
+        return Err(error(
+            &project.root,
+            "Source changed during materialization; refresh and retry".into(),
+        ));
+    }
+    for file in &project.inventory.files {
+        if file.path.as_str().rsplit('/').next() != Some("Cargo.toml") {
+            continue;
+        }
+        // Read exactly the captured Cargo bytes, not a later edit in the live source.
+        let mut cargo = read_cargo(&root, &file.path)?;
+        bind(
+            &mut cargo,
+            &project.root,
+            &root,
+            Path::new(file.path.as_str()).parent().unwrap(),
+            &sdk,
+            &compatibility,
+        )?;
+        atomic_write(
+            &root.join(file.path.as_str()),
+            toml::to_string_pretty(&cargo)
+                .map_err(|e| error(&root, e.to_string()))?
+                .as_bytes(),
+        )?;
+    }
+    fs::create_dir_all(root.join(".cargo")).map_err(|e| error(&root, e.to_string()))?;
+    let vendor = sdk.join("framework/vendor");
+    if !vendor.is_dir() {
+        return Err(error(&vendor, "SDK vendor directory missing".into()));
+    }
+    atomic_write(&root.join(".cargo/config.toml"), format!("[source.crates-io]\nreplace-with = \"studio-vendor\"\n[source.studio-vendor]\ndirectory = {}\n", toml::Value::String(vendor.to_string_lossy().into_owned())).as_bytes())?;
+    // SDK path substitution has a distinct graph/lock, never overwrite the portable lock.
+    if root.join("Cargo.lock").exists() {
+        fs::remove_file(root.join("Cargo.lock")).map_err(|e| error(&root, e.to_string()))?;
+    }
+    if SourceInventory::scan(&project.root)?.revision != project.inventory.revision {
+        return Err(error(
+            &project.root,
+            "Source changed during SDK binding; refresh and retry".into(),
+        ));
+    }
+    let target = app_builds
+        .join("targets")
+        .join(compatibility.digest())
+        .join(&compatibility.target_triple);
+    let environment = SdkEnvironment::new(&sdk, target, compatibility, true);
+    let staging_path = staging.keep();
+    let isolated_bin_dir = staging_path.join("bin");
+    fs::create_dir_all(&isolated_bin_dir).map_err(|e| error(&isolated_bin_dir, e.to_string()))?;
+    let root = staging_path.join("project");
+    Ok(MaterializedBuild {
+        manifest: root.join(project.manifest.entry.manifest.as_str()),
+        root,
+        environment,
+        package: project.manifest.entry.package.clone(),
+        worker_target: project.manifest.entry.worker_target.clone(),
+        isolated_bin_dir,
+    })
+}
+
+fn bind(
+    value: &mut toml::Value,
+    project_root: &Path,
+    copied_root: &Path,
+    package_dir: &Path,
+    sdk: &Path,
+    compatibility: &CompatibilityManifest,
+) -> Result<(), ProjectError> {
+    if let Some(table) = value.as_table_mut() {
+        for (key, value) in table {
+            if matches!(key.as_str(), "patch" | "replace") {
+                return Err(ProjectError::new(
+                    project_root.join(package_dir),
+                    key,
+                    "Cargo overrides need explicit SDK compatibility",
+                    "Keep source unchanged and resolve the override before managed build",
+                ));
+            }
+            if matches!(
+                key.as_str(),
+                "dependencies" | "dev-dependencies" | "build-dependencies"
+            ) {
+                if let Some(dependencies) = value.as_table_mut() {
+                    for (name, dep) in dependencies {
+                        let crate_name = dep
+                            .get("package")
+                            .and_then(toml::Value::as_str)
+                            .unwrap_or(name)
+                            .to_owned();
+                        if let Some(path) = dep.get("path").and_then(toml::Value::as_str) {
+                            let path_obj = Path::new(path);
+                            let native = if path_obj.is_absolute() {
+                                path_obj.to_path_buf()
+                            } else {
+                                project_root.join(package_dir).join(path)
+                            };
+                            let contained = fs::canonicalize(&native)
+                                .ok()
+                                .filter(|p| p.starts_with(project_root));
+                            if contained.is_none() {
+                                return Err(ProjectError::new(
+                                    native,
+                                    name,
+                                    "external path dependency",
+                                    "Copy this dependency into the project workspace and relink it explicitly",
+                                ));
+                            }
+                            let relative = contained
+                                .unwrap()
+                                .strip_prefix(project_root)
+                                .unwrap()
+                                .to_string_lossy()
+                                .replace('\\', "/");
+                            if !relative.is_empty() {
+                                ProjectPath::try_from(relative.clone())?
+                                    .resolve_existing(project_root)?;
+                            }
+                            if path_obj.is_absolute() {
+                                let rewritten = copied_root.join(&relative);
+                                dep.as_table_mut().unwrap().insert(
+                                    "path".into(),
+                                    toml::Value::String(rewritten.to_string_lossy().into_owned()),
+                                );
+                            }
+                        }
+                        if matches!(
+                            crate_name.as_str(),
+                            "fframes" | "fframes-studio-runtime" | "fframes-studio-protocol"
+                        ) && dep.get("workspace").and_then(toml::Value::as_bool) != Some(true)
+                        {
+                            let expected = if crate_name == "fframes" {
+                                compatibility.fframes_version.as_str()
+                            } else {
+                                "0.1.0"
+                            };
+                            let version = dep
+                                .as_str()
+                                .or_else(|| dep.get("version").and_then(toml::Value::as_str));
+                            if version.is_some_and(|v| v.trim_start_matches('=') != expected) {
+                                return Err(ProjectError::new(
+                                    project_root.join(package_dir),
+                                    name,
+                                    "dependency version does not match SDK",
+                                    "Select an SDK matching this version",
+                                ));
+                            }
+                            if dep.is_str() {
+                                *dep = toml::Value::Table(toml::map::Map::new());
+                            }
+                            let framework = sdk.join("framework/framework").join(&crate_name);
+                            if !framework.join("Cargo.toml").is_file() {
+                                return Err(ProjectError::new(
+                                    framework,
+                                    name,
+                                    "SDK crate missing",
+                                    "Install the complete compatible SDK",
+                                ));
+                            }
+                            dep.as_table_mut().unwrap().insert(
+                                "path".into(),
+                                toml::Value::String(framework.to_string_lossy().into_owned()),
+                            );
+                        }
+                    }
+                }
+            } else {
+                bind(
+                    value,
+                    project_root,
+                    copied_root,
+                    package_dir,
+                    sdk,
+                    compatibility,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}

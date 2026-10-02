@@ -2,12 +2,18 @@
 resolver = "2"
 members = [
     "app",
+    "crates/studio-project",
+    "crates/studio-engine",
     "crates/studio-bootstrap",
     "crates/studio-sdk",
     "crates/studio-agent-spike",
 ]
 
 [workspace.dependencies]
+studio-project = { path = "crates/studio-project" }
+studio-engine = { path = "crates/studio-engine" }
+libc = "0.2"
+uuid = { version = "1", features = ["v4"] }
 studio-bootstrap = { path = "crates/studio-bootstrap" }
 fframes-studio-protocol = { path = "../fframes-studio-protocol" }
 studio-sdk = { path = "crates/studio-sdk" }

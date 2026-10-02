@@ -3,7 +3,6 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::{
-    collections::BTreeMap,
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     sync::{
@@ -558,72 +557,15 @@ impl Drop for AcpSession {
 
 /// Copies portable source to a new isolated draft, rejecting symlinks.
 pub fn copy_draft(source: &Path, destination: &Path) -> Result<(), SupervisorError> {
-    std::fs::create_dir(destination)?;
-    fn copy(source: &Path, destination: &Path) -> std::io::Result<()> {
-        for entry in std::fs::read_dir(source)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            if matches!(name.to_str(), Some("target" | ".git" | "frames")) {
-                continue;
-            }
-            let kind = entry.file_type()?;
-            if kind.is_symlink() {
-                return Err(std::io::Error::other("draft source contains symlink"));
-            }
-            let target = destination.join(name);
-            if kind.is_dir() {
-                std::fs::create_dir(&target)?;
-                copy(&entry.path(), &target)?;
-            } else if kind.is_file() {
-                std::fs::copy(entry.path(), target)?;
-            }
-        }
-        Ok(())
-    }
-    copy(source, destination)?;
-    Ok(())
+    studio_project::checkpoint::copy_draft(source, destination)
+        .map_err(|e| std::io::Error::other(e.to_string()).into())
 }
 
 /// Hashes portable source in stable order; compiled output never defines a revision.
 pub fn source_revision(root: &Path) -> Result<String, SupervisorError> {
-    use sha2::{Digest, Sha256};
-    fn collect(
-        root: &Path,
-        dir: &Path,
-        files: &mut BTreeMap<std::path::PathBuf, Vec<u8>>,
-    ) -> std::io::Result<()> {
-        for entry in std::fs::read_dir(dir)? {
-            let entry = entry?;
-            let name = entry.file_name();
-            if matches!(name.to_str(), Some("target" | ".git" | "frames")) {
-                continue;
-            }
-            let kind = entry.file_type()?;
-            if kind.is_symlink() {
-                return Err(std::io::Error::other("source revision contains symlink"));
-            }
-            if kind.is_dir() {
-                collect(root, &entry.path(), files)?;
-            } else if kind.is_file() {
-                files.insert(
-                    entry.path().strip_prefix(root).unwrap().to_owned(),
-                    std::fs::read(entry.path())?,
-                );
-            }
-        }
-        Ok(())
-    }
-    let mut files = BTreeMap::new();
-    collect(root, root, &mut files)?;
-    let mut hash = Sha256::new();
-    for (path, bytes) in files {
-        let path = path.to_string_lossy();
-        hash.update((path.len() as u64).to_le_bytes());
-        hash.update(path.as_bytes());
-        hash.update((bytes.len() as u64).to_le_bytes());
-        hash.update(bytes);
-    }
-    Ok(format!("{:x}", hash.finalize()))
+    studio_project::SourceInventory::scan(root)
+        .map(|inventory| inventory.revision.as_str().to_owned())
+        .map_err(|e| std::io::Error::other(e.to_string()).into())
 }
 
 #[cfg(test)]
