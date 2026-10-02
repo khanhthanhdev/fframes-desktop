@@ -178,6 +178,8 @@ name = "{name}"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+
 [dependencies]
 {fframes_dep}
 "#
@@ -283,6 +285,46 @@ fn main() -> std::process::ExitCode {
             });
         }
 
+        Ok(start.elapsed())
+    }
+
+    /// Builds an explicit worker in an app-local workspace with an external target directory.
+    pub fn build_worker_target(
+        root: &Path,
+        manifest: &Path,
+        package: &str,
+        worker: &str,
+        sdk_env: &SdkEnvironment,
+        process_tree: &ProcessTreeManager,
+    ) -> Result<Duration, ProjectError> {
+        let start = Instant::now();
+        let mut options = SpawnOptions::new("cargo");
+        for arg in ["build", "--locked", "--offline", "--manifest-path"] {
+            options.arg(arg);
+        }
+        options.arg(manifest);
+        options.arg("--package");
+        options.arg(package);
+        options.arg("--bin");
+        options.arg(worker);
+        options.current_dir(root);
+        options.env = sdk_env.build_child_environment();
+        options.stdout = Stdio::piped();
+        options.stderr = Stdio::piped();
+        let child = process_tree
+            .spawn(options)
+            .map_err(|source| ProjectError::ProcessFailed {
+                operation: "build portable worker".into(),
+                source,
+            })?;
+        let (status, _, stderr) = wait_with_output_drained(&child, 64 * 1024)?;
+        if !status.success() {
+            return Err(ProjectError::CommandExecutionFailed {
+                command: "build portable worker".into(),
+                exit_code: status.code(),
+                stderr: String::from_utf8_lossy(&stderr).into_owned(),
+            });
+        }
         Ok(start.elapsed())
     }
 
@@ -461,6 +503,7 @@ mod tests {
         assert!(cargo_toml.contains("name = \"my-test-video\""));
         assert!(cargo_toml.contains("version = \"1.1.0\""));
         assert!(cargo_toml.contains("features = [\"cli\", \"compile-time-svgtree\"]"));
+        assert!(cargo_toml.contains("[workspace]"));
         // Second generation in same non-empty path should be rejected
         let err = ProjectManager::generate_cpu_project("my-test-video", &project_dir, "1.1.0")
             .unwrap_err();

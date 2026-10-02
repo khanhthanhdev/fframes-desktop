@@ -294,6 +294,14 @@ impl Doctor {
     }
 
     pub fn verify_candidate_sdk(sdk_root: &Path, manifest: &CompatibilityManifest) -> DoctorReport {
+        Self::verify_candidate_sdk_with_processes(sdk_root, manifest, None)
+    }
+
+    pub fn verify_candidate_sdk_with_processes(
+        sdk_root: &Path,
+        manifest: &CompatibilityManifest,
+        processes: Option<&studio_bootstrap::ProcessTreeManager>,
+    ) -> DoctorReport {
         let mut items = Vec::new();
         let target_triple = manifest.target_triple.clone();
 
@@ -317,7 +325,7 @@ impl Doctor {
                 )),
             });
         } else {
-            let probe_rustc = probe_bundled_compiler(&rustc_path, "--version");
+            let probe_rustc = probe_bundled_compiler(&rustc_path, "--version", processes);
             match probe_rustc {
                 Ok(out) if out.status.success() => {
                     let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -335,7 +343,7 @@ impl Doctor {
                             )),
                         });
                     } else {
-                        let verbose_out = probe_bundled_compiler(&rustc_path, "-vV");
+                        let verbose_out = probe_bundled_compiler(&rustc_path, "-vV", processes);
                         let target_ok = match verbose_out {
                             Ok(v_out) if v_out.status.success() => {
                                 let v_str = String::from_utf8_lossy(&v_out.stdout);
@@ -457,8 +465,19 @@ fn compiler_version_matches(version: &str, channel: &str) -> bool {
     fields.next() == Some("rustc") && fields.next() == Some(channel)
 }
 
-fn probe_bundled_compiler(path: &Path, argument: &str) -> std::io::Result<std::process::Output> {
-    let manager = studio_bootstrap::ProcessTreeManager::new();
+fn probe_bundled_compiler(
+    path: &Path,
+    argument: &str,
+    processes: Option<&studio_bootstrap::ProcessTreeManager>,
+) -> std::io::Result<std::process::Output> {
+    let fallback;
+    let manager = match processes {
+        Some(p) => p.sub_manager(),
+        None => {
+            fallback = studio_bootstrap::ProcessTreeManager::new();
+            fallback.sub_manager()
+        }
+    };
     let mut options = studio_bootstrap::SpawnOptions::new(path);
     options.arg(argument);
     options.stdout = std::process::Stdio::piped();

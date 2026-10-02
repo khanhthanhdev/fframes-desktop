@@ -29,13 +29,21 @@ pub enum InstallError {
 
 pub struct SdkInstaller {
     sdk_home: PathBuf,
+    processes: studio_bootstrap::ProcessTreeManager,
 }
 
 impl SdkInstaller {
     pub fn new(sdk_home: impl Into<PathBuf>) -> Self {
         Self {
             sdk_home: sdk_home.into(),
+            processes: studio_bootstrap::ProcessTreeManager::new(),
         }
+    }
+
+    /// Use the app's owner so shutdown can cancel verification and reject later compilers.
+    pub fn with_process_manager(mut self, processes: studio_bootstrap::ProcessTreeManager) -> Self {
+        self.processes = processes;
+        self
     }
 
     pub fn active_sdk_dir(&self) -> PathBuf {
@@ -143,6 +151,9 @@ impl SdkInstaller {
         // Clean up staging on any failure
         let result = (|| -> Result<(), InstallError> {
             for (artifact, file_path) in artifact_files {
+                if self.processes.is_shutdown() {
+                    return Err(InstallError::Other("SDK installation cancelled".into()));
+                }
                 let file_path = file_path.as_ref();
 
                 // 1. Verify Checksum
@@ -163,6 +174,9 @@ impl SdkInstaller {
                 Self::safe_extract_tar_gz(file_path, &target_subdir)?;
             }
 
+            if self.processes.is_shutdown() {
+                return Err(InstallError::Other("SDK installation cancelled".into()));
+            }
             // 3. Write embedded manifest into staging root
             let manifest_path = staging_dir.join("compatibility.json");
             let manifest_json = serde_json::to_string_pretty(manifest)
@@ -170,7 +184,11 @@ impl SdkInstaller {
             fs::write(manifest_path, manifest_json)?;
 
             // 4. Verify candidate SDK via Doctor before promotion
-            let candidate_report = Doctor::verify_candidate_sdk(&staging_dir, manifest);
+            let candidate_report = Doctor::verify_candidate_sdk_with_processes(
+                &staging_dir,
+                manifest,
+                Some(&self.processes),
+            );
             if candidate_report.overall_status == ProbeStatus::Fail {
                 return Err(InstallError::CandidateVerificationFailed {
                     reason: candidate_report.format_summary(),
@@ -179,7 +197,7 @@ impl SdkInstaller {
 
             // A checksummed archive and directory layout do not establish buildability.
             let probe_root = staging_dir.join("verification");
-            let manager = studio_bootstrap::ProcessTreeManager::new();
+            let manager = self.processes.sub_manager();
             let environment = crate::SdkEnvironment::new(
                 &staging_dir,
                 probe_root.join("target"),
@@ -229,6 +247,9 @@ impl SdkInstaller {
                 reason: error.to_string(),
             })?;
             fs::remove_dir_all(&probe_root)?;
+            if self.processes.is_shutdown() {
+                return Err(InstallError::Other("SDK installation cancelled".into()));
+            }
 
             Ok(())
         })();
