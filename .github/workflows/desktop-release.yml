@@ -232,11 +232,20 @@ jobs:
           ```
 
           #### Windows (x64)
-          Extract `fframes-studio-x86_64-pc-windows-msvc.zip` and run in PowerShell:
-          ```powershell
-          .\launch.ps1
-          ```
-
+          Extract `fframes-studio-x86_64-pc-windows-msvc.zip` and run via any of:
+          - **PowerShell (bypass policy for downloaded script):**
+            ```powershell
+            powershell -ExecutionPolicy Bypass -File .\launch.ps1
+            ```
+          - **Unblock script once:**
+            ```powershell
+            Unblock-File .\launch.ps1
+            .\launch.ps1
+            ```
+          - **Direct binary execution:**
+            ```powershell
+            .\bin\fframes-studio.exe spike-ui
+            ```
           #### macOS (Apple Silicon)
           Extract `fframes-studio-aarch64-apple-darwin.zip`:
           Launch `fframes Studio.app` or execute `./launch.sh` in Terminal.

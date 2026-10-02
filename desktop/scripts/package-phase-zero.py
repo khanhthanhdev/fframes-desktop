@@ -70,6 +70,7 @@ def package(output, sdk_bundle=None):
         for dll in dlls:
             shutil.copy2(dll, bin_dir)
         (output / "launch.ps1").write_text('$ErrorActionPreference = "Stop"\n$env:FFRAMES_SDK_BUNDLE = Join-Path $PSScriptRoot "sdk"\n& (Join-Path $PSScriptRoot "bin/fframes-studio.exe") spike-ui\nexit $LASTEXITCODE\n')
+        (output / "launch.bat").write_text('@echo off\r\nset "FFRAMES_SDK_BUNDLE=%~dp0sdk"\r\n"%~dp0bin\\fframes-studio.exe" spike-ui %*\r\n')
     else:
         launcher = output / "launch.sh"
         launcher.write_text('#!/usr/bin/env sh\nset -eu\npackage_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexport FFRAMES_SDK_BUNDLE="$package_dir/sdk"\nexec "$package_dir/bin/fframes-studio" spike-ui\n')
