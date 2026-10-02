@@ -139,7 +139,7 @@ jobs:
       - name: Linux isolated-account offline native presentation, input and source click
         if: runner.os == 'Linux'
         run: |
-          sudo /usr/bin/python3 desktop/scripts/qualify-linux-native.py --application "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}/bin/fframes-studio" --bundle "$RUNNER_TEMP/studio-sdk" --out "$RUNNER_TEMP/linux-native-evidence" --isolated-user
+          sudo -E /usr/bin/python3 desktop/scripts/qualify-linux-native.py --application "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}/bin/fframes-studio" --bundle "$RUNNER_TEMP/studio-sdk" --out "$RUNNER_TEMP/linux-native-evidence" --isolated-user
       - name: Retain artifact and pending qualification record
         uses: actions/upload-artifact@v4
         with:

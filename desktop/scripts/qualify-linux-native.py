@@ -31,8 +31,10 @@ def stop(process):
 def enter(args):
     subprocess.run(["ip", "link", "set", "lo", "up"], check=True)
     # This namespace has no external network interface; loopback serves worker IPC.
-    environment = {"PATH": "/usr/bin:/bin", "HOME": str(args.out / "home"), "LANG": "C.UTF-8", "DISPLAY": args.display,
+    environment = {"PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": str(args.out / "home"), "LANG": "C.UTF-8", "DISPLAY": args.display,
                    "XDG_RUNTIME_DIR": str(args.out / "runtime"), "LIBGL_ALWAYS_SOFTWARE": "1"}
+    if "LIBCLANG_PATH" in os.environ:
+        environment["LIBCLANG_PATH"] = os.environ["LIBCLANG_PATH"]
     os.execvpe("setpriv", ["setpriv", "--reuid=65534", "--regid=65534", "--clear-groups", str(args.out / "fframes-studio"),
                             "qualify-presentation", "--bundle", str(args.bundle), "--sdk-home", str(args.out / "home/.fframes/sdk"),
                             "--project", str(args.out / "home/video"), "--output", str(args.out / "presentation.json")], environment)
@@ -54,8 +56,44 @@ def qualify(args):
     shutil.copy2(args.application, args.out / "fframes-studio")
     shutil.copy2(Path(__file__), args.out / "qualify-linux-native.py")
     if args.isolated_user:
-        for path in [args.out, args.out / "home", args.out / "runtime"]:
-            os.chown(path, 65534, 65534)
+        for target in [args.out, args.bundle, args.application]:
+            curr = target.resolve()
+            while curr != curr.parent:
+                try:
+                    mode = curr.stat().st_mode
+                    if not (mode & 0o001):
+                        curr.chmod(mode | 0o005)
+                except Exception:
+                    pass
+                curr = curr.parent
+        for root_dir, dirs, files in os.walk(args.bundle):
+            for d in dirs:
+                p = Path(root_dir) / d
+                try:
+                    p.chmod(p.stat().st_mode | 0o005)
+                except Exception:
+                    pass
+            for f in files:
+                p = Path(root_dir) / f
+                try:
+                    p.chmod(p.stat().st_mode | 0o004)
+                except Exception:
+                    pass
+        for root_dir, dirs, files in os.walk(args.out):
+            for d in dirs:
+                p = Path(root_dir) / d
+                try:
+                    os.chown(p, 65534, 65534)
+                    p.chmod(p.stat().st_mode | 0o775)
+                except Exception:
+                    pass
+            for f in files:
+                p = Path(root_dir) / f
+                try:
+                    os.chown(p, 65534, 65534)
+                    p.chmod(p.stat().st_mode | 0o775)
+                except Exception:
+                    pass
     environment = os.environ.copy()
     environment.update(DISPLAY=args.display, XDG_RUNTIME_DIR=str(args.out / "runtime"), LIBGL_ALWAYS_SOFTWARE="1")
     compositor = application = None
@@ -96,6 +134,12 @@ def qualify(args):
                         ImageGrab.grab(xdisplay=args.display).save(args.out / "native-window.png")
                 time.sleep(1)
             if application.returncode != 0:
+                log_path = args.out / "application.log"
+                if log_path.is_file():
+                    sys.stderr.write(f"\n=== application.log ===\n{log_path.read_text()}\n======================\n")
+                compositor_log_path = args.out / "compositor.log"
+                if compositor_log_path.is_file():
+                    sys.stderr.write(f"\n=== compositor.log ===\n{compositor_log_path.read_text()}\n======================\n")
                 raise RuntimeError(f"Native application failed ({application.returncode}); inspect application.log")
             record = json.loads((args.out / "presentation.json").read_text())
             if not record["completed"] or record["confirmed_presentations"] != 1000 or record["verified_render_requests"] != 2000:
