@@ -74,15 +74,24 @@ jobs:
           components: rustfmt, clippy
       - name: Assert native architecture
         run: |
-          python -c 'import subprocess; assert "host: ${{ matrix.target }}" in subprocess.check_output(["rustc", "-vV"], text=True)'
+          python3 -c 'import subprocess; assert "host: ${{ matrix.target }}" in subprocess.check_output(["rustc", "-vV"], text=True)'
       - name: Linux native prerequisites
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm xvfb xdotool mesa-vulkan-drivers python3-pil iproute2 util-linux
+          llvm_lib="$(find /usr/lib -name "libclang.so" 2>/dev/null | head -n1)"
+          if [ -n "$llvm_lib" ]; then
+            echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
+          fi
       - name: macOS native prerequisites
         if: runner.os == 'macOS'
-        run: brew install pkg-config nasm
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install nasm || true
+          xcode_dir="$(xcode-select -p 2>/dev/null || echo '/Applications/Xcode.app/Contents/Developer')"
+          if [ -d "$xcode_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib" ]; then
+            echo "LIBCLANG_PATH=$xcode_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib" >> "$GITHUB_ENV"
+          fi
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
       - name: Configure Windows MSVC toolchain precedence
@@ -93,7 +102,7 @@ jobs:
       - name: Build pinned native FFmpeg install
         if: runner.os != 'Windows'
         run: |
-          python desktop/scripts/build-native-ffmpeg.py --source "$RUNNER_TEMP/ffmpeg-source" --out "$RUNNER_TEMP/ffmpeg-native"
+          python3 desktop/scripts/build-native-ffmpeg.py --source "$RUNNER_TEMP/ffmpeg-source" --out "$RUNNER_TEMP/ffmpeg-native"
           echo "FFMPEG_DIR=$RUNNER_TEMP/ffmpeg-native" >> "$GITHUB_ENV"
       - name: Windows FFmpeg build dependency
         if: runner.os == 'Windows'
@@ -112,8 +121,8 @@ jobs:
           cargo test --locked --manifest-path desktop/Cargo.toml -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio
           cargo clippy --locked --manifest-path desktop/Cargo.toml -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio --all-targets -- -D warnings
           cargo test --locked -p fframes-studio-protocol -p fframes-studio-runtime
-          python desktop/scripts/test-packaging.py
-          python desktop/scripts/validate-qualification.py desktop/qualification/m0-results.json
+          python3 desktop/scripts/test-packaging.py
+          python3 desktop/scripts/validate-qualification.py desktop/qualification/m0-results.json
       - name: Build and render annotated worker
         run: |
           cargo build --release --manifest-path desktop/fixtures/annotated-video-overlay/Cargo.toml
@@ -122,11 +131,11 @@ jobs:
       - name: Real worker frame, anchor, crash and restart
         run: cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test worker_roundtrip -- --ignored
       - name: Assemble and verify native offline SDK
-        run: python desktop/scripts/assemble-phase-zero-sdk.py --out "$RUNNER_TEMP/studio-sdk"
+        run: python3 desktop/scripts/assemble-phase-zero-sdk.py --out "$RUNNER_TEMP/studio-sdk"
       - name: Install SDK and launch managed worker
         run: SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test managed_worker -- --ignored
       - name: Package native app and SDK artifact
-        run: python desktop/scripts/package-phase-zero.py --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" --sdk-bundle "$RUNNER_TEMP/studio-sdk"
+        run: python3 desktop/scripts/package-phase-zero.py --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" --sdk-bundle "$RUNNER_TEMP/studio-sdk"
       - name: Linux isolated-account offline native presentation, input and source click
         if: runner.os == 'Linux'
         run: |

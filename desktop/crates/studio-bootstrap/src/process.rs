@@ -58,6 +58,11 @@ impl ChildEnvironment {
             "XDG_RUNTIME_DIR",
             "XDG_DATA_DIRS",
             "XDG_CONFIG_DIRS",
+            "LIBCLANG_PATH",
+            "DEVELOPER_DIR",
+            "SDKROOT",
+            "SSL_CERT_FILE",
+            "SSL_CERT_DIR",
         ];
 
         #[cfg(windows)]

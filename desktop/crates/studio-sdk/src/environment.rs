@@ -43,18 +43,56 @@ impl SdkEnvironment {
         env.set("FFMPEG_BINARIES_CACHE", ffmpeg_cache.to_string_lossy());
 
         // 3. Libclang resolution
-        #[cfg(unix)]
+        if env.get("LIBCLANG_PATH").is_none()
+            && let Some(libclang) = std::env::var("LIBCLANG_PATH")
+                .ok()
+                .filter(|p| Path::new(p).exists())
         {
-            for candidate in [
-                "/usr/lib/llvm-18/lib",
-                "/usr/lib/llvm-17/lib",
-                "/usr/lib/llvm-16/lib",
-                "/usr/lib/x86_64-linux-gnu",
-                "/usr/local/lib",
-            ] {
-                if Path::new(candidate).exists() {
-                    env.set("LIBCLANG_PATH", candidate);
-                    break;
+            env.set("LIBCLANG_PATH", libclang);
+        }
+
+        if env.get("LIBCLANG_PATH").is_none() {
+            #[cfg(target_os = "macos")]
+            {
+                for candidate in [
+                    "/opt/homebrew/opt/llvm/lib",
+                    "/opt/homebrew/lib",
+                    "/Library/Developer/CommandLineTools/usr/lib",
+                    "/Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib",
+                    "/usr/local/opt/llvm/lib",
+                ] {
+                    if Path::new(candidate).exists() {
+                        env.set("LIBCLANG_PATH", candidate);
+                        break;
+                    }
+                }
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                for candidate in [
+                    "/usr/lib/llvm-19/lib",
+                    "/usr/lib/llvm-18/lib",
+                    "/usr/lib/llvm-17/lib",
+                    "/usr/lib/llvm-16/lib",
+                    "/usr/lib/x86_64-linux-gnu",
+                    "/usr/lib/aarch64-linux-gnu",
+                    "/usr/local/lib",
+                ] {
+                    if Path::new(candidate).exists() {
+                        env.set("LIBCLANG_PATH", candidate);
+                        break;
+                    }
+                }
+            }
+
+            #[cfg(windows)]
+            {
+                for candidate in [r"C:\Program Files\LLVM\bin", r"C:\Program Files\LLVM\lib"] {
+                    if Path::new(candidate).exists() {
+                        env.set("LIBCLANG_PATH", candidate);
+                        break;
+                    }
                 }
             }
         }

@@ -165,7 +165,7 @@ def main():
     ffmpeg = args.ffmpeg_root or (Path(os.environ["FFMPEG_DIR"]) if os.environ.get("FFMPEG_DIR") else None)
     if ffmpeg is None:
         metadata = json.loads(run(["cargo", "metadata", "--no-deps", "--format-version", "1", "--manifest-path", str(ROOT / "desktop/fixtures/annotated-video-overlay/Cargo.toml")], capture_output=True).stdout)
-        candidates = sorted(Path(metadata["target_directory"]).glob("*/build/ffmpeg-sys-fframes-*/out/dist"))
+        candidates = sorted(Path(metadata["target_directory"]).glob("**/build/ffmpeg-sys-fframes-*/out/dist"))
         for candidate in candidates:
             try:
                 validate_ffmpeg(candidate, "9.0.0")
