@@ -1,0 +1,40 @@
+[package]
+name = "fframes-studio"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Minimal native desktop studio application for fframes"
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "fframes-studio"
+path = "src/main.rs"
+
+
+[dependencies]
+thiserror = { workspace = true }
+gpui = { workspace = true }
+studio-bootstrap = { workspace = true }
+studio-sdk = { workspace = true }
+studio-agent-spike = { workspace = true }
+fframes-studio-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+image = { workspace = true }
+smallvec = { workspace = true }
+parking_lot = { workspace = true }
+sha2 = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gpui_platform = { workspace = true, features = ["x11", "wayland"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+gpui_platform = { workspace = true, features = ["font-kit"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+gpui_platform = { workspace = true }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_ProcessStatus"] }

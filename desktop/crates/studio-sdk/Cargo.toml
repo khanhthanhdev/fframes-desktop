@@ -1,0 +1,27 @@
+[package]
+name = "studio-sdk"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Managed SDK setup, doctor, installation and project orchestration for fframes studio"
+
+[[bin]]
+name = "studio_setup"
+path = "src/bin/studio_setup.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+studio-bootstrap = { workspace = true }
+fframes-studio-protocol = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+sha2 = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

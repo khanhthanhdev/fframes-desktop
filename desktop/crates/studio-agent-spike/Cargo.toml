@@ -1,0 +1,20 @@
+[package]
+name = "studio-agent-spike"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "ACP v1 adapter supervisor and qualification spike for fframes studio"
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+sha2 = { workspace = true }
+studio-bootstrap = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+parking_lot = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
