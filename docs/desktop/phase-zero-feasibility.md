@@ -36,6 +36,10 @@ The user selected configurable adapters and deferred qualification. Protocol sub
 
 ## Assemble and package
 
+Desktop builds use core fframes crates from this checkout; they do not require publishing to crates.io or npm. The inherited [core release job](../../.github/workflows/main.yml) runs only in `dmtrKovalenko/fframes`. Forks need no upstream publishing credentials or release tags to build Studio.
+
+Run [Desktop CI](../../.github/workflows/desktop.yml) or [Desktop feasibility artifacts](../../.github/workflows/desktop-phase-zero.yml) from GitHub Actions with **Run workflow** to build the native Linux, Windows and macOS matrix. Both also run for relevant pushes to `main` and pull requests, including changes to the local framework crates. Download the `studio-<target>` artifact from Desktop CI for the packaged app and SDK; these feasibility packages remain subject to the qualification gates below.
+
 On Unix, build the pinned official FFmpeg source and supply its real static install. Windows uses an FFmpeg 9 shared install and a native MSVC build environment.
 
 ```sh
