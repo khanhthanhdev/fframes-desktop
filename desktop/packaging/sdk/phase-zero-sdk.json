@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v1",
+  "compatible_app_range": "^0.1.0",
+  "target_triple": "x86_64-unknown-linux-gnu",
+  "arch": "x86_64",
+  "os_baseline": "Ubuntu 24.04 (glibc >= 2.39)",
+  "rust_toolchain": {
+    "channel": "1.98.1",
+    "components": [
+      "rustfmt",
+      "clippy"
+    ],
+    "targets": [
+      "x86_64-unknown-linux-gnu"
+    ]
+  },
+  "fframes_version": "1.1.0",
+  "cargo_fframes_version": "1.1.0",
+  "artifacts": [
+    {
+      "name": "toolchain",
+      "url": "file://artifacts/toolchain-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "ecd74a9acbe6dcb98e273d944e119414506459cbef8b79ae2e9ed6b1c48f2b6b",
+      "size_bytes": 208280949,
+      "destination_subdir": "toolchain"
+    },
+    {
+      "name": "ffmpeg",
+      "url": "file://artifacts/ffmpeg-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "825aa49e6aec7c5ee6996ec54fc7a2eef01a408c0c2a67620cbf6a5de6b42eaf",
+      "size_bytes": 82659659,
+      "destination_subdir": "ffmpeg"
+    },
+    {
+      "name": "framework",
+      "url": "file://artifacts/framework-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "9931a33788927d20a63cf5f6fb5c91b7e9cc63866ece68c38098872ae0d947ae",
+      "size_bytes": 44401157,
+      "destination_subdir": "framework"
+    }
+  ],
+  "ffmpeg": {
+    "tag": "9.0.0",
+    "link_mode": "static",
+    "headers_rel_path": "ffmpeg/include",
+    "libs_rel_path": "ffmpeg/lib",
+    "bin_rel_path": null
+  },
+  "host_prerequisites": [
+    {
+      "id": "compiler",
+      "name": "C/C++ Compiler",
+      "description": "Clang or GCC for native build scripts and bindgen",
+      "command": "clang",
+      "args": [
+        "--version"
+      ],
+      "package_name": "clang",
+      "required": true
+    },
+    {
+      "id": "cmake",
+      "name": "CMake Build System",
+      "description": "Required for compiling native C libraries",
+      "command": "cmake",
+      "args": [
+        "--version"
+      ],
+      "package_name": "cmake",
+      "required": true
+    },
+    {
+      "id": "pkg-config",
+      "name": "Pkg-Config",
+      "description": "Locates system development libraries",
+      "command": "pkg-config",
+      "args": [
+        "--version"
+      ],
+      "package_name": "pkg-config",
+      "required": true
+    },
+    {
+      "id": "libxkbcommon-x11",
+      "name": "libxkbcommon X11 Development Headers",
+      "description": "X11 keyboard handling and IME support",
+      "command": "pkg-config",
+      "args": [
+        "--exists",
+        "xkbcommon-x11"
+      ],
+      "package_name": "libxkbcommon-x11-dev",
+      "required": true
+    }
+  ]
+}

@@ -1,0 +1,17 @@
+{
+  "display": ":94",
+  "compositor": "Xvfb",
+  "software_renderer_requested": true,
+  "isolated_uid": 65534,
+  "fresh_home": true,
+  "external_network_disabled": true,
+  "owned_pid_namespace": true,
+  "application_sha256": "c2a132923c716457a5c99028b685d0563a5c55b771082c6ba34bd1f0509cfea0",
+  "sdk_manifest_sha256": "7c0635098076abb2e9d1cb519b1e0eb3295899b15104c41796cb10233ad5bbd6",
+  "candidate_template_and_worker_build_render": "PASSED",
+  "fresh_worker_build_after_promotion": "PASSED",
+  "physical_display": false,
+  "ime_composition": "NOT_RUN",
+  "native_keyboard_input": "PASSED",
+  "native_source_click": "PASSED"
+}

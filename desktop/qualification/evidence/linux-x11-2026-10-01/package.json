@@ -1,0 +1,8 @@
+{
+  "path": "/tmp/studio-complete-delivery.zip",
+  "sha256": "c9835c8158c0ad8fdeef96327a83e85e0b633f62a25399e6d522b22192bca7f9",
+  "application_sha256": "c2a132923c716457a5c99028b685d0563a5c55b771082c6ba34bd1f0509cfea0",
+  "inventory_sha256": "e131295fb70c9779febca58deecb8f6730054847563ce493c9fa0c7f45240730",
+  "native_dependencies": "\tlinux-vdso.so.1 (0x00007ffd62674000)\n\tlibxcb.so.1 => /lib/x86_64-linux-gnu/libxcb.so.1 (0x0000762ac6dfe000)\n\tlibxkbcommon.so.0 => /lib/x86_64-linux-gnu/libxkbcommon.so.0 (0x0000762ac6db5000)\n\tlibxkbcommon-x11.so.0 => /lib/x86_64-linux-gnu/libxkbcommon-x11.so.0 (0x0000762ac6dab000)\n\tlibgcc_s.so.1 => /lib/x86_64-linux-gnu/libgcc_s.so.1 (0x0000762ac4fd2000)\n\tlibm.so.6 => /lib/x86_64-linux-gnu/libm.so.6 (0x0000762ac4ee9000)\n\tlibc.so.6 => /lib/x86_64-linux-gnu/libc.so.6 (0x0000762ac4c00000)\n\t/lib64/ld-linux-x86-64.so.2 (0x0000762ac6e3a000)\n\tlibXau.so.6 => /lib/x86_64-linux-gnu/libXau.so.6 (0x0000762ac6da3000)\n\tlibXdmcp.so.6 => /lib/x86_64-linux-gnu/libXdmcp.so.6 (0x0000762ac6d9b000)\n\tlibxcb-xkb.so.1 => /lib/x86_64-linux-gnu/libxcb-xkb.so.1 (0x0000762ac4ecb000)\n\tlibbsd.so.0 => /lib/x86_64-linux-gnu/libbsd.so.0 (0x0000762ac4eb5000)\n\tlibmd.so.0 => /lib/x86_64-linux-gnu/libmd.so.0 (0x0000762ac4ea6000)\n",
+  "qualification": "PENDING: physical display/IME, Windows/macOS and authenticated ACP not run"
+}

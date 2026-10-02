@@ -1,0 +1,218 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M0QualificationResults",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "timestamp",
+    "target_platform",
+    "gates",
+    "metrics",
+    "pins",
+    "recommendations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "timestamp": {
+      "type": "string"
+    },
+    "target_platform": {
+      "type": "object",
+      "required": [
+        "os",
+        "arch",
+        "triple",
+        "status"
+      ],
+      "properties": {
+        "os": {
+          "type": "string"
+        },
+        "arch": {
+          "type": "string"
+        },
+        "triple": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "QUALIFIED",
+            "BLOCKED",
+            "PENDING"
+          ]
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "required": [
+        "managed_compilation",
+        "gpui_startup",
+        "renderer_worker",
+        "acp_task",
+        "selection_anchor"
+      ],
+      "properties": {
+        "managed_compilation": {
+          "type": "object",
+          "required": [
+            "passed",
+            "notes"
+          ],
+          "properties": {
+            "passed": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "evidence": {
+              "$ref": "#/definitions/evidence"
+            }
+          }
+        },
+        "gpui_startup": {
+          "type": "object",
+          "required": [
+            "passed",
+            "notes"
+          ],
+          "properties": {
+            "passed": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "evidence": {
+              "$ref": "#/definitions/evidence"
+            }
+          }
+        },
+        "renderer_worker": {
+          "type": "object",
+          "required": [
+            "passed",
+            "notes"
+          ],
+          "properties": {
+            "passed": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "evidence": {
+              "$ref": "#/definitions/evidence"
+            }
+          }
+        },
+        "acp_task": {
+          "type": "object",
+          "required": [
+            "status",
+            "notes"
+          ],
+          "properties": {
+            "status": {
+              "type": "string",
+              "enum": [
+                "PASSED",
+                "FAILED",
+                "NOT_RUN"
+              ]
+            },
+            "notes": {
+              "type": "string"
+            },
+            "evidence": {
+              "$ref": "#/definitions/evidence"
+            }
+          }
+        },
+        "selection_anchor": {
+          "type": "object",
+          "required": [
+            "passed",
+            "notes"
+          ],
+          "properties": {
+            "passed": {
+              "type": "boolean"
+            },
+            "notes": {
+              "type": "string"
+            },
+            "evidence": {
+              "$ref": "#/definitions/evidence"
+            }
+          }
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0
+      }
+    },
+    "pins": {
+      "type": "object",
+      "required": [
+        "rust_compiler",
+        "gpui_rev",
+        "fframes_version"
+      ],
+      "properties": {
+        "rust_compiler": {
+          "type": "string"
+        },
+        "gpui_rev": {
+          "type": "string"
+        },
+        "fframes_version": {
+          "type": "string"
+        },
+        "acp_version": {
+          "type": "string"
+        }
+      }
+    },
+    "recommendations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "build_evidence": {
+      "type": "object"
+    }
+  },
+  "definitions": {
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": [
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "minLength": 1
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          }
+        }
+      }
+    }
+  }
+}

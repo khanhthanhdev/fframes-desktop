@@ -1,0 +1,11 @@
+fframes Desktop Studio — Managed SDK Third-Party Notices and Licenses
+
+This distribution and its managed SDK artifacts may incorporate components from:
+1. Rust Toolchain (Apache-2.0 / MIT)
+   Copyright (c) The Rust Project Developers
+2. FFmpeg (LGPL v2.1+ / GPL v2+)
+   Copyright (c) FFmpeg developers
+3. GPUI (Apache-2.0)
+   Copyright (c) Zed Industries, Inc.
+4. tiny-skia / resvg (MPL-2.0)
+   Copyright (c) Yevhenii Reizner

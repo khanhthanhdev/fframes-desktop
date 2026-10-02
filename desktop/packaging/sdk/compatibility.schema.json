@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CompatibilityManifest",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "sdk_id",
+    "compatible_app_range",
+    "target_triple",
+    "arch",
+    "os_baseline",
+    "rust_toolchain",
+    "fframes_version",
+    "cargo_fframes_version",
+    "artifacts",
+    "ffmpeg",
+    "host_prerequisites"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "sdk_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "compatible_app_range": {
+      "type": "string"
+    },
+    "target_triple": {
+      "type": "string"
+    },
+    "arch": {
+      "type": "string"
+    },
+    "os_baseline": {
+      "type": "string"
+    },
+    "rust_toolchain": {
+      "type": "object",
+      "required": ["channel", "components", "targets"],
+      "properties": {
+        "channel": { "type": "string" },
+        "components": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "targets": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "fframes_version": { "type": "string" },
+    "cargo_fframes_version": { "type": "string" },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "url", "sha256", "size_bytes", "destination_subdir"],
+        "properties": {
+          "name": { "type": "string" },
+          "url": { "type": "string" },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[a-fA-F0-9]{64}$"
+          },
+          "size_bytes": { "type": "integer", "minimum": 0 },
+          "destination_subdir": { "type": "string" }
+        }
+      }
+    },
+    "ffmpeg": {
+      "type": "object",
+      "required": ["tag", "link_mode", "headers_rel_path", "libs_rel_path"],
+      "properties": {
+        "tag": { "type": "string" },
+        "link_mode": { "type": "string", "enum": ["static", "shared"] },
+        "headers_rel_path": { "type": "string" },
+        "libs_rel_path": { "type": "string" },
+        "bin_rel_path": { "type": ["string", "null"] }
+      }
+    },
+    "host_prerequisites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "description", "command", "args", "package_name", "required"],
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "command": { "type": "string" },
+          "args": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "package_name": { "type": "string" },
+          "required": { "type": "boolean" }
+        }
+      }
+    }
+  }
+}

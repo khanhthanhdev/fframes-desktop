@@ -1,0 +1,22 @@
+{
+  "host_pid": 2142614,
+  "crashed_worker_pid": 2162951,
+  "crashed_generation": 1,
+  "restart_worker_process": "2164596 2142614 /tmp/studio-native-offline-complete/home/.fframes/projects/phase-zero-annotated-video/target/debug/studio-annotated-video --worker --frame-port 34651 --generation 2 --revision 82c1676e84b76afbc61aaa0403d54ed22926cd30a098895b3df207713132310e",
+  "restarted_generation": 2,
+  "crashed_worker_reaped": true,
+  "changed_source_worker_process": "2167431 2142614 /tmp/studio-native-offline-complete/home/.fframes/projects/phase-zero-annotated-video/target/debug/studio-annotated-video --worker --frame-port 33507 --generation 3 --revision b3ea5684a955fcf543c3e024e83fa5d3daf53a84d9edd0db628903c934f9fc6d",
+  "changed_source_generation": 3,
+  "host_closed_cleanly": true,
+  "worker_reaped_on_close": true,
+  "native_input_after_crash": "alive after worker crash",
+  "last_image_preserved": true,
+  "stale_revision_rejected": true,
+  "rebuilt_title": "fframes native revision",
+  "updated_snippet_selected": true,
+  "application_sha256": "ba4ad6acb2f990e38b45373df5400f4e0519b4537bb24159c6a60137c2becab2",
+  "display": ":95",
+  "isolated_uid": 65534,
+  "external_network_disabled": true,
+  "source": "Native pointer/keyboard actions and process-PID checks; screenshots retained beside this record"
+}

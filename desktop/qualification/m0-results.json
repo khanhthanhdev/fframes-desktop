@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "timestamp": "2026-10-01T16:27:56Z",
+  "target_platform": {
+    "os": "linux",
+    "arch": "x86_64",
+    "triple": "x86_64-unknown-linux-gnu",
+    "status": "PENDING",
+    "evidence_scope": "Linux X11/Xvfb; software renderer requested; no physical display/IME qualification"
+  },
+  "gates": {
+    "managed_compilation": {
+      "passed": true,
+      "notes": "Linux unprivileged UID65534, fresh home/Cargo cache, external-network-disabled run installed the packaged SDK. Before promotion, staged CPU template and annotated worker compiled/rendered PNGs. After promotion, a fresh worker project/target compiled and launched without network access. Host native linker/development prerequisites were preinstalled. Windows/macOS remain unqualified.",
+      "evidence": [
+        {
+          "path": "evidence/linux-x11-2026-10-01/environment.json",
+          "sha256": "2c4714f667e4afd2e42c67f152881f69262fe78e83057b308e4e9189e6a70627"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/sdk-compatibility.json",
+          "sha256": "7c0635098076abb2e9d1cb519b1e0eb3295899b15104c41796cb10233ad5bbd6"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/presentation.json",
+          "sha256": "4f902b6888015ecc13f2f15e105c1ec3eec4b4c793a979e8a9e357e88ae40003"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/package.json",
+          "sha256": "077f59f7a8391af3dd056aab9a9025831b7ece39336474e4cddaa7a0714096c5"
+        }
+      ]
+    },
+    "gpui_startup": {
+      "passed": false,
+      "notes": "Native X11/Xvfb run confirmed 1,000 painted images and 2,000 verified real-worker renders, native keyboard input and UI heartbeat telemetry. Queue/current-image counters peaked at 1; 1,000 release requests, 0 failures. Physical-display GPU resources, pixels/alpha readback and real IME composition remain PENDING; this composite gate is not passed.",
+      "evidence": [
+        {
+          "path": "evidence/linux-x11-2026-10-01/presentation.json",
+          "sha256": "4f902b6888015ecc13f2f15e105c1ec3eec4b4c793a979e8a9e357e88ae40003"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/environment.json",
+          "sha256": "2c4714f667e4afd2e42c67f152881f69262fe78e83057b308e4e9189e6a70627"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/native-window.png",
+          "sha256": "f2f9daa1bcdc56fa55b28bf1ea04e7fefb8585b40f78f67744eb139114db7b50"
+        }
+      ]
+    },
+    "renderer_worker": {
+      "passed": true,
+      "notes": "Linux X11 packaged GUI displayed actual managed-worker frames. Native force-crash reaped generation 1 while retaining its image and accepting keyboard input; restart 2 displayed pixels; changed-source rebuild 3 displayed the revised title. GUI close reaped the worker. Dedicated frame/control identities and deadlines covered by focused tests. Windows/macOS native isolation remains unqualified.",
+      "evidence": [
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-lifecycle.json",
+          "sha256": "493ce09c17cc5f8070342cbc4bb260474ddc5ee1266002f4e3b2da111a53c266"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-connected.png",
+          "sha256": "240fb4a42cc5833df32f3a5096405b1d02ed36aad211ca5c8ea906b36cd236ef"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-crashed.png",
+          "sha256": "21af1ac1b1a063467c3ecb3b5fd77f6e2e5f3089a59a186eaaaf4c856511065d"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-restarted.png",
+          "sha256": "0ebc9046f98265e53a4e35e96006b757cb894b36359685af4be876f6e1501aaf"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-rebuilt-selection.png",
+          "sha256": "508bd6d2784097c15a57f91933994b9aefc19d06dec461403c87c7fcafb06223"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-package.json",
+          "sha256": "46925c94bcd69dd92c85ae7e7f99f908d54d7b3d62b6b61ce4ccaceac44712e1"
+        }
+      ]
+    },
+    "acp_task": {
+      "status": "NOT_RUN",
+      "notes": "Configurable ACP v1 stdio sessions support streaming, permissions, same-session clarification replies, authoritative completion, isolated edits/rebuild and cancellation. Twelve ACP subprocess/unit tests pass. Authenticated adapter qualification remains NOT_RUN by user choice."
+    },
+    "selection_anchor": {
+      "passed": true,
+      "notes": "Linux native pointer events selected intro.title through painted letterbox geometry and showed its exact Rust snippet. Changing source after presentation rejected selection; managed rebuild generation3 displayed changed text and selected the refreshed span/snippet. Revision/generation/hash/path/ambiguous-marker cases also pass focused tests. Windows/macOS remain unqualified.",
+      "evidence": [
+        {
+          "path": "evidence/linux-x11-2026-10-01/presentation.json",
+          "sha256": "4f902b6888015ecc13f2f15e105c1ec3eec4b4c793a979e8a9e357e88ae40003"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/native-window.png",
+          "sha256": "f2f9daa1bcdc56fa55b28bf1ea04e7fefb8585b40f78f67744eb139114db7b50"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-stale-selection.png",
+          "sha256": "a5dc80ac7447398a84369ede1c65c5611239126f631e0099782f33fcf31570d5"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-rebuilt-selection.png",
+          "sha256": "508bd6d2784097c15a57f91933994b9aefc19d06dec461403c87c7fcafb06223"
+        },
+        {
+          "path": "evidence/linux-x11-2026-10-01/worker-lifecycle.json",
+          "sha256": "493ce09c17cc5f8070342cbc4bb260474ddc5ee1266002f4e3b2da111a53c266"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "confirmed_presentations": 1000,
+    "verified_render_requests": 2000,
+    "coalesced_seeks": 2000,
+    "paint_submissions": 1000,
+    "release_requests": 1000,
+    "release_failures": 0,
+    "queue_high_water": 1,
+    "managed_current_images_high_water": 1,
+    "host_rss_baseline_bytes": 189325312,
+    "host_rss_high_water_bytes": 1058594816,
+    "worker_rss_high_water_bytes": 35778560,
+    "heartbeat_samples": 2878,
+    "heartbeat_max_gap_ms": 78.535277,
+    "render_transfer_ms": 84881.03421999993,
+    "conversion_ms": 5300.2675089999975,
+    "elapsed_ms": 145400.38078
+  },
+  "pins": {
+    "rust_compiler": "1.98.1",
+    "gpui_rev": "1a84d5d92bd7d6c1cabb116062650af545783fe9",
+    "fframes_version": "1.1.0",
+    "acp_version": "1"
+  },
+  "recommendations": [
+    "Retain the isolated desktop workspace and owned external renderer process.",
+    "Qualify physical GPU pixel/alpha/readback/resource behavior and IME; execute Windows/macOS native gates before declaring Phase Zero qualified.",
+    "Configure an ACP adapter; authenticated edit/cancellation qualification remains deferred by user choice."
+  ],
+  "build_evidence": {
+    "desktop_tests_passed": 45,
+    "protocol_runtime_tests_passed": 10,
+    "packaging_tests_passed": 5,
+    "real_worker_roundtrip": "PASSED",
+    "native_packaged_binary": "PASSED: exact executable SHA-256 in environment/package evidence",
+    "linux_account_network_isolation": "PASSED",
+    "physical_display_ime": "NOT_RUN",
+    "windows_macos_native": "NOT_RUN",
+    "remote_ci_workflow": "NOT_RUN",
+    "authenticated_acp": "NOT_RUN"
+  }
+}

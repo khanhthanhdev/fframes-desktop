@@ -1,0 +1,123 @@
+name: Desktop feasibility artifacts
+
+on:
+  pull_request:
+    paths:
+      - "desktop/**"
+      - "fframes-studio-*/**"
+      - ".github/workflows/desktop-phase-zero.yml"
+  push:
+    branches: [main]
+    paths:
+      - "desktop/**"
+      - "fframes-studio-*/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - runner: windows-2022
+            target: x86_64-pc-windows-msvc
+          - runner: macos-15
+            target: aarch64-apple-darwin
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: bash
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+      CARGO_TARGET_DIR: ${{ runner.temp }}/studio-native
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt, clippy
+      - name: Assert native architecture
+        run: |
+          python -c 'import subprocess; assert "host: ${{ matrix.target }}" in subprocess.check_output(["rustc", "-vV"], text=True)'
+      - name: Linux native prerequisites
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm xvfb xdotool mesa-vulkan-drivers python3-pil iproute2 util-linux
+      - name: macOS native prerequisites
+        if: runner.os == 'macOS'
+        run: brew install pkg-config nasm
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+      - name: Build pinned native FFmpeg install
+        if: runner.os != 'Windows'
+        run: |
+          python desktop/scripts/build-native-ffmpeg.py --source "$RUNNER_TEMP/ffmpeg-source" --out "$RUNNER_TEMP/ffmpeg-native"
+          echo "FFMPEG_DIR=$RUNNER_TEMP/ffmpeg-native" >> "$GITHUB_ENV"
+      - name: Windows FFmpeg build dependency
+        if: runner.os == 'Windows'
+        run: |
+          # A build dependency, not a qualified or published SDK pin.
+          distribution=ffmpeg-n9.0-latest-win64-gpl-shared-9.0
+          curl -fL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$distribution.zip" -o "$RUNNER_TEMP/ffmpeg.zip"
+          7z x "$RUNNER_TEMP/ffmpeg.zip" -o"$RUNNER_TEMP/ffmpeg"
+          ffmpeg_dir="$(cygpath -w "$RUNNER_TEMP/ffmpeg/$distribution")"
+          echo "FFMPEG_DIR=$ffmpeg_dir" >> "$GITHUB_ENV"
+          echo "$ffmpeg_dir\bin" >> "$GITHUB_PATH"
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> "$GITHUB_ENV"
+      - name: Focused tests and lint
+        run: |
+          cargo fmt --manifest-path desktop/Cargo.toml --all --check
+          cargo test --locked --manifest-path desktop/Cargo.toml -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio
+          cargo clippy --locked --manifest-path desktop/Cargo.toml -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio --all-targets -- -D warnings
+          cargo test --locked -p fframes-studio-protocol -p fframes-studio-runtime
+          python desktop/scripts/test-packaging.py
+          python desktop/scripts/validate-qualification.py desktop/qualification/m0-results.json
+      - name: Build and render annotated worker
+        run: |
+          cargo build --release --manifest-path desktop/fixtures/annotated-video-overlay/Cargo.toml
+          cd desktop/fixtures/annotated-video-overlay
+          cargo run --release -- frame 0 -o "$RUNNER_TEMP/worker-frame"
+      - name: Real worker frame, anchor, crash and restart
+        run: cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test worker_roundtrip -- --ignored
+      - name: Assemble and verify native offline SDK
+        run: python desktop/scripts/assemble-phase-zero-sdk.py --out "$RUNNER_TEMP/studio-sdk"
+      - name: Install SDK and launch managed worker
+        run: SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test managed_worker -- --ignored
+      - name: Package native app and SDK artifact
+        run: python desktop/scripts/package-phase-zero.py --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" --sdk-bundle "$RUNNER_TEMP/studio-sdk"
+      - name: Linux isolated-account offline native presentation, input and source click
+        if: runner.os == 'Linux'
+        run: |
+          sudo /usr/bin/python3 desktop/scripts/qualify-linux-native.py --application "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}/bin/fframes-studio" --bundle "$RUNNER_TEMP/studio-sdk" --out "$RUNNER_TEMP/linux-native-evidence" --isolated-user
+      - name: Retain artifact and pending qualification record
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.zip
+            ${{ runner.temp }}/worker-frame/*.png
+            ${{ runner.temp }}/linux-native-evidence/presentation.json
+            ${{ runner.temp }}/linux-native-evidence/environment.json
+            ${{ runner.temp }}/linux-native-evidence/native-window.png
+            ${{ runner.temp }}/linux-native-evidence/application.log
+          if-no-files-found: error
+          retention-days: 14
+
+  # Physical-display/IME, Windows/macOS interactive and authenticated ACP gates
+  # need their own recorded runs; an Xvfb workload does not qualify those gates.
