@@ -1,0 +1,18 @@
+[package]
+name = "fframes-studio-runtime"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Worker runtime serving loop and IPC transport for fframes desktop studio"
+
+[dependencies]
+fframes = { workspace = true }
+fframes-studio-protocol = { workspace = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"
+parking_lot = "0.12"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

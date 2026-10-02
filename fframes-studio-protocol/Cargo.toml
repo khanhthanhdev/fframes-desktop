@@ -1,0 +1,11 @@
+[package]
+name = "fframes-studio-protocol"
+version = "0.1.0"
+edition = "2024"
+authors = ["Dmitriy Kovalenko <dmtr.kovalenko@outlook.com>"]
+license = "MIT"
+description = "Shared protocol contracts for fframes desktop studio and renderer worker"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

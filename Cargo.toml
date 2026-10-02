@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
 members = [
+    "fframes-studio-protocol",
+    "fframes-studio-runtime",
     "e2e",
     "svgr-macro",
     "webvtt-parser",
@@ -49,6 +51,7 @@ members = [
     "examples/signal-lab",
     "examples/fframes-intro",
 ]
+exclude = ["desktop"]
 
 [workspace.lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = [
@@ -114,3 +117,5 @@ fframes = { path = "fframes", version = "1.1.0" }
 webvtt-parser = { path = "webvtt-parser", version = "1.1.0" }
 fframes_skia_renderer = { path = "fframes-skia-renderer", version = "1.1.0" }
 fframes_native_player = { path = "fframes-native-player", version = "1.1.0" }
+fframes-studio-protocol = { path = "fframes-studio-protocol", version = "0.1.0" }
+fframes-studio-runtime = { path = "fframes-studio-runtime", version = "0.1.0" }
