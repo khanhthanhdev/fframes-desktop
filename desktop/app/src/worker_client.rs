@@ -605,7 +605,9 @@ impl WorkerClient {
                 }
             }
         };
+        frame_stream.set_nonblocking(false)?;
         frame_stream.set_read_timeout(Some(Duration::from_secs(30)))?;
+        frame_stream.set_write_timeout(Some(Duration::from_secs(30)))?;
 
         self.attach_child(child_arc);
         self.attach_pipes(stdin, stdout, frame_stream);

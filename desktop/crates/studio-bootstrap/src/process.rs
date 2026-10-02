@@ -4,7 +4,9 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(unix)]
+use std::time::Instant;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -256,6 +258,8 @@ pub struct TrackedChild {
     #[cfg(windows)]
     job_handle: windows_sys::Win32::Foundation::HANDLE,
 }
+unsafe impl Send for TrackedChild {}
+unsafe impl Sync for TrackedChild {}
 
 impl TrackedChild {
     pub fn pid(&self) -> u32 {
@@ -306,7 +310,7 @@ impl TrackedChild {
     /// Gracefully terminate the child process and its entire process tree/group.
     /// Sends SIGTERM (or closes job on Windows), allows up to `drain_timeout` for exit,
     /// then forces SIGKILL if any processes in the tree remain.
-    pub fn terminate_gracefully(&mut self, drain_timeout: Duration) -> Result<(), ProcessError> {
+    pub fn terminate_gracefully(&mut self, _drain_timeout: Duration) -> Result<(), ProcessError> {
         #[cfg(unix)]
         {
             let child_exited = matches!(self.child.try_wait(), Ok(Some(_)));
@@ -321,7 +325,7 @@ impl TrackedChild {
 
             let start = Instant::now();
             let poll_interval = Duration::from_millis(20);
-            while start.elapsed() < drain_timeout {
+            while start.elapsed() < _drain_timeout {
                 let _ = self.child.try_wait();
                 if !is_process_group_alive(self.pgid) {
                     let _ = self.child.wait();
