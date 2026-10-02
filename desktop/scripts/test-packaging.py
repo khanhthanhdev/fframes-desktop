@@ -55,6 +55,12 @@ class ArtifactTests(unittest.TestCase):
             (root / "include/libavutil/ffversion.h").write_text('#define FFMPEG_VERSION "6.1.1"')
             with self.assertRaisesRegex(ValueError, "found 6.1.1"):
                 assembly.validate_ffmpeg(root, "9.0.0")
+            (root / "include/libavutil/ffversion.h").write_text('#define FFMPEG_VERSION "n9.0.2-22-g46d8f462ee-20261001"')
+            for lib in ["libavcodec", "libavformat", "libavutil", "libswscale", "libswresample"]:
+                (root / "include" / lib).mkdir(parents=True, exist_ok=True)
+                (root / "lib").mkdir(parents=True, exist_ok=True)
+                (root / "lib" / f"{lib}.lib").write_text("stub")
+            self.assertEqual(assembly.validate_ffmpeg(root, "9.0.0"), "n9.0.2-22-g46d8f462ee-20261001")
 
     def test_standalone_workspace_serializer_preserves_nested_lints(self):
         workspace = {"members": ["fframes"], "lints": {"rust": {"unexpected_cfgs": {"level": "warn", "check-cfg": ["cfg(example)"]}}}}

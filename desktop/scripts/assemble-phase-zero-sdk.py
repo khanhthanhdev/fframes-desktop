@@ -55,8 +55,13 @@ def ffmpeg_version(prefix):
 
 def validate_ffmpeg(prefix, expected):
     version = ffmpeg_version(prefix)
-    valid = {expected, expected.removesuffix(".0")}
-    if not any(re.match(rf"^n?{re.escape(v)}(?:$|[-+])", version) for v in valid):
+    major_minor = (
+        re.match(r"^(\d+\.\d+)", expected).group(1)
+        if re.match(r"^(\d+\.\d+)", expected)
+        else expected
+    )
+    pattern = rf"^n?{re.escape(major_minor)}(?:\.\d+)?(?:$|[-+._])"
+    if not re.match(pattern, version):
         raise ValueError(f"Expected FFmpeg {expected}, found {version}; refusing to mislabel host libraries")
     for library in ["libavcodec", "libavformat", "libavutil", "libswscale", "libswresample"]:
         if not (prefix / "include" / library).is_dir():
