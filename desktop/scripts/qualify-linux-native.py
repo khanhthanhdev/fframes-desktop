@@ -79,6 +79,8 @@ def qualify(args):
                     p.chmod(p.stat().st_mode | 0o004)
                 except Exception:
                     pass
+        os.chown(args.out, 65534, 65534)
+        args.out.chmod(0o775)
         for root_dir, dirs, files in os.walk(args.out):
             for d in dirs:
                 p = Path(root_dir) / d
@@ -137,9 +139,12 @@ def qualify(args):
                 log_path = args.out / "application.log"
                 if log_path.is_file():
                     sys.stderr.write(f"\n=== application.log ===\n{log_path.read_text()}\n======================\n")
+                presentation_path = args.out / "presentation.json"
+                if presentation_path.is_file():
+                    sys.stderr.write(f"\n=== presentation.json ===\n{presentation_path.read_text()}\n======================\n")
                 compositor_log_path = args.out / "compositor.log"
                 if compositor_log_path.is_file():
-                    sys.stderr.write(f"\n=== compositor.log ===\n{compositor_log_path.read_text()}\n======================\n")
+                    sys.stderr.write(f"\n=== compositor.log ===\n{compositor_log_path.read_text()[-4096:]}\n======================\n")
                 raise RuntimeError(f"Native application failed ({application.returncode}); inspect application.log")
             record = json.loads((args.out / "presentation.json").read_text())
             if not record["completed"] or record["confirmed_presentations"] != 1000 or record["verified_render_requests"] != 2000:

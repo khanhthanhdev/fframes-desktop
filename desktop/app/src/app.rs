@@ -477,6 +477,7 @@ impl StudioSpikeApp {
                 .map_err(|e| e.to_string())
                 .and_then(|bytes| std::fs::write(&output, bytes).map_err(|e| e.to_string()));
             if let Err(error) = result {
+                eprintln!("Evidence write to {} failed: {error}", output.display());
                 self.status_message = format!("Evidence write failed: {error}");
             }
         }

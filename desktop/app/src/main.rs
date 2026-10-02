@@ -151,7 +151,7 @@ fn run_spike_ui(qualification: Option<PresentationQualification>) {
         cx.activate(true);
     });
     if let Some(output) = evidence_output {
-        let verified = std::fs::read(output)
+        let verified = std::fs::read(&output)
             .ok()
             .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
             .is_some_and(|record| {
@@ -162,7 +162,13 @@ fn run_spike_ui(qualification: Option<PresentationQualification>) {
                     && record["failure"].is_null()
             });
         if !verified {
-            eprintln!("Native presentation qualification did not complete; inspect evidence/logs");
+            let details = std::fs::read_to_string(&output).unwrap_or_else(|e| {
+                format!(
+                    "Could not read evidence output from {}: {e}",
+                    output.display()
+                )
+            });
+            eprintln!("Native presentation qualification did not complete: {details}");
             std::process::exit(1);
         }
     }
