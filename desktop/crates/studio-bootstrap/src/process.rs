@@ -4,6 +4,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 #[cfg(unix)]
 use std::time::Instant;
@@ -554,23 +555,51 @@ pub fn spawn_tracked(opts: SpawnOptions) -> Result<TrackedChild, ProcessError> {
     }
 }
 
+type ChildList = Arc<Mutex<Vec<Arc<Mutex<TrackedChild>>>>>;
+
 /// Global/app process tree manager to ensure all spawned children are cleaned up.
 #[derive(Clone, Default)]
 pub struct ProcessTreeManager {
-    children: Arc<Mutex<Vec<Arc<Mutex<TrackedChild>>>>>,
+    children: ChildList,
+    stopped: Arc<AtomicBool>,
+    parent: Option<ChildList>,
+    lifecycle: Arc<Mutex<()>>,
 }
 
 impl ProcessTreeManager {
     pub fn new() -> Self {
         Self {
             children: Arc::new(Mutex::new(Vec::new())),
+            stopped: Arc::new(AtomicBool::new(false)),
+            parent: None,
+            lifecycle: Arc::new(Mutex::new(())),
+        }
+    }
+
+    /// Creates a sub-manager that shares the app cancellation / shutdown signal,
+    /// publishes spawned children to the parent for app-wide shutdown, but can terminate
+    /// only its own scoped children on demand without sweeping unrelated processes.
+    pub fn sub_manager(&self) -> Self {
+        Self {
+            children: Arc::new(Mutex::new(Vec::new())),
+            stopped: Arc::clone(&self.stopped),
+            parent: Some(Arc::clone(self.parent.as_ref().unwrap_or(&self.children))),
+            lifecycle: Arc::clone(&self.lifecycle),
         }
     }
 
     pub fn spawn(&self, opts: SpawnOptions) -> Result<Arc<Mutex<TrackedChild>>, ProcessError> {
+        // Serialize spawn/publication with terminal shutdown so no child can be
+        // created after the shutdown sweep, including by a background installer.
+        let _lifecycle = self.lifecycle.lock();
+        let mut list = self.children.lock();
+        if self.is_shutdown() {
+            return Err(ProcessError::Custom(
+                "Process owner is shutting down".into(),
+            ));
+        }
         let tracked = spawn_tracked(opts)?;
         let arc_child = Arc::new(Mutex::new(tracked));
-        let mut list = self.children.lock();
         // Prune exited children whose groups/jobs are also dead
         list.retain(|c| {
             if let Some(mut lock) = c.try_lock() {
@@ -580,24 +609,59 @@ impl ProcessTreeManager {
             }
         });
         list.push(Arc::clone(&arc_child));
+        if let Some(parent) = &self.parent {
+            let mut parent_list = parent.lock();
+            parent_list.retain(|c| {
+                if let Some(mut lock) = c.try_lock() {
+                    lock.is_alive()
+                } else {
+                    true
+                }
+            });
+            parent_list.push(Arc::clone(&arc_child));
+        }
         Ok(arc_child)
     }
 
     pub fn terminate_all(&self, drain_timeout: Duration) {
+        let _lifecycle = self.lifecycle.lock();
+        self.terminate_all_locked(drain_timeout);
+    }
+
+    fn terminate_all_locked(&self, drain_timeout: Duration) {
         let list = {
             let mut l = self.children.lock();
             std::mem::take(&mut *l)
         };
         let mut survivors = Vec::new();
+        let mut terminated = Vec::new();
         for child_arc in list {
             let mut child = child_arc.lock();
             let _ = child.terminate_gracefully(drain_timeout);
             if child.is_alive() {
                 survivors.push(Arc::clone(&child_arc));
+            } else {
+                terminated.push(Arc::clone(&child_arc));
             }
+        }
+        if let Some(parent) = &self.parent {
+            parent
+                .lock()
+                .retain(|child| !terminated.iter().any(|done| Arc::ptr_eq(child, done)));
         }
         // Preserve ownership if cleanup fails; active_count must not claim success.
         self.children.lock().extend(survivors);
+    }
+
+    /// Terminal cancellation shared by all clones; unlike terminate_all, rejects future spawns.
+    pub fn shutdown(&self, drain_timeout: Duration) {
+        let _lifecycle = self.lifecycle.lock();
+        self.stopped.store(true, Ordering::Release);
+        self.terminate_all_locked(drain_timeout);
+    }
+
+    pub fn is_shutdown(&self) -> bool {
+        self.stopped.load(Ordering::Acquire)
     }
 
     pub fn active_count(&self) -> usize {
@@ -616,6 +680,7 @@ impl ProcessTreeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Barrier;
 
     #[test]
     fn test_child_environment_allowlist_isolation() {
@@ -684,5 +749,116 @@ mod tests {
         assert_eq!(manager.active_count(), 2);
         manager.terminate_all(Duration::from_millis(200));
         assert_eq!(manager.active_count(), 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn terminal_shutdown_reaps_and_prevents_background_clone_from_spawning() {
+        let manager = ProcessTreeManager::new();
+        let background = manager.clone();
+        let mut options = SpawnOptions::new("sleep");
+        options.arg("30");
+        let child = background.spawn(options).unwrap();
+        manager.shutdown(Duration::ZERO);
+        assert!(child.lock().try_wait().unwrap().is_some());
+        assert!(background.spawn(SpawnOptions::new("sleep")).is_err());
+        assert_eq!(background.active_count(), 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn concurrent_scoped_spawn_and_parent_shutdown_never_leaves_a_live_child() {
+        for _ in 0..32 {
+            let parent = ProcessTreeManager::new();
+            let scoped = parent.sub_manager();
+            let barrier = Arc::new(Barrier::new(2));
+            let spawn_barrier = Arc::clone(&barrier);
+            let spawn_thread = std::thread::spawn(move || {
+                let mut options = SpawnOptions::new("sleep");
+                options.arg("30");
+                spawn_barrier.wait();
+                scoped.spawn(options)
+            });
+
+            barrier.wait();
+            std::thread::sleep(Duration::from_micros(100));
+            parent.shutdown(Duration::ZERO);
+            let spawned = spawn_thread.join().expect("spawn thread panicked");
+
+            // Inspect the first shutdown's outcome before cleanup: a second sweep
+            // could hide a child published after the first sweep returned.
+            let child_exited = spawned
+                .as_ref()
+                .map(|child| child.lock().try_wait().expect("wait status").is_some())
+                .unwrap_or(true);
+            let tracked = parent.active_count();
+            // Always clean up before assertions so a failed expectation cannot leak a process.
+            parent.shutdown(Duration::ZERO);
+
+            assert!(child_exited, "successful concurrent spawn remained alive");
+            assert_eq!(tracked, 0, "parent retained a live concurrent child");
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn sub_manager_scopes_cleanup_while_parent_retains_shutdown_ownership() {
+        let parent = ProcessTreeManager::new();
+        let mut p_opts = SpawnOptions::new("sleep");
+        p_opts.arg("30");
+        let parent_child = parent.spawn(p_opts).unwrap();
+
+        let sub = parent.sub_manager();
+        let mut s_opts = SpawnOptions::new("sleep");
+        s_opts.arg("30");
+        let sub_child = sub.spawn(s_opts).unwrap();
+
+        // Sub-manager terminates only its own scoped child
+        sub.terminate_all(Duration::from_millis(100));
+        let sub_exited = sub_child.lock().try_wait().unwrap().is_some();
+        let parent_survived = parent_child.lock().try_wait().unwrap().is_none();
+        let sub_count = sub.active_count();
+        let parent_count = parent.active_count();
+
+        // Parent shutdown terminates remaining children and cancels sub
+        parent.shutdown(Duration::ZERO);
+        let parent_exited = parent_child.lock().try_wait().unwrap().is_some();
+
+        assert!(sub_exited);
+        assert!(parent_survived);
+        assert_eq!(sub_count, 0);
+        assert_eq!(parent_count, 1);
+        assert!(parent_exited);
+        assert!(sub.is_shutdown());
+        assert!(sub.spawn(SpawnOptions::new("sleep")).is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn nested_scope_cleanup_preserves_unrelated_children() {
+        let parent = ProcessTreeManager::new();
+        let sibling = parent.sub_manager();
+        let nested = parent.sub_manager().sub_manager();
+
+        let mut sibling_options = SpawnOptions::new("sleep");
+        sibling_options.arg("30");
+        let sibling_child = sibling.spawn(sibling_options).unwrap();
+        let mut nested_options = SpawnOptions::new("sleep");
+        nested_options.arg("30");
+        let nested_child = nested.spawn(nested_options).unwrap();
+
+        nested.terminate_all(Duration::ZERO);
+        let nested_exited = nested_child.lock().try_wait().unwrap().is_some();
+        let sibling_survived = sibling_child.lock().try_wait().unwrap().is_none();
+        let parent_count = parent.active_count();
+
+        // Clean up both scopes before asserting observations.
+        parent.shutdown(Duration::ZERO);
+        let sibling_exited = sibling_child.lock().try_wait().unwrap().is_some();
+
+        assert!(nested_exited);
+        assert!(sibling_survived);
+        assert_eq!(parent_count, 1);
+        assert!(sibling_exited);
     }
 }
