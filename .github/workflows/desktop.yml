@@ -84,7 +84,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm
+          sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm xvfb xdotool pulseaudio pulseaudio-utils mesa-vulkan-drivers
+          python3 -m pip install Pillow
           llvm_lib="$(find /usr/lib -name "libclang.so" 2>/dev/null | head -n1)"
           if [ -n "$llvm_lib" ]; then
             echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
@@ -127,6 +128,7 @@ jobs:
           cargo test --locked -p fframes-studio-protocol -p fframes-studio-runtime
           python3 desktop/scripts/test-packaging.py
           python3 desktop/scripts/validate-qualification.py desktop/qualification/m0-results.json
+          python3 desktop/scripts/validate-qualification.py desktop/qualification/m2-results.json
       - name: Build and render annotated worker
         run: |
           cargo build --release --manifest-path desktop/fixtures/annotated-video-overlay/Cargo.toml
@@ -140,6 +142,35 @@ jobs:
         run: SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test managed_worker -- --ignored
       - name: Portable project and SDK relocation with real worker
         run: SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test portable_managed_worker -- --ignored
+      - name: Revision-safe preview and compiled timeline integration
+        run: SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test preview_coordination --test timeline_controls -- --ignored
+      - name: Real SDK CPU pixels and audio mix parity
+        run: |
+          if [ "$RUNNER_OS" = Linux ]; then
+            fixture="$(mktemp -d /tmp/studio-m2-XXXXXX)/video"
+            echo "STUDIO_M2_FIXTURE=$fixture" >> "$GITHUB_ENV"
+            echo "STUDIO_M2_HOME=$RUNNER_TEMP/m2-home" >> "$GITHUB_ENV"
+            export AUDIO_PREVIEW_FIXTURE_ROOT="$fixture"
+            export AUDIO_PREVIEW_SDK_HOME="$RUNNER_TEMP/m2-home/.fframes/sdk"
+          fi
+          SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" AUDIO_PREVIEW_EVIDENCE="$RUNNER_TEMP/m2-parity.json" cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test audio_preview real_sdk_frame_audio_and_retained_source -- --ignored
+      - name: Linux M2 native virtual-output stress and cleanup
+        if: runner.os == 'Linux'
+        run: |
+          cargo build --locked --manifest-path desktop/Cargo.toml -p fframes-studio --bin fframes-studio
+          FFRAMES_SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" python3 desktop/scripts/qualify-m2-playback.py --application "$CARGO_TARGET_DIR/debug/fframes-studio" --project "$STUDIO_M2_FIXTURE" --sdk-home "$STUDIO_M2_HOME" --out "$RUNNER_TEMP/m2-native" --virtual-audio --inject-build-failures
+      - name: Retain M2 evidence, including failed runs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: m2-evidence-${{ matrix.target }}
+          path: |
+            ${{ runner.temp }}/m2-parity.json
+            ${{ runner.temp }}/m2-native/*.json
+            ${{ runner.temp }}/m2-native/*.png
+            ${{ runner.temp }}/m2-native/*.log
+          if-no-files-found: warn
+          retention-days: 14
       - name: Package native app and SDK artifact
         run: python3 desktop/scripts/package-phase-zero.py --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" --sdk-bundle "$RUNNER_TEMP/studio-sdk"
       - name: Retain artifact and pending qualification record
