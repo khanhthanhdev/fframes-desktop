@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+pub mod preview;
+pub use preview::*;
+
 pub const CURRENT_PROTOCOL_VERSION: u32 = 1;
 pub const MAX_FRAME_PAYLOAD_BYTES: usize = 64 * 1024 * 1024; // 64 MiB
 
