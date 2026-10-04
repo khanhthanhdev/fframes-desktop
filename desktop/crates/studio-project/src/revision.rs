@@ -160,9 +160,16 @@ impl SourceInventory {
     /// Unknown durable files are included to avoid silently dropping imported source.
     /// Caller must reconcile again before installing results; scanning is not a filesystem snapshot.
     pub fn scan(root: &Path) -> Result<Self, ProjectError> {
+        Self::scan_with_cancel(root, &|| false)
+    }
+    /// Cancellation is checked between directory entries and each 64 KiB read.
+    pub fn scan_with_cancel(
+        root: &Path,
+        cancelled: &impl Fn() -> bool,
+    ) -> Result<Self, ProjectError> {
         let root = fs::canonicalize(root).map_err(|e| io_error(root, e))?;
         let mut paths = Vec::new();
-        enumerate(&root, &root, &mut paths)?;
+        enumerate(&root, &root, &mut paths, cancelled)?;
         paths.sort();
         let mut files = Vec::new();
         let mut buffer = [0; 64 * 1024];
@@ -175,6 +182,9 @@ impl SourceInventory {
             let mut digest = Sha256::new();
             let mut size = 0u64;
             loop {
+                if cancelled() {
+                    return Err(io_error(&root, "Source scan cancelled"));
+                }
                 let read = file
                     .read(&mut buffer)
                     .map_err(|e| io_error(&root.join(path.as_str()), e))?;
@@ -229,8 +239,12 @@ fn enumerate(
     root: &Path,
     directory: &Path,
     paths: &mut Vec<ProjectPath>,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<(), ProjectError> {
     for entry in fs::read_dir(directory).map_err(|e| io_error(directory, e))? {
+        if cancelled() {
+            return Err(io_error(directory, "Source scan cancelled"));
+        }
         let entry = entry.map_err(|e| io_error(directory, e))?;
         let native = entry.path();
         let relative = native
@@ -258,7 +272,7 @@ fn enumerate(
         }
         path.resolve_existing(root)?;
         if meta.is_dir() {
-            enumerate(root, &native, paths)?;
+            enumerate(root, &native, paths, cancelled)?;
         } else if meta.is_file() {
             paths.push(path);
         } else {

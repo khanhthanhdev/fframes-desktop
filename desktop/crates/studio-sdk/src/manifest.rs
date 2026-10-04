@@ -82,6 +82,11 @@ pub struct CompatibilityManifest {
     pub artifacts: Vec<SdkArtifact>,
     pub ffmpeg: FfmpegManifestInfo,
     pub host_prerequisites: Vec<HostPrerequisiteProbe>,
+    /// Absent in v1 SDK manifests. Absence means the legacy worker contract only.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preview_contract_versions: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub preview_capabilities: Vec<String>,
 }
 
 impl CompatibilityManifest {
@@ -101,6 +106,15 @@ impl CompatibilityManifest {
 
         if self.sdk_id.is_empty() {
             return Err(ManifestError::Validation("sdk_id cannot be empty".into()));
+        }
+        if self
+            .preview_contract_versions
+            .iter()
+            .any(|version| *version != 1)
+        {
+            return Err(ManifestError::Validation(
+                "unsupported preview contract version".into(),
+            ));
         }
 
         for artifact in &self.artifacts {
@@ -175,6 +189,18 @@ mod tests {
             .validate()
             .expect("default linux manifest is valid");
         assert!(!manifest.digest().is_empty());
+    }
+
+    #[test]
+    fn legacy_manifest_digest_and_serialization_are_stable() {
+        let manifest = CompatibilityManifest::default_linux_x64();
+        assert!(manifest.preview_contract_versions.is_empty());
+        let json = serde_json::to_string(&manifest).unwrap();
+        assert!(!json.contains("preview_contract"));
+        assert_eq!(
+            manifest.digest(),
+            "105670909607f0b6043ddaee5e2b98a9f2b2614271831a5cbff804b3983e764b"
+        );
     }
 
     #[test]

@@ -509,4 +509,13 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, ProjectError::DestinationAlreadyExists(_)));
     }
+
+    #[test]
+    fn generated_annotated_worker_supports_additive_preview_entry() {
+        let source = include_str!("../../../fixtures/annotated-video-overlay/src/main.rs");
+        assert!(source.contains("--preview-worker"));
+        assert!(source.contains("serve_preview_worker"));
+        assert!(source.contains("PreviewIdentity"));
+        assert!(source.contains("serve_worker("));
+    }
 }
