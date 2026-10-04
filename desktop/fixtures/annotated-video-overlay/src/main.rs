@@ -1,6 +1,8 @@
 use fframes::{Color, Duration, Frame, RenderOptions, Svgr, Video, cli};
-use fframes_studio_protocol::Rect;
-use fframes_studio_runtime::{ElementRegistration, WorkerTransport, serve_worker};
+use fframes_studio_protocol::{PreviewIdentity, Rect};
+use fframes_studio_runtime::{
+    ElementRegistration, PreviewWorkerConfig, WorkerTransport, serve_preview_worker, serve_worker,
+};
 use sha2::{Digest, Sha256};
 use std::io;
 
@@ -155,14 +157,18 @@ fn main() -> std::process::ExitCode {
             };
 
         let transport = WorkerTransport::new(io::stdin(), io::stdout(), frame_out);
-        if let Err(err) = serve_worker(
-            &video,
-            &options,
-            &registrations,
-            transport,
-            rev,
-            worker_generation,
-        ) {
+        let result = if args.iter().any(|a| a == "--preview-worker") {
+            let value = |flag: &str, fallback: &str| {
+                args.iter().position(|a| a == flag).and_then(|p| args.get(p + 1)).map_or_else(|| fallback.to_owned(), Clone::clone)
+            };
+            let identity = PreviewIdentity { project_id: value("--project-id", "annotated-video"), open_session: value("--open-session", "qualification"), source_revision: rev.into(), worker_generation };
+            let mut config = PreviewWorkerConfig::new(identity, value("--sdk-version", "standalone"), "1.1.0");
+            if args.iter().any(|a| a == "--audio-cache") { config.cache_directory = value("--audio-cache", "").into(); }
+            serve_preview_worker(&video, &options, transport, config)
+        } else {
+            serve_worker(&video, &options, &registrations, transport, rev, worker_generation)
+        };
+        if let Err(err) = result {
             eprintln!("Worker error: {err}");
             return std::process::ExitCode::FAILURE;
         }
