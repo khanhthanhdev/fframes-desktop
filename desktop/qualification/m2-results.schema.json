@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M2QualificationResults",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "timestamp", "environment", "target_platform", "gates", "metrics"],
+  "properties": {
+    "kind": { "const": "m2" },
+    "schema_version": { "const": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "clock_source", "physical_audio_evidence", "native_platform_evidence"],
+      "properties": {
+        "scope": { "type": "string", "minLength": 1 },
+        "clock_source": { "enum": ["TEST_ONLY", "PREDICTED_OUTPUT", "LIVE_OUTPUT_TIMESTAMP"] },
+        "physical_audio_evidence": { "type": "boolean" },
+        "native_platform_evidence": { "type": "boolean" }
+      }
+    },
+    "target_platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "triple", "status", "scope"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "triple": { "type": "string", "minLength": 1 },
+        "status": { "enum": ["QUALIFIED", "BLOCKED", "PENDING"] },
+        "scope": { "type": "string", "minLength": 1 }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["output_clock", "audio_modes", "revision_handoff", "native_controls", "pixel_parity", "resource_stress", "cleanup"],
+      "properties": {
+        "output_clock": { "$ref": "#/definitions/gate" },
+        "audio_modes": { "$ref": "#/definitions/gate" },
+        "revision_handoff": { "$ref": "#/definitions/gate" },
+        "native_controls": { "$ref": "#/definitions/gate" },
+        "pixel_parity": { "$ref": "#/definitions/gate" },
+        "resource_stress": { "$ref": "#/definitions/gate" },
+        "cleanup": { "$ref": "#/definitions/gate" }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "session_duration_minutes": { "$ref": "#/definitions/minutes" },
+        "seek_count": { "$ref": "#/definitions/count" },
+        "rebuild_count": { "$ref": "#/definitions/count" },
+        "seek_p95_ms": { "$ref": "#/definitions/milliseconds" },
+        "rss_slope_mib_per_min": { "$ref": "#/definitions/mibPerMinute" },
+        "video_frame_duration_ms": { "$ref": "#/definitions/milliseconds" },
+        "timestamp_residual_ms": { "$ref": "#/definitions/milliseconds" },
+        "av_error_ms": { "$ref": "#/definitions/milliseconds" }
+      }
+    }
+  },
+  "definitions": {
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "criteria", "notes"],
+      "properties": {
+        "status": { "enum": ["PASSED", "FAILED", "NOT_RUN", "PENDING"] },
+        "criteria": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string" },
+        "evidence": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "PASSED" } } },
+          "then": { "required": ["evidence"] }
+        }
+      ]
+    },
+    "minutes": { "allOf": [{ "$ref": "#/definitions/measurement" }, { "properties": { "unit": { "const": "min" } } }] },
+    "count": { "allOf": [{ "$ref": "#/definitions/measurement" }, { "properties": { "unit": { "const": "count" }, "value": { "type": "integer", "minimum": 0 } } }] },
+    "milliseconds": { "allOf": [{ "$ref": "#/definitions/measurement" }, { "properties": { "unit": { "const": "ms" } } }] },
+    "mibPerMinute": { "type": "object", "additionalProperties": false, "required": ["value", "unit"], "properties": { "value": { "type": "number" }, "unit": { "const": "MiB/min" } } },
+    "measurement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit"],
+      "properties": {
+        "value": { "type": "number", "minimum": 0 },
+        "unit": { "type": "string" }
+      }
+    }
+  }
+}

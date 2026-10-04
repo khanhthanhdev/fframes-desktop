@@ -1,0 +1,312 @@
+{
+  "cleanup": {
+    "graceful_application_exit": true,
+    "materialized_pcm_leases": [],
+    "orphaned_application_processes": [],
+    "owned_processes_alive": []
+  },
+  "environment": {
+    "application": "/root/fframes-desktop/desktop/target/debug/fframes-studio",
+    "arch": "x86_64",
+    "display": ":93",
+    "os": "Linux",
+    "project": "/tmp/studio-m2-native-final",
+    "pulse_server": "unix:/root/fframes-desktop/.amp/in/m2-qualified-run/runtime/pulse-native",
+    "release": "6.8.0-60-generic",
+    "scale": 1,
+    "sdk_home": "/root/fframes-desktop/.amp/in/stage3-home",
+    "virtual_audio": true,
+    "xvfb": true
+  },
+  "error": null,
+  "finished": true,
+  "kind": "m2-native-raw",
+  "limits_unmet": false,
+  "measurements": {
+    "audio_timing_note": "Unavailable: no physical DAC/output capture was measured.",
+    "av_error_ms": null,
+    "confirmed_seeks": 2001,
+    "elapsed_seconds": 600.276649211999,
+    "failed_builds": 5,
+    "final_audio_metrics": null,
+    "image_metrics": {
+      "dropped": 2606,
+      "queued": 1,
+      "release_failures": 0,
+      "resident": 1
+    },
+    "pump_metrics": {
+      "late_frames": 13,
+      "owned_processes": 0,
+      "queue_high_water": 1,
+      "render_max_ms": 27.619331,
+      "renders": 10358,
+      "thumbnail_queue_high_water": 12
+    },
+    "rebuilds": 50,
+    "rss_slope_mib_per_min": 1.2284996662062504,
+    "seek_p95_ms": 96.23249000287615,
+    "thumbnail_metrics": {
+      "bytes": 691200,
+      "entries": 12,
+      "fit_bounds": [
+        386.0,
+        655.0,
+        30.0,
+        27.0
+      ],
+      "high_water_bytes": 806400,
+      "high_water_entries": 14,
+      "pixels_per_second": 130.54545454545453,
+      "release_failures": 0,
+      "ruler_bounds": [
+        265.0,
+        688.0,
+        718.0,
+        20.0
+      ],
+      "scroll_x": 0.0
+    },
+    "timestamp_residual_ms": null
+  },
+  "observed_application_process_tree": [
+    {
+      "command": "/root/fframes-desktop/desktop/target/debug/fframes-studio qualify-m2 --project /tmp/studio-m2-native-final --telemetry /root/fframes-desktop/.amp/in/m2-qualified-run/telemetry.json",
+      "pid": 3234614
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-DIm30r/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-DIm30r/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 36653 --generation 1 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3241309
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-lGLfF3/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-lGLfF3/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 44137 --generation 2 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3242250
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-9gkARo/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-9gkARo/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 35799 --generation 3 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3242833
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-UnX4Zf/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-UnX4Zf/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 33455 --generation 4 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3243347
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-1JwIPo/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-1JwIPo/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 41655 --generation 5 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3243860
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-WgvnUO/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-WgvnUO/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 34009 --generation 6 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3244424
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-FvWxwB/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-FvWxwB/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 33111 --generation 7 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3244925
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-Lw3tC4/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-Lw3tC4/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 44309 --generation 8 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3245498
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-nUb4mE/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-nUb4mE/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 38499 --generation 9 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3246033
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-qixbty/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-qixbty/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 37821 --generation 10 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3246594
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-RI5qH3/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-RI5qH3/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 46051 --generation 14 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3247328
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-KqT8x2/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-KqT8x2/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 38309 --generation 15 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3247856
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-KofKlD/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-KofKlD/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 36063 --generation 16 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3248397
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-pFkT9P/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-pFkT9P/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 35555 --generation 17 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3248920
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-0hAYMF/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-0hAYMF/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 40071 --generation 18 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3249473
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-Bz55Uf/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-Bz55Uf/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 42077 --generation 19 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3249994
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-tKoPHq/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-tKoPHq/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 42425 --generation 20 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3250534
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-MR4x9m/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-MR4x9m/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 37989 --generation 21 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3251044
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-VLUS4E/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-VLUS4E/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 46043 --generation 22 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3251572
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-2GeQv9/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-2GeQv9/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 38333 --generation 26 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3252353
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-UcUhz1/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-UcUhz1/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 44307 --generation 27 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3252879
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-g0PGgv/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-g0PGgv/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 41009 --generation 28 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3253413
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-tIj9j3/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-tIj9j3/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 41157 --generation 29 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3253917
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-ru78Nb/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-ru78Nb/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 36787 --generation 30 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3254444
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-5FGxbn/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-5FGxbn/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 46691 --generation 31 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3254958
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-yik6e8/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-yik6e8/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 43657 --generation 32 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3255540
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-XsPMHh/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-XsPMHh/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 39995 --generation 33 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3256069
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-hGIt0v/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-hGIt0v/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 46353 --generation 34 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3256623
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-xwAduE/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-xwAduE/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 34001 --generation 38 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3257400
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-fvbdvN/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-fvbdvN/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 37445 --generation 39 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3257931
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-RLZ1RA/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-RLZ1RA/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 37969 --generation 40 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3258497
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-saIROT/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-saIROT/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 43707 --generation 41 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3259001
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-ouHTFk/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-ouHTFk/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 44907 --generation 42 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3259519
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-DmFgoa/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-DmFgoa/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 46373 --generation 43 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3260043
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-cSLxDm/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-cSLxDm/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 40453 --generation 44 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3260568
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-GdC9Sa/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-GdC9Sa/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 39181 --generation 45 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3261086
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-pV1OsU/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-pV1OsU/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 44955 --generation 46 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3261642
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-kGHMYK/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-kGHMYK/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 41819 --generation 50 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3262426
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-LHm2yX/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-LHm2yX/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 36035 --generation 51 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3262967
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-UDyZpG/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-UDyZpG/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 43749 --generation 52 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3263542
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-xG3wly/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-xG3wly/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 37143 --generation 53 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3264069
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-58sYhy/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-58sYhy/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 46765 --generation 54 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3264636
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-S6Zf2l/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-S6Zf2l/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 41627 --generation 55 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3265149
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-Z5Nv12/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-Z5Nv12/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 42051 --generation 56 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3265727
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-zZakPi/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-zZakPi/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 41667 --generation 57 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3266255
+    },
+    {
+      "command": "/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-HOqR49/bin/studio_worker --preview-worker --project-id 13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442 --open-session 12b5c64c-395b-4b27-90fa-804e95e715b8 --audio-cache /root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-HOqR49/bin/audio --sdk-version studio-sdk-x86_64-unknown-linux-gnu-v2 --frame-port 33215 --generation 58 --revision 06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+      "pid": 3266796
+    }
+  ],
+  "owned_processes": [
+    {
+      "command": [
+        "Xvfb",
+        ":93",
+        "-screen",
+        "0",
+        "1280x1200x24",
+        "-nolisten",
+        "tcp"
+      ],
+      "pid": 3234232
+    },
+    {
+      "command": [
+        "pulseaudio",
+        "-n",
+        "--daemonize=no",
+        "--exit-idle-time=-1",
+        "--disallow-exit=no",
+        "--use-pid-file=no",
+        "-L",
+        "module-native-protocol-unix socket=/root/fframes-desktop/.amp/in/m2-qualified-run/runtime/pulse-native auth-anonymous=1",
+        "-L",
+        "module-null-sink sink_name=m2_null rate=48000 channels=2"
+      ],
+      "pid": 3234482
+    },
+    {
+      "command": [
+        "/root/fframes-desktop/desktop/target/debug/fframes-studio",
+        "qualify-m2",
+        "--project",
+        "/tmp/studio-m2-native-final",
+        "--telemetry",
+        "/root/fframes-desktop/.amp/in/m2-qualified-run/telemetry.json"
+      ],
+      "pid": 3234614
+    }
+  ],
+  "performance_errors": [],
+  "physical_audio": false,
+  "requested": {
+    "duration_seconds": 600,
+    "inject_build_failures": true,
+    "rebuilds": 50,
+    "seeks": 2000
+  },
+  "schema_version": 1,
+  "timestamp": "2026-10-04T00:04:36.764007+00:00"
+}

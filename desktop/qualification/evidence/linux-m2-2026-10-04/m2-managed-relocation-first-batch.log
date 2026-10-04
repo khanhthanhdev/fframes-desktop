@@ -1,0 +1,39 @@
+   Compiling fframes-studio v0.1.0 (/root/fframes-desktop/desktop/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.52s
+     Running tests/managed_worker.rs (desktop/target/debug/deps/managed_worker-7d03b77d396158cf)
+
+running 1 test
+test installed_bundle_builds_and_launches_managed_worker has been running for over 60 seconds
+test installed_bundle_builds_and_launches_managed_worker ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 70.12s
+
+     Running tests/portable_managed_worker.rs (desktop/target/debug/deps/portable_managed_worker-8c98ee7da134245d)
+
+running 1 test
+test portable_project_builds_after_source_and_sdk_relocation has been running for over 60 seconds
+test portable_project_builds_after_source_and_sdk_relocation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 71.67s
+
+     Running tests/preview_coordination.rs (desktop/target/debug/deps/preview_coordination-4f5c6a82f080e437)
+
+running 1 test
+test real_failed_build_and_invalid_source_preserve_seekable_immutable_revision_and_cleanup has been running for over 60 seconds
+test real_failed_build_and_invalid_source_preserve_seekable_immutable_revision_and_cleanup ... FAILED
+
+failures:
+
+---- real_failed_build_and_invalid_source_preserve_seekable_immutable_revision_and_cleanup stdout ----
+
+thread 'real_failed_build_and_invalid_source_preserve_seekable_immutable_revision_and_cleanup' (3114075) panicked at app/tests/preview_coordination.rs:367:17:
+materialization leaked: /tmp/.tmpYkicVj/history/builds/8b066503-df4e-41fa-9e95-80c3a7ea6e3e/081f3add4ad4ebe441c58f2f57fbbdf3f39d82085d51cf4658132d83eed88cb6/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-qe3qRx
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    real_failed_build_and_invalid_source_preserve_seekable_immutable_revision_and_cleanup
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 1 filtered out; finished in 83.91s
+
+error: test failed, to rerun pass `-p fframes-studio --test preview_coordination`

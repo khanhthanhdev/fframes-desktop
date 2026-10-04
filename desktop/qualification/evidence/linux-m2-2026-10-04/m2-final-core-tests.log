@@ -1,0 +1,68 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.27s
+     Running unittests src/lib.rs (target/debug/deps/fframes-a78cc83167c3fae7)
+
+running 61 tests
+test animation::cubic_bezier::tests::test_invalid_arguments ... ok
+test animation::cubic_bezier::tests::test_linear_curves ... ok
+test animation::cubic_bezier::tests::test_extremes ... ok
+test animation::cubic_bezier::tests::test_predefined_curves ... ok
+test animation::cubic_bezier::tests::test_projected_curve ... ok
+test audio_analysis::tests::k_weighting_matches_the_spec_at_48k ... ok
+test animation::cubic_bezier::tests::test_same_instances ... ok
+test audio_analysis::tests::wav_headers ... ok
+test audio_data::tests::test_prettify_spectrum ... ok
+test color::test::alpha_methods ... ok
+test color::test::char_to_digit_test ... ok
+test color::test::hex_num_parsing ... ok
+test color::test::display_formatting ... ok
+test color::test::hex_parsing ... ok
+test diagnostics::tests::classifies_converter_warnings ... ok
+test diagnostics::tests::collects_only_inside_the_scope ... ok
+test frame::scene_offset_tests::scene_frames_keep_the_global_index ... ok
+test renderer::scheduler::tests::splits_evenly_and_respects_minimum ... ok
+test renderer::snapshot::tests::diff_ignores_small_differences ... ok
+test renderer::snapshot::tests::names_are_file_safe ... ok
+test audio_mix::tests::short_sounds_start_at_their_exact_sample ... ok
+test renderer::tests::yuv420_conversion_tests::yuv_uses_limited_range_levels ... ok
+test shader::tests::markers_resolve_only_while_the_image_lives ... ok
+test shader::tests::shadertoy_does_not_touch_number_suffixes ... ok
+test shader::tests::shadertoy_keeps_function_like_macros ... ok
+test text::tests::clip_drops_the_overflow_without_a_marker ... ok
+test tests::test_audio_map_resolve ... ok
+test renderer::tests::preview_tests::inspect_reports_missing_media_and_empty_frames ... ok
+test text::tests::ellipsis_replaces_the_characters_that_do_not_fit ... ok
+test renderer::tests::preview_tests::panics_report_frame_time_and_scene ... ok
+test text::tests::marker_wider_than_the_box_yields_nothing ... ok
+test text::tests::monospaced_fonts_count_characters_not_bytes ... ok
+test time_spec::tests::points ... ok
+test text::tests::custom_marker_width_is_accounted_for ... ok
+test transform::tests::translate_and_scale ... ok
+test transform::tests::translate_rotate_scale ... ok
+test text::tests::ellipsis_never_follows_whitespace ... ok
+test text::tests::text_that_fits_is_returned_untouched ... ok
+test shader::tests::shadertoy_expands_object_like_defines ... ok
+test time_spec::tests::short_names ... ok
+test audio_mix::tests::range_renders_start_in_the_middle_of_a_track ... ok
+test transform::tests::skew_transformations ... ok
+test transform::tests::transform_rotate_only ... ok
+test transform::tests::transform_rotate_with_origin ... ok
+test transform::tests::transform_scale_only ... ok
+test renderer::tests::preview_tests::previews_paint_the_background_and_fit_the_output_size ... ok
+test audio_mix::tests::maps_resolved_at_another_rate_are_rescaled ... ok
+test renderer::tests::preview_tests::static_raster_cache_obeys_main_thumbnail_main_scale_changes ... ok
+test transform::tests::transform_translate_only ... ok
+test time_spec::tests::ranges ... ok
+test transform::tests::translate_sclae_skew ... ok
+test audio_mix::tests::gain_pan_fades_and_offset ... ok
+test renderer::tests::yuv420_conversion_tests::yuv_base_implementation ... ok
+test renderer::scheduler::tests::every_frame_is_claimed_once_and_segments_are_contiguous ... ok
+test diagnostics::tests::finds_clipped_and_off_canvas_text ... ok
+test audio_mix::tests::resampling_keeps_a_tone_at_its_frequency_and_level ... ok
+test audio_mix::tests::ducking_follows_voice_ranges ... ok
+test audio_mix::tests::overlapping_tracks_sum_linearly_and_the_limiter_catches_peaks ... ok
+test audio_analysis::tests::full_scale_997hz_sine_in_one_channel_reads_minus_3_lufs ... ok
+test audio_analysis::tests::silence_and_sections ... ok
+test audio_analysis::tests::stereo_minus_23 ... ok
+
+test result: ok. 61 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.15s
+

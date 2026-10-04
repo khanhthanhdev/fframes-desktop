@@ -1,0 +1,376 @@
+   Compiling fframes-studio v0.1.0 (/root/fframes-desktop/desktop/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.13s
+     Running unittests src/lib.rs (desktop/target/debug/deps/fframes_studio-4fdabbd5f14c55d7)
+
+running 29 tests
+test audio_service::tests::callback_gates_do_not_consume_but_mute_underrun_and_stale_do ... ok
+test audio_service::tests::callback_maps_asymmetric_channels_and_unsigned_silence_without_allocating ... ok
+test audio_service::tests::eof_keeps_final_anchor_and_invalid_latency_is_visible_and_estimated ... ok
+test audio_service::tests::ring_wrap_is_exact_and_capacity_accounts_for_pcm_plus_packet_metadata ... ok
+test frame_image::tests::preview_fits_physical_extent_aspect_and_protocol_cap_without_upscaling ... ok
+test frame_image::tests::test_convert_rgba_to_bgra_without_stride_padding ... ok
+test frame_image::tests::test_convert_rgba_with_stride_padding_stripping ... ok
+test frame_image::tests::test_payload_too_short_rejected ... ok
+test presentation_stress::tests::stopped_and_previous_runs_cannot_complete_new_run ... ok
+test presentation_stress::tests::counts_only_matching_completions_and_finishes_at_one_thousand ... ok
+test preview_worker_client::tests::request_counter_exhaustion_does_not_wrap ... ok
+test preview_coordinator::tests::install_frame_inspection_retains_boundaries_without_duplicate_playheads ... ok
+test selection_spike::tests::test_viewport_letterbox_mapping ... ok
+test text_input::tests::test_utf16_range_to_utf8_in_slice_ascii_and_multibyte ... ok
+test worker_client::tests::generations_are_shared_and_strictly_increase ... ok
+test worker_client::tests::test_crash_isolation_and_restart ... ok
+test worker_client::tests::test_finish_seek_rejects_invalid_and_stale ... ok
+test worker_client::tests::test_latest_wins_seek_coalescing ... ok
+test preview_coordinator::tests::install_frame_inspection_rejects_errors_truncation_and_combined_overflow ... ok
+test preview_coordinator::tests::cancelled_build_result_cannot_become_current_after_a_new_build_starts ... ok
+test selection_spike::tests::test_selection_anchor_validation ... ok
+test audio_service::tests::ring_spsc_transfers_one_hundred_thousand_indexed_frames ... ok
+test audio_service::tests::atomic_snapshot_is_coherent_with_concurrent_publisher_and_readers ... ok
+test audio_service::tests::downsample_attenuates_analytic_out_of_band_alias_and_eof_does_not_restart ... ok
+test audio_service::tests::positioned_reader_crosses_64k_window_boundaries_and_rejects_nonfinite_pcm ... ok
+test worker_client::tests::stalled_control_request_times_out_and_reaps_worker ... ok
+test audio_service::tests::windowed_sinc_preserves_tone_timing_and_channel_identity_at_44k1_and_96k ... ok
+test preview_worker_client::tests::malformed_destinations_geometry_seek_and_bulk_reap_without_waiting_for_payload ... ok
+test studio_shell::tests::restore_command_exports_selected_checkpoint_without_requiring_healthy_source ... ok
+
+test result: ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.41s
+
+     Running unittests src/main.rs (desktop/target/debug/deps/fframes_studio-0ab13b6ca0e061df)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/audio_preview.rs (desktop/target/debug/deps/audio_preview-3308dc058139379a)
+
+running 3 tests
+test real_cpal_output_clock_mute_pause_seek_and_cleanup ... ignored, requires SDK plus an actual CPAL default/virtual output device
+test real_sdk_frame_audio_and_retained_source ... ignored, requires SDK_ACTIVE or SDK_BUNDLE; real SDK frame/audio parity qualification
+test generated_wav_scaffold_is_independently_decodable ... ok
+
+test result: ok. 1 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/frame_image.rs (desktop/target/debug/deps/frame_image-9180a64d257ba394)
+
+running 4 tests
+test test_channel_order_swapping ... ok
+test test_invalid_buffer_and_header_rejections ... ok
+test test_premultiplied_alpha_unpremultiplication ... ok
+test test_stride_removal_and_padding_strip ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/managed_worker.rs (desktop/target/debug/deps/managed_worker-7d03b77d396158cf)
+
+running 1 test
+test installed_bundle_builds_and_launches_managed_worker ... ignored, requires SDK_BUNDLE containing assembled native SDK artifacts
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/portable_managed_worker.rs (desktop/target/debug/deps/portable_managed_worker-8c98ee7da134245d)
+
+running 1 test
+test portable_project_builds_after_source_and_sdk_relocation ... ignored, requires SDK_BUNDLE containing assembled native SDK artifacts
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/preview_coordination.rs (desktop/target/debug/deps/preview_coordination-4f5c6a82f080e437)
+
+running 2 tests
+test real_failed_build_and_invalid_source_preserve_seekable_immutable_revision_and_cleanup ... ignored, requires fresh M2 SDK_BUNDLE; explicitly run for real compiler/worker qualification
+test blocked_target_lock_cancel_is_bounded_and_does_not_unlock_another_build ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running tests/project_foundation.rs (desktop/target/debug/deps/project_foundation-805d4bbc3ae61f3b)
+
+running 1 test
+test complete_foundation_flow_retains_source_assets_draft_and_checkpoint ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.71s
+
+     Running tests/timeline_controls.rs (desktop/target/debug/deps/timeline_controls-eedeac5829fb4185)
+
+running 7 tests
+test real_compiled_tracks_and_thumbnail_seek_destinations ... ignored, requires compatible SDK_ACTIVE or SDK_BUNDLE; exercises real compiled timeline and thumbnail destinations
+test byte_limit_evicts_independently_of_entry_limit ... ok
+test oversized_input_is_returned_without_flushing_cache ... ok
+test key_separates_revision_generation_scale_frame_and_media_inventory ... ok
+test replacement_retires_old_image_and_accounts_new_size ... ok
+test thumbnail_access_updates_lru ... ok
+test clear_returns_every_image_and_resets_current_accounting ... ok
+
+test result: ok. 6 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/worker_roundtrip.rs (desktop/target/debug/deps/worker_roundtrip-1adb2fcbcd1edee4)
+
+running 1 test
+test real_worker_frame_anchor_crash_and_restart ... ignored, requires the compiled native annotated fixture and loopback sockets
+
+test result: ok. 0 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (desktop/target/debug/deps/studio_agent_spike-19f576482da52cbf)
+
+running 12 tests
+test supervisor::tests::test_unauthenticated_qualification_records_not_run ... ok
+test supervisor::tests::test_drain_bounded_stderr_redacts_content ... ok
+test session::tests::revision_detects_other_source_changes_and_ignores_targets ... ok
+test session::tests::rejects_oversized_truncated_and_wrong_version_messages ... ok
+test driver::tests::test_redaction_sanitizes_tokens ... ok
+test supervisor::tests::test_spawn_and_cancel_adapter ... ok
+test session::tests::real_transport_streams_permission_edit_and_authoritative_completion ... ok
+test session::tests::invalid_stop_reason_never_enters_progress ... ok
+test session::tests::nonreading_adapter_cannot_block_cancellation ... ok
+test session::tests::cancellation_resolves_permission_and_reaps_real_peer ... ok
+test session::tests::cancelled_clarification_reaps_adapter_and_rejects_late_reply ... ok
+test session::tests::clarification_reply_preserves_session_and_waits_for_next_authoritative_turn ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.16s
+
+     Running unittests src/lib.rs (desktop/target/debug/deps/studio_bootstrap-79c5287592db4874)
+
+running 10 tests
+test process::tests::test_child_environment_redaction ... ok
+test process::tests::test_child_environment_prepend_path ... ok
+test process::tests::test_child_environment_allowlist_isolation ... ok
+test process::tests::terminal_shutdown_reaps_and_prevents_background_clone_from_spawning ... ok
+test process::tests::terminal_operation_scope_reaps_nested_children_without_cancelling_displayed_scope ... ok
+test process::tests::nested_scope_cleanup_preserves_unrelated_children ... ok
+test process::tests::test_tracked_child_graceful_termination ... ok
+test process::tests::sub_manager_scopes_cleanup_while_parent_retains_shutdown_ownership ... ok
+test process::tests::test_process_tree_manager_cleanup ... ok
+test process::tests::concurrent_scoped_spawn_and_parent_shutdown_never_leaves_a_live_child ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+
+     Running unittests src/lib.rs (desktop/target/debug/deps/studio_engine-b38322555f39476b)
+
+running 5 tests
+test preview_state::tests::exhausted_seek_counter_preserves_position_and_rejects_wrapping ... ok
+test journal::tests::disk_full_writer_refuses_further_appends_until_reopen ... ok
+test journal::tests::truncated_tail_is_quarantined_but_interior_corruption_stops_replay ... ok
+test journal::tests::oversized_entry_is_refused_without_truncating_history ... ok
+test store::tests::migration_preserves_a_durable_backup_and_unknown_tables ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.03s
+
+     Running tests/external_changes.rs (desktop/target/debug/deps/external_changes-463d1fab444a8dde)
+
+running 4 tests
+test restore_comparison_is_strict_and_independent_export_survives_invalid_source ... ok
+test source_reads_do_not_dirty_the_install_fence_but_external_writes_do ... ok
+test external_edit_rejects_late_completion_and_preserves_baseline_and_draft ... ok
+test invalid_source_interrupts_work_and_edit_back_cannot_resurrect_it ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.00s
+
+     Running tests/materialization.rs (desktop/target/debug/deps/materialization-6f776d880cfbf662)
+
+running 3 tests
+test contained_dependency_with_absolute_path_is_rewritten_to_copied_workspace ... ok
+test overlay_keeps_source_and_sdk_unchanged_and_rejects_external_dependencies ... ok
+test cancelled_copy_removes_partial_tree_and_preserves_captured_source ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.13s
+
+     Running tests/playback_clock.rs (desktop/target/debug/deps/playback_clock-bf5a3e0292587c42)
+
+running 8 tests
+test empty_and_shorter_install_clamp_without_playing ... ok
+test future_anchor_can_map_into_samples_submitted_before_latest_callback ... ok
+test fallback_and_reconnect_waiting_preserve_intent_without_jump ... ok
+test output_anchor_uses_predicted_playback_not_callback_or_producer_cursor ... ok
+test pause_seek_end_and_replay_have_inclusive_end_cursor ... ok
+test rejects_stale_backwards_invalid_and_rate_change_snapshots ... ok
+test revision_reservation_prevents_seek_from_reusing_staged_audio_epoch ... ok
+test zero_submitted_interval_freezes_and_noninteger_conversion_floors ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/preview_state.rs (desktop/target/debug/deps/preview_state-d399b92546a35af5)
+
+running 5 tests
+test every_identity_boundary_and_edit_back_is_rechecked_at_install ... ok
+test build_and_checkpoint_success_are_not_preview_installation ... ok
+test seek_during_preparation_rejects_old_frame_and_clamps_shorter_and_empty_revision ... ok
+test newest_seek_and_scale_only_and_failed_revision_does_not_invalidate_displayed_worker ... ok
+test readiness_rejects_incomplete_inspection_pcm_offset_and_cross_identity_data ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/recovery.rs (desktop/target/debug/deps/recovery-6012596b3a845ef8)
+
+running 10 tests
+test crash_child ... ignored, child-process fault injection entry; invoked by boundary test
+
+running 1 test
+test missing_object_and_newer_database_fail_without_mutating_source ... ok
+test failed_draft_publication_retains_attempt_and_retry_uses_a_new_directory ... ok
+test missing_declared_asset_allows_checkpoint_recovery ... ok
+
+running 1 test
+test failed_checkpoint_transitions_to_failed_allowing_retry ... ok
+test failed_invalidation_write_cannot_resurrect_an_old_result_after_source_repair ... ok
+test missing_asset_during_checkpoint_never_accepts_and_retry_after_repair_succeeds ... ok
+
+running 1 test
+test database_failure_after_journal_commit_does_not_rollback_accepted ... ok
+test database_failure_during_startup_settles_job_and_preserves_draft_for_retry ... ok
+
+running 1 test
+
+running 1 test
+
+running 1 test
+test killed_at_every_durable_job_boundary_replays_without_source_overwrite ... ok
+
+test result: ok. 9 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.12s
+
+     Running tests/relocation.rs (desktop/target/debug/deps/relocation-d88f5e0a6ee005b7)
+
+running 2 tests
+test relocation_relinks_but_duplicate_existing_id_is_never_attached ... ok
+test both_unversioned_histories_reopen_relocate_and_export_without_rewriting_checkpoints ... ok
+
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.85s
+
+     Running tests/state.rs (desktop/target/debug/deps/state-597d1eee432a4fa5)
+
+running 6 tests
+test cancellation_failure_and_interruption_transitions ... ok
+test every_completion_tag_is_checked_without_installing ... ok
+test external_edit_and_edit_back_reject_late_results ... ok
+test new_open_sessions_never_reuse_identity ... ok
+test lifecycle_and_checkpoint_are_distinct_from_build_and_candidate ... ok
+test simultaneous_projects_and_reopen_are_isolated ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/timeline.rs (desktop/target/debug/deps/timeline-61a2ff5b9ba84239)
+
+running 10 tests
+test cursor_conversions_include_exact_end_and_round_to_nearest_frame ... ok
+test geometry_and_thumbnails_are_visible_and_strictly_bounded ... ok
+test audio_geometry_preserves_fractional_seconds ... ok
+test half_open_overlaps_repeat_names_and_pack_lanes_deterministically ... ok
+test horizontal_pan_keeps_audio_below_offscreen_scene_lanes ... ok
+test huge_thumbnail_interpolation_does_not_overflow ... ok
+test invalid_reports_are_rejected_without_overflow_or_nonfinite_geometry ... ok
+test selection_normalizes_clamps_and_cycles_every_overlap ... ok
+test transport_pause_seek_end_replay_and_shorter_rebuild ... ok
+test zoom_keeps_pointer_anchor_and_scroll_and_resize_are_bounded ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (desktop/target/debug/deps/studio_project-e8abe9163590facd)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/assets.rs (desktop/target/debug/deps/assets-f5909f43d0b593dd)
+
+running 5 tests
+test cancelled_chunked_copy_leaves_manifest_and_source_exact ... ok
+test symlink_and_failed_manifest_do_not_destroy_existing_asset ... ok
+test external_manifest_edit_during_stream_is_preserved_without_publication ... ok
+test media_directory_replacement_during_copy_is_rejected ... ok
+test collisions_and_relocation_keep_owned_copies ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running tests/lifecycle.rs (desktop/target/debug/deps/lifecycle-04f97790080eb556)
+
+running 3 tests
+test import_validates_source_before_publishing_sidecar_and_supports_custom_bins ... ok
+test dirty_import_preserves_every_existing_byte ... ok
+test create_move_and_refuse_nonempty ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s
+
+     Running tests/manifest.rs (desktop/target/debug/deps/manifest-6f3b4fbaaf76a186)
+
+running 5 tests
+test links_and_replacements_are_rejected ... ok
+test portable_paths_and_containment ... ok
+test round_trip_and_version_gate_are_read_only ... ok
+test malformed_missing_invalid_and_nonportable_metadata ... ok
+test declared_paths_are_inventoried_and_cargo_names_are_valid ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/revision.rs (desktop/target/debug/deps/revision-a73206579ca8542b)
+
+running 8 tests
+test versioned_and_legacy_hashes_match_independent_expected_values ... ok
+test links_special_files_and_non_utf8_names_are_errors ... ok
+test checkpoint_versions_and_unprotected_executable_metadata_are_rejected ... ok
+test old_checkpoint_loads_and_drafts_without_rewriting_manifest ... ok
+test executable_permission_changes_revision_and_is_restored_by_draft ... ok
+test deterministic_relocation_order_and_exact_exclusions ... ok
+test current_checkpoint_load_draft_and_copy_preserve_content ... ok
+test large_asset_is_streamed_and_rename_affects_identity ... ok
+
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s
+
+     Running unittests src/lib.rs (desktop/target/debug/deps/studio_sdk-b2abfe5fe6e3485e)
+
+running 13 tests
+test doctor::tests::compiler_version_pin_does_not_accept_prefix_matches ... ok
+test environment::tests::test_sdk_environment_construction ... ok
+test manifest::tests::test_invalid_sha256_length_rejected ... ok
+test manifest::tests::test_moving_latest_url_rejected ... ok
+test install::tests::test_installer_lifecycle_and_rollback ... ok
+test project::tests::generated_annotated_worker_supports_additive_preview_entry ... ok
+test manifest::tests::test_path_traversal_rejected ... ok
+test manifest::tests::legacy_manifest_digest_and_serialization_are_stable ... ok
+test manifest::tests::test_valid_manifest_parses_and_validates ... ok
+test manifest::tests::test_unsupported_schema_version_rejected ... ok
+test project::tests::test_generate_cpu_project_creates_structure ... ok
+test install::tests::test_installer_rejects_incomplete_candidate ... ok
+test doctor::tests::test_host_preflight_on_current_machine ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.07s
+
+     Running unittests src/bin/studio_setup.rs (desktop/target/debug/deps/studio_setup-9f1bd8b719de4bca)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests fframes_studio
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests studio_agent_spike
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests studio_bootstrap
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests studio_engine
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests studio_project
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests studio_sdk
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

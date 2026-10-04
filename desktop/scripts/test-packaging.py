@@ -22,6 +22,27 @@ qualification = load("validate-qualification")
 
 
 class ArtifactTests(unittest.TestCase):
+    def m2_record(self):
+        record = json.loads((assembly.ROOT / "desktop/qualification/m2-results.json").read_text())
+        for gate in record["gates"].values():
+            gate["status"] = "NOT_RUN"
+            gate.pop("evidence", None)
+        record["metrics"] = {}
+        record["target_platform"]["status"] = "PENDING"
+        record["environment"].update(clock_source="TEST_ONLY", physical_audio_evidence=False, native_platform_evidence=False)
+        return record
+
+    def validate_temp_record(self, root, record):
+        path = Path(root) / "m2-results.json"
+        path.write_text(json.dumps(record))
+        return qualification.validate(path)
+
+    def test_legacy_sdk_manifest_has_stable_digest_and_no_preview_fields(self):
+        raw = json.loads((assembly.ROOT / "desktop/packaging/sdk/phase-zero-sdk.json").read_text())
+        self.assertNotIn("preview_contract_versions", raw)
+        canonical = json.dumps(raw, separators=(",", ":"))
+        self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "105670909607f0b6043ddaee5e2b98a9f2b2614271831a5cbff804b3983e764b")
+
     def test_bundled_ffmpeg_links_supplied_install_without_download_feature(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -86,6 +107,134 @@ class ArtifactTests(unittest.TestCase):
             path.write_text(json.dumps(record))
             with self.assertRaisesRegex(ValueError, "without evidence"):
                 qualification.validate(path)
+
+    def test_legacy_m0_record_without_discriminator_remains_valid(self):
+        record = qualification.validate(assembly.ROOT / "desktop/qualification/m0-results.json")
+        self.assertNotIn("kind", record)
+
+    def test_unknown_explicit_qualification_kind_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            record = self.m2_record()
+            record["kind"] = "m02"
+            with self.assertRaisesRegex(ValueError, "Unsupported qualification kind"):
+                self.validate_temp_record(temp, record)
+
+    def test_m2_requires_exact_gates_criteria_and_pass_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            record = self.m2_record()
+            del record["gates"]["cleanup"]
+            with self.assertRaisesRegex(ValueError, "Invalid M2 gates"):
+                self.validate_temp_record(temp, record)
+            record = self.m2_record()
+            record["gates"]["cleanup"]["criteria"] = ""
+            with self.assertRaisesRegex(ValueError, "Missing qualification criteria"):
+                self.validate_temp_record(temp, record)
+            record = self.m2_record()
+            record["gates"]["cleanup"]["status"] = "PASSED"
+            with self.assertRaisesRegex(ValueError, "without evidence"):
+                self.validate_temp_record(temp, record)
+
+    def test_m2_rejects_missing_and_changed_evidence(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            record = self.m2_record()
+            gate = record["gates"]["cleanup"]
+            gate["status"] = "PASSED"
+            gate["evidence"] = [{"path": "proof.txt", "sha256": "0" * 64}]
+            with self.assertRaisesRegex(ValueError, "Missing qualification evidence"):
+                self.validate_temp_record(root, record)
+            (root / "proof.txt").write_text("changed")
+            with self.assertRaisesRegex(ValueError, "Evidence changed"):
+                self.validate_temp_record(root, record)
+
+    def test_m2_rejects_boolean_string_nan_and_infinite_metrics(self):
+        invalid = [True, "1", float("nan"), float("inf")]
+        with tempfile.TemporaryDirectory() as temp:
+            for value in invalid:
+                record = self.m2_record()
+                record["metrics"]["seek_p95_ms"] = {"value": value, "unit": "ms"}
+                with self.subTest(value=value), self.assertRaisesRegex(ValueError, "Invalid"):
+                    self.validate_temp_record(temp, record)
+
+    def test_m2_rejects_unmet_timing_and_resource_measurements(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof.txt"
+            proof.write_text("measured")
+            digest = __import__("hashlib").sha256(proof.read_bytes()).hexdigest()
+            record = self.m2_record()
+            record["gates"]["resource_stress"].update(
+                status="PASSED", evidence=[{"path": proof.name, "sha256": digest}]
+            )
+            record["metrics"] = {
+                "session_duration_minutes": {"value": 9, "unit": "min"},
+                "seek_count": {"value": 1999, "unit": "count"},
+                "rebuild_count": {"value": 49, "unit": "count"},
+                "seek_p95_ms": {"value": 151, "unit": "ms"},
+                "rss_slope_mib_per_min": {"value": 2.1, "unit": "MiB/min"},
+                "video_frame_duration_ms": {"value": 33.34, "unit": "ms"},
+                "timestamp_residual_ms": {"value": 2, "unit": "ms"},
+                "av_error_ms": {"value": 36, "unit": "ms"},
+            }
+            with self.assertRaisesRegex(ValueError, "stress counts"):
+                self.validate_temp_record(root, record)
+
+    def test_m2_test_clock_cannot_pass_output_clock(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof.txt"
+            proof.write_text("measured")
+            evidence = [{"path": proof.name, "sha256": __import__("hashlib").sha256(proof.read_bytes()).hexdigest()}]
+            record = self.m2_record()
+            record["metrics"] = {
+                "session_duration_minutes": {"value": 10, "unit": "min"},
+                "seek_count": {"value": 2000, "unit": "count"},
+                "rebuild_count": {"value": 50, "unit": "count"},
+                "seek_p95_ms": {"value": 150, "unit": "ms"},
+                "rss_slope_mib_per_min": {"value": 2, "unit": "MiB/min"},
+                "video_frame_duration_ms": {"value": 33.34, "unit": "ms"},
+                "timestamp_residual_ms": {"value": 2, "unit": "ms"},
+                "av_error_ms": {"value": 35.34, "unit": "ms"},
+            }
+            record["gates"]["output_clock"].update(status="PASSED", evidence=evidence)
+            with self.assertRaisesRegex(ValueError, "physical live-output"):
+                self.validate_temp_record(root, record)
+
+    def test_virtual_resource_pass_does_not_invent_physical_timing_or_qualify_platform(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            proof = root / "proof.txt"
+            proof.write_text("measured resources, not DAC timing")
+            evidence = [{"path": proof.name, "sha256": __import__("hashlib").sha256(proof.read_bytes()).hexdigest()}]
+            record = self.m2_record()
+            record["gates"]["resource_stress"].update(status="PASSED", evidence=evidence)
+            record["metrics"] = {
+                "session_duration_minutes": {"value": 10, "unit": "min"},
+                "seek_count": {"value": 2000, "unit": "count"},
+                "rebuild_count": {"value": 50, "unit": "count"},
+                "seek_p95_ms": {"value": 149, "unit": "ms"},
+                "rss_slope_mib_per_min": {"value": -0.5, "unit": "MiB/min"},
+            }
+            self.validate_temp_record(root, record)
+            record["gates"]["output_clock"].update(status="PASSED", evidence=record["gates"]["resource_stress"]["evidence"])
+            with self.assertRaisesRegex(ValueError, "Missing required M2 measurements"):
+                self.validate_temp_record(root, record)
+            record = self.m2_record()
+            for gate in record["gates"].values():
+                gate.update(status="PASSED", evidence=evidence)
+            record["target_platform"]["status"] = "QUALIFIED"
+            record["metrics"] = {
+                "session_duration_minutes": {"value": 10, "unit": "min"},
+                "seek_count": {"value": 2000, "unit": "count"},
+                "rebuild_count": {"value": 50, "unit": "count"},
+                "seek_p95_ms": {"value": 150, "unit": "ms"},
+                "rss_slope_mib_per_min": {"value": 2, "unit": "MiB/min"},
+                "video_frame_duration_ms": {"value": 33.34, "unit": "ms"},
+                "timestamp_residual_ms": {"value": 2, "unit": "ms"},
+                "av_error_ms": {"value": 35.34, "unit": "ms"},
+            }
+            with self.assertRaisesRegex(ValueError, "physical live-output"):
+                self.validate_temp_record(root, record)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,280 @@
+{
+  "after": {
+    "audio_identity_matches": true,
+    "audio_metrics": null,
+    "audio_note": "Audio unavailable \u00b7 monotonic fallback",
+    "audio_ready": false,
+    "busy": false,
+    "buttons": {
+      "build-preview": [
+        265.0,
+        401.0,
+        110.0,
+        39.0
+      ],
+      "cancel-preview": [
+        385.0,
+        401.0,
+        101.0,
+        39.0
+      ],
+      "close": [
+        1156.0,
+        22.0,
+        107.0,
+        39.0
+      ],
+      "mute-audio": [
+        556.0,
+        401.0,
+        82.0,
+        39.0
+      ],
+      "next-audio-output": [
+        648.0,
+        401.0,
+        101.0,
+        39.0
+      ],
+      "next-frame": [
+        394.0,
+        450.0,
+        96.0,
+        39.0
+      ],
+      "no-audio-output": [
+        866.0,
+        401.0,
+        81.0,
+        39.0
+      ],
+      "play-pause": [
+        496.0,
+        401.0,
+        50.0,
+        39.0
+      ],
+      "previous-frame": [
+        265.0,
+        450.0,
+        119.0,
+        39.0
+      ],
+      "retry-audio-output": [
+        759.0,
+        401.0,
+        97.0,
+        39.0
+      ],
+      "timeline-fit": [
+        386.0,
+        549.0,
+        30.0,
+        27.0
+      ]
+    },
+    "clock_epoch": 6,
+    "current_source_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "displayed_generation": 1,
+    "displayed_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "error": "command 'build portable worker' failed with exit code: Some(101), stderr:    Compiling studio-video v0.1.0 (/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/484d34a7b0867f4e59d0bbdc803721bf41191c7988a5c0b1b087c48a1e770ec5/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-QvogA3/project)\nerror: intentional M2 qualification failure\n  --> src/lib.rs:94:1\n   |\n94 | compile_error!(\"intentional M2 qualification failure\");\n   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nerror: could not compile `studio-video` (lib) due to 1 previous error\n",
+    "fps": 30,
+    "image_metrics": {
+      "dropped": 3,
+      "queued": 1,
+      "release_failures": 0,
+      "resident": 1
+    },
+    "muted": false,
+    "output_device": "Default",
+    "paint_frame": 99,
+    "paint_serial": 4,
+    "pid": 3284823,
+    "playing": false,
+    "position": 99,
+    "preview_extent": [
+      718,
+      118
+    ],
+    "preview_scale": 0.1638888888888889,
+    "preview_status": "Displayed",
+    "project_path": "/tmp/studio-m2-native-final",
+    "pump_metrics": {
+      "late_frames": 0,
+      "owned_processes": 0,
+      "queue_high_water": 1,
+      "render_max_ms": 5.20303,
+      "renders": 3,
+      "thumbnail_queue_high_water": 12
+    },
+    "ruler_bounds": [
+      265.0,
+      582.0,
+      718.0,
+      20.0
+    ],
+    "seek_serial": 4,
+    "thumbnail_metrics": {
+      "bytes": 691200,
+      "entries": 12,
+      "fit_bounds": [
+        386.0,
+        549.0,
+        30.0,
+        27.0
+      ],
+      "high_water_bytes": 691200,
+      "high_water_entries": 12,
+      "pixels_per_second": 130.54545454545453,
+      "release_failures": 0,
+      "ruler_bounds": [
+        265.0,
+        582.0,
+        718.0,
+        20.0
+      ],
+      "scroll_x": 0.0
+    },
+    "total_frames": 165
+  },
+  "before": {
+    "audio_identity_matches": true,
+    "audio_metrics": null,
+    "audio_note": "Audio unavailable \u00b7 monotonic fallback",
+    "audio_ready": false,
+    "busy": false,
+    "buttons": {
+      "build-preview": [
+        265.0,
+        507.0,
+        110.0,
+        39.0
+      ],
+      "cancel-preview": [
+        385.0,
+        507.0,
+        101.0,
+        39.0
+      ],
+      "close": [
+        1156.0,
+        22.0,
+        107.0,
+        39.0
+      ],
+      "mute-audio": [
+        556.0,
+        507.0,
+        82.0,
+        39.0
+      ],
+      "next-audio-output": [
+        648.0,
+        507.0,
+        101.0,
+        39.0
+      ],
+      "next-frame": [
+        394.0,
+        556.0,
+        96.0,
+        39.0
+      ],
+      "no-audio-output": [
+        866.0,
+        507.0,
+        81.0,
+        39.0
+      ],
+      "play-pause": [
+        496.0,
+        507.0,
+        50.0,
+        39.0
+      ],
+      "previous-frame": [
+        265.0,
+        556.0,
+        119.0,
+        39.0
+      ],
+      "retry-audio-output": [
+        759.0,
+        507.0,
+        97.0,
+        39.0
+      ],
+      "timeline-fit": [
+        386.0,
+        655.0,
+        30.0,
+        27.0
+      ]
+    },
+    "clock_epoch": 6,
+    "current_source_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "displayed_generation": 1,
+    "displayed_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "error": "command 'build portable worker' failed with exit code: Some(101), stderr:    Compiling studio-video v0.1.0 (/root/fframes-desktop/.amp/in/m2-qualified-run/data/fframes-studio/builds/13a03f8c-ca5b-4dd9-a6cb-8a2826ff1442/484d34a7b0867f4e59d0bbdc803721bf41191c7988a5c0b1b087c48a1e770ec5/14eb96f03adaf18ace31f51458c6941f8e2a8fdfba1dd476b682c678dd3201b0/x86_64-unknown-linux-gnu/build-QvogA3/project)\nerror: intentional M2 qualification failure\n  --> src/lib.rs:94:1\n   |\n94 | compile_error!(\"intentional M2 qualification failure\");\n   | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n\nerror: could not compile `studio-video` (lib) due to 1 previous error\n",
+    "fps": 30,
+    "image_metrics": {
+      "dropped": 3,
+      "queued": 1,
+      "release_failures": 0,
+      "resident": 1
+    },
+    "muted": false,
+    "output_device": "Default",
+    "paint_frame": 99,
+    "paint_serial": 4,
+    "pid": 3284823,
+    "playing": false,
+    "position": 99,
+    "preview_extent": [
+      718,
+      118
+    ],
+    "preview_scale": 0.1638888888888889,
+    "preview_status": "Displayed",
+    "project_path": "/tmp/studio-m2-native-final",
+    "pump_metrics": {
+      "late_frames": 0,
+      "owned_processes": 0,
+      "queue_high_water": 1,
+      "render_max_ms": 5.20303,
+      "renders": 3,
+      "thumbnail_queue_high_water": 12
+    },
+    "ruler_bounds": [
+      265.0,
+      688.0,
+      718.0,
+      20.0
+    ],
+    "seek_serial": 4,
+    "thumbnail_metrics": {
+      "bytes": 691200,
+      "entries": 12,
+      "fit_bounds": [
+        386.0,
+        655.0,
+        30.0,
+        27.0
+      ],
+      "high_water_bytes": 691200,
+      "high_water_entries": 12,
+      "pixels_per_second": 130.54545454545453,
+      "release_failures": 0,
+      "ruler_bounds": [
+        265.0,
+        688.0,
+        718.0,
+        20.0
+      ],
+      "scroll_x": 0.0
+    },
+    "total_frames": 165
+  },
+  "cleanup_leases": [],
+  "passed": true
+}

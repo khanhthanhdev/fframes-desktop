@@ -1,0 +1,131 @@
+{
+  "kind": "m2",
+  "schema_version": 1,
+  "timestamp": "2026-10-04T00:04:36.764007Z",
+  "environment": {
+    "scope": "Actual Linux x86_64 GPUI app and installed SDK, X11/Xvfb software rendering, private 48 kHz stereo PulseAudio null sink. Resource, native input, revision and cleanup evidence only; no physical DAC, GPU presentation or IME measurement. See evidence/linux-m2-2026-10-04/README.md for commands and limits.",
+    "clock_source": "PREDICTED_OUTPUT",
+    "physical_audio_evidence": false,
+    "native_platform_evidence": true
+  },
+  "target_platform": {
+    "os": "linux",
+    "arch": "x86_64",
+    "triple": "x86_64-unknown-linux-gnu",
+    "status": "PENDING",
+    "scope": "Linux native software-rendered controls/resources pass; physical audio/presentation and hardware unplug/drain timing remain pending. This does not qualify other platforms or a release."
+  },
+  "gates": {
+    "output_clock": {
+      "status": "NOT_RUN",
+      "criteria": "Physical live-output timestamps demonstrate A/V error no greater than one video-frame duration plus the measured timestamp residual.",
+      "notes": "Awaiting native physical-device measurement."
+    },
+    "audio_modes": {
+      "status": "PENDING",
+      "criteria": "Native evidence covers playing, pause, seek, mute, silent media, no-device, device loss/reconnect, underrun, and end/replay behavior.",
+      "notes": "Focused callback/clock tests cover silence, underrun, stale packets and device loss; real virtual CPAL and native input cover playback, mute, pause, superseded seek, no-device/retry, end/replay and teardown. Physical device loss/reconnection and drain latency remain unqualified.",
+      "evidence": [
+        {
+          "path": "evidence/linux-m2-2026-10-04/m2-cpal-final.log",
+          "sha256": "0830fa6556413dbf675b624b7ff55c7bc57e7e868ce06a9645d7cb0e35377936"
+        },
+        {
+          "path": "evidence/linux-m2-2026-10-04/telemetry-samples.json",
+          "sha256": "a6672596169a7189af655773e61c7725653c88626f82aa24e41ca1cebc215800"
+        }
+      ]
+    },
+    "revision_handoff": {
+      "status": "PASSED",
+      "criteria": "Rebuild handoff keeps audio, video, revision, and clock epoch matched and preserves the old playable revision on precommit failure.",
+      "notes": "Native workload performs 50 paused/playing rebuilds, including five deliberate compile failures, with sampled audio identity/epoch checks. Explicit real SDK regression passes failed-build, invalid-source, cancel/re-prime and cleanup checks. The retry log also retains a historical timeline cleanup failure; its corrected final rerun is separately retained.",
+      "evidence": [
+        {
+          "path": "evidence/linux-m2-2026-10-04/telemetry-samples.json",
+          "sha256": "a6672596169a7189af655773e61c7725653c88626f82aa24e41ca1cebc215800"
+        },
+        {
+          "path": "evidence/linux-m2-2026-10-04/m2-real-retry.log",
+          "sha256": "a103bce1a54be7cb60c1ce157d19b8bd5e58197469f937c1fe30d806a2147b92"
+        },
+        {
+          "path": "evidence/linux-m2-2026-10-04/m2-timeline-final.log",
+          "sha256": "13dc0dbaab953e14d775b1daf78c78469ce0cd4d63dfb0c3637541d5baef86f4"
+        }
+      ]
+    },
+    "native_controls": {
+      "status": "PASSED",
+      "criteria": "Native play, pause, scrub, frame-step, end/reset, timeline, and rebuild controls remain responsive with paused seek p95 at most 150 ms.",
+      "notes": "Real pointer/key input and virtual output pass; warm seek p95 is 96.23249 ms to image submission, not physical presentation. Inspected paused screenshot matches frame 100 / 3.333 s. Resizing increases CPU scale from 0.183333 to 0.529688 while preserving generation/position; inspected paused resized frame is 70 / 2.333 s. A short window with the failed-build banner uses the existing center-pane scroll to reach lower tracks/thumbnails.",
+      "evidence": [
+        {
+          "path": "evidence/linux-m2-2026-10-04/raw-measurements.json",
+          "sha256": "d41a0bd61392444ee594f0cdc1a5878614d8d51236b9661ec9a5a7d6e40eb00a"
+        },
+        {
+          "path": "evidence/linux-m2-2026-10-04/native-paused.png",
+          "sha256": "c388b2264a13c9498debe590e6feb567fb6901b629adda97d578b6f7eb3beff1"
+        },
+        {
+          "path": "evidence/linux-m2-2026-10-04/result.json",
+          "sha256": "b14ed432542bf432e9e278fffa733dc6441f2190de445d6ab9013d533cbbc412"
+        }
+      ]
+    },
+    "pixel_parity": {
+      "status": "PASSED",
+      "criteria": "Known color and straight-alpha frames meet recorded CLI CPU pixel tolerances and shader capability gaps are explicitly diagnosed.",
+      "notes": "Ordinary CLI CPU RGBA matches at frames 0 and 137; independent geometry checks cover thumbnail-to-full and same-size frame 19 changes, alpha 128 and color swatches. Sequential 44.1 kHz stereo WAV/PCM maximum difference is 0.0000460409 and mean is 0.000009305 for 242,550 frames. Shader gap is explicit.",
+      "evidence": [
+        {
+          "path": "evidence/linux-m2-2026-10-04/parity.json",
+          "sha256": "0b5607fa5c5c76f316921ed6a270c4b6e9ebc30a3d076b66e7ab6ddbfc485b89"
+        },
+        {
+          "path": "evidence/linux-m2-2026-10-04/m2-parity-final.log",
+          "sha256": "7d2b969bf09c972c1b4fe52825f92470b0494a17830b6f39d558fa249aa38549"
+        }
+      ]
+    },
+    "resource_stress": {
+      "status": "PASSED",
+      "criteria": "A 10-minute session with at least 2,000 seeks and 50 rebuilds records bounded queues/caches and steady RSS slope at most 2 MiB/min.",
+      "notes": "600.276649 s, 2,001 confirmed seeks and 50 rebuilds. RSS slope 1.228500 MiB/min; pane-sized CPU rendering keeps all sampled bounds: one render request, 12 thumbnail requests, thumbnail high-water 14 entries / 806,400 bytes, one resident/queued main image. There were 10,358 renders and 13 late frames. Initial full-size run failed at 4.986848 MiB/min and left one PCM/build lease; before-adaptive-raw.json preserves that failure.",
+      "evidence": [
+        {
+          "path": "evidence/linux-m2-2026-10-04/raw-measurements.json",
+          "sha256": "d41a0bd61392444ee594f0cdc1a5878614d8d51236b9661ec9a5a7d6e40eb00a"
+        },
+        {
+          "path": "evidence/linux-m2-2026-10-04/telemetry-samples.json",
+          "sha256": "a6672596169a7189af655773e61c7725653c88626f82aa24e41ca1cebc215800"
+        }
+      ]
+    },
+    "cleanup": {
+      "status": "PASSED",
+      "criteria": "Close releases PCM and artifact leases, reports no image release failures, and leaves no owned worker, build, audio, port, or worktree resources.",
+      "notes": "Graceful WM_DELETE_WINDOW exit; owned-process, orphaned-child and PCM/materialization inventories are empty. Main/thumbnail release failures are zero. Owned Xvfb and PulseAudio are stopped. No worktree was created; compilation caches, logs and evidence are not live artifact leases.",
+      "evidence": [
+        {
+          "path": "evidence/linux-m2-2026-10-04/raw-measurements.json",
+          "sha256": "d41a0bd61392444ee594f0cdc1a5878614d8d51236b9661ec9a5a7d6e40eb00a"
+        },
+        {
+          "path": "evidence/linux-m2-2026-10-04/m2-cpal-final.log",
+          "sha256": "0830fa6556413dbf675b624b7ff55c7bc57e7e868ce06a9645d7cb0e35377936"
+        }
+      ]
+    }
+  },
+  "metrics": {
+    "session_duration_minutes": { "value": 10.0046108202, "unit": "min" },
+    "seek_count": { "value": 2001, "unit": "count" },
+    "rebuild_count": { "value": 50, "unit": "count" },
+    "seek_p95_ms": { "value": 96.23249000287615, "unit": "ms" },
+    "rss_slope_mib_per_min": { "value": 1.2284996662062504, "unit": "MiB/min" },
+    "video_frame_duration_ms": { "value": 33.333333333333336, "unit": "ms" }
+  }
+}

@@ -7,9 +7,12 @@ import os
 from pathlib import Path
 import re
 import shutil
+import socket
+import struct
 import subprocess
 import tarfile
 import tempfile
+import threading
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -83,6 +86,92 @@ def configure_bundled_ffmpeg(framework):
     media_manifest.write_text(source.replace(original, 'features = ["static"]'))
 
 
+def verify_preview_worker(binary, worker, environment):
+    """Exercise the actual offline-built entry before declaring preview support."""
+    identity = dict(project_id="sdk-probe", open_session="assembly", source_revision="sdk-probe-revision", worker_generation=7)
+    with socket.socket() as listener, tempfile.TemporaryDirectory(prefix="preview-probe-") as cache, tempfile.TemporaryFile() as errors:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(120)
+        process = subprocess.Popen([str(binary), "--worker", "--preview-worker", "--frame-port", str(listener.getsockname()[1]),
+                                    "--project-id", identity["project_id"], "--open-session", identity["open_session"],
+                                    "--revision", identity["source_revision"], "--generation", "7", "--audio-cache", cache],
+                                   cwd=worker, env=environment, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=errors)
+        watchdog = threading.Timer(120, process.kill)
+        watchdog.start()
+        try:
+            connection, _ = listener.accept()
+            with connection, connection.makefile("rb") as bulk:
+                connection.settimeout(120)
+                def read_exact(stream, length):
+                    data = bytearray()
+                    while len(data) < length:
+                        chunk = stream.read(length - len(data))
+                        if not chunk:
+                            raise ValueError("Preview worker truncated a record")
+                        data.extend(chunk)
+                    return bytes(data)
+                def read_json(stream):
+                    length = struct.unpack(">I", read_exact(stream, 4))[0]
+                    if length > 1024 * 1024:
+                        raise ValueError("Preview worker exceeded control bound")
+                    return json.loads(read_exact(stream, length))
+                serial = 0
+                def request(kind, **fields):
+                    nonlocal serial
+                    serial += 1
+                    envelope = dict(contract_version=1, identity=identity, request_id=serial)
+                    body = dict(type=kind, **fields)
+                    if kind == "Hello":
+                        body["request_id"] = serial
+                    elif kind in {"Timeline", "Shutdown"}:
+                        body.update(envelope)
+                    else:
+                        body["envelope"] = envelope
+                    encoded = json.dumps(body).encode()
+                    process.stdin.write(struct.pack(">I", len(encoded)) + encoded)
+                    process.stdin.flush()
+                    response = read_json(process.stdout)
+                    if response.get("type") == "Error" or (kind != "Hello" and response.get("envelope") != envelope):
+                        raise ValueError(f"Invalid preview response: {response}")
+                    return response
+                hello = request("Hello", offered_versions=[1], required_capabilities=["preview_identity_v1", "scaled_frame_v1", "inspect_v1", "prepared_audio_v1"])
+                if hello["identity"] != identity or hello["contract_version"] != 1 or hello["backend"] != "cpu":
+                    raise ValueError("Preview hello did not bind launch identity/backend")
+                timeline = request("Timeline")
+                frame = request("ScaledFrame", frame_index=0, seek_serial=13, scale=0.5)
+                record = read_json(bulk)
+                if record != frame["record"] or record["payload_len"] > 64 * 1024 * 1024:
+                    raise ValueError("Invalid tagged frame record")
+                pixels = read_exact(bulk, record["payload_len"])
+                if len(pixels) != frame["header"]["payload_len"] or frame["seek_serial"] != 13:
+                    raise ValueError("Preview frame geometry/seek mismatch")
+                inspected = request("Inspect", frames=[0, timeline["total_frames"] - 1])
+                if inspected["truncated"] or any(d["severity"] == "error" for d in inspected["diagnostics"]):
+                    raise ValueError("SDK preview inspection failed")
+                audio = request("PrepareAudio", output_sample_rate=48000)
+                digest = hashlib.sha256()
+                for offset in range(0, audio["byte_count"], 256 * 1024):
+                    length = min(256 * 1024, audio["byte_count"] - offset)
+                    read = request("ReadAudio", artifact_id=audio["artifact_id"], offset=offset, length=length)
+                    header = read_json(bulk)
+                    if header != read["record"] or header["kind"] != "audio_pcm_f32_le" or header["payload_len"] != length:
+                        raise ValueError("Invalid tagged audio record")
+                    digest.update(read_exact(bulk, length))
+                if digest.hexdigest() != audio["sha256"] or audio["byte_count"] != audio["sample_count"] * 8:
+                    raise ValueError("Prepared mix checksum/sample count mismatch")
+                request("ReleaseAudio", artifact_id=audio["artifact_id"])
+                request("Shutdown")
+                process.stdin.close()
+                if process.wait(timeout=5) != 0 or any(Path(cache).iterdir()):
+                    raise ValueError("Preview worker failed shutdown/artifact cleanup")
+        finally:
+            watchdog.cancel()
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
+
+
 def assemble(output, ffmpeg_root, vendor=None):
     output = output.resolve()
     if output.exists():
@@ -143,8 +232,11 @@ def assemble(output, ffmpeg_root, vendor=None):
             png = worker / "frames/0.png"
             if not png.is_file() or png.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
                 raise ValueError("Candidate SDK did not produce a valid frame PNG")
+            binary = Path(environment["CARGO_TARGET_DIR"]) / "debug" / ("sdk-qualification-worker.exe" if os.name == "nt" else "sdk-qualification-worker")
+            verify_preview_worker(binary, worker, environment)
         artifacts = [archive(staging / name, output, f"{name}-{target}", name) for name in ["toolchain", "ffmpeg", "framework"]]
-    manifest.update(sdk_id=f"studio-sdk-{target}-v1", target_triple=target, arch=target.split("-")[0], artifacts=artifacts)
+    manifest.update(sdk_id=f"studio-sdk-{target}-v2", target_triple=target, arch=target.split("-")[0], artifacts=artifacts,
+                    preview_contract_versions=[1], preview_capabilities=["preview_identity_v1", "scaled_frame_v1", "inspect_v1", "prepared_audio_v1"])
     manifest["rust_toolchain"]["targets"] = [target]
     manifest["ffmpeg"]["link_mode"] = link_mode
     manifest["ffmpeg"]["bin_rel_path"] = "ffmpeg/bin" if link_mode == "shared" else None
@@ -157,7 +249,7 @@ def assemble(output, ffmpeg_root, vendor=None):
     (output / "compatibility.json").write_text(json.dumps(manifest, indent=2) + "\n")
     shutil.copytree(ROOT / "desktop/packaging/sdk/notices", output / "notices")
     shutil.copy(ROOT / "desktop/fixtures/annotated-video-overlay/media/OFL.txt", output / "notices/DM-Sans-OFL.txt")
-    (output / "provenance.json").write_text(json.dumps({"rustc": version, "target": target, "ffmpeg_observed_version": observed_ffmpeg, "offline_worker_builds": 2, "frame_png_verified": True, "qualification": "PENDING: sterile clean-account native run required; local build evidence is not that gate"}, indent=2) + "\n")
+    (output / "provenance.json").write_text(json.dumps({"rustc": version, "target": target, "ffmpeg_observed_version": observed_ffmpeg, "offline_worker_builds": 2, "frame_png_verified": True, "preview_contract_verified": True, "qualification": "PENDING: sterile clean-account native run required; local build evidence is not that gate"}, indent=2) + "\n")
     return output
 
 

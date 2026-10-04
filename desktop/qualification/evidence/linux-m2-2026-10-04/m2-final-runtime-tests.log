@@ -1,0 +1,51 @@
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Blocking waiting for file lock on package cache
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running unittests src/lib.rs (target/debug/deps/fframes_studio_protocol-6b6e25b847096bc8)
+
+running 9 tests
+test tests::test_serialization_roundtrip ... ok
+test preview::tests::rejects_nan_scale_and_stale_identity ... ok
+test preview::tests::bounds_audio_records ... ok
+test tests::test_stride_too_small_rejected ... ok
+test tests::test_payload_cap_exceeded_rejected ... ok
+test tests::test_valid_frame_header ... ok
+test tests::test_unsupported_version_rejected ... ok
+test tests::test_zero_dimensions_rejected ... ok
+test tests::test_payload_length_mismatch_rejected ... ok
+
+test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running unittests src/lib.rs (target/debug/deps/fframes_studio_runtime-c3b08e270dbdd598)
+
+running 4 tests
+test anchors::tests::test_hit_testing_paint_order ... ok
+test anchors::tests::test_validate_source_anchor_success_and_failures ... ok
+test worker::tests::test_worker_serving_loop_lifecycle ... ok
+test preview_worker::tests::disk_chunks_match_core_stereo_mix_with_resampling_fades_ducking_and_offset ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s
+
+     Running tests/preview_worker.rs (target/debug/deps/preview_worker-ac33d88b007e099c)
+
+running 4 tests
+test preview_lifecycle_prepares_chunked_pcm_and_cleans_on_exit ... ok
+test cancellation_interrupts_inflight_mix_and_removes_partial_artifact ... ok
+test hello_request_order_and_identity_are_required_before_work ... ok
+test live_preparation_exact_samples_bounded_reads_retention_and_release ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.36s
+
+   Doc-tests fframes_studio_protocol
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests fframes_studio_runtime
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

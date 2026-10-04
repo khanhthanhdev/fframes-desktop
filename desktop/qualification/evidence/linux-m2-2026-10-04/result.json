@@ -1,0 +1,418 @@
+{
+  "after": {
+    "audio_identity_matches": true,
+    "audio_metrics": null,
+    "audio_note": "Audio unavailable \u00b7 monotonic fallback",
+    "audio_ready": false,
+    "busy": false,
+    "buttons": {
+      "build-preview": [
+        265.0,
+        652.0,
+        110.0,
+        39.0
+      ],
+      "cancel-preview": [
+        385.0,
+        652.0,
+        101.0,
+        39.0
+      ],
+      "close": [
+        1116.0,
+        22.0,
+        107.0,
+        39.0
+      ],
+      "mute-audio": [
+        556.0,
+        652.0,
+        82.0,
+        39.0
+      ],
+      "next-audio-output": [
+        648.0,
+        652.0,
+        101.0,
+        39.0
+      ],
+      "next-frame": [
+        485.0,
+        701.0,
+        96.0,
+        39.0
+      ],
+      "no-audio-output": [
+        265.0,
+        701.0,
+        81.0,
+        39.0
+      ],
+      "play-pause": [
+        496.0,
+        652.0,
+        50.0,
+        39.0
+      ],
+      "previous-frame": [
+        356.0,
+        701.0,
+        119.0,
+        39.0
+      ],
+      "retry-audio-output": [
+        759.0,
+        652.0,
+        97.0,
+        39.0
+      ],
+      "timeline-fit": [
+        386.0,
+        849.0,
+        30.0,
+        27.0
+      ]
+    },
+    "clock_epoch": 4,
+    "current_source_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "displayed_generation": 1,
+    "displayed_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "error": null,
+    "fps": 30,
+    "image_metrics": {
+      "dropped": 2,
+      "queued": 1,
+      "release_failures": 0,
+      "resident": 1
+    },
+    "muted": false,
+    "output_device": "Default",
+    "paint_frame": 0,
+    "paint_serial": 2,
+    "pid": 3280318,
+    "playing": false,
+    "position": 0,
+    "preview_extent": [
+      678,
+      383
+    ],
+    "preview_scale": 0.5296875,
+    "preview_status": "Displayed",
+    "project_path": "/tmp/studio-m2-native-final",
+    "pump_metrics": {
+      "late_frames": 0,
+      "owned_processes": 0,
+      "queue_high_water": 1,
+      "render_max_ms": 14.732864,
+      "renders": 2,
+      "thumbnail_queue_high_water": 12
+    },
+    "ruler_bounds": [
+      265.0,
+      882.0,
+      678.0,
+      20.0
+    ],
+    "seek_serial": 2,
+    "thumbnail_metrics": {
+      "bytes": 57600,
+      "entries": 1,
+      "fit_bounds": [
+        386.0,
+        849.0,
+        30.0,
+        27.0
+      ],
+      "high_water_bytes": 57600,
+      "high_water_entries": 1,
+      "pixels_per_second": 130.54545454545453,
+      "release_failures": 0,
+      "ruler_bounds": [
+        265.0,
+        882.0,
+        678.0,
+        20.0
+      ],
+      "scroll_x": 0.0
+    },
+    "total_frames": 165
+  },
+  "before": {
+    "audio_identity_matches": true,
+    "audio_metrics": null,
+    "audio_note": "Audio unavailable \u00b7 monotonic fallback",
+    "audio_ready": false,
+    "busy": false,
+    "buttons": {
+      "build-preview": [
+        265.0,
+        401.0,
+        110.0,
+        39.0
+      ],
+      "cancel-preview": [
+        385.0,
+        401.0,
+        101.0,
+        39.0
+      ],
+      "close": [
+        1156.0,
+        22.0,
+        107.0,
+        39.0
+      ],
+      "mute-audio": [
+        556.0,
+        401.0,
+        82.0,
+        39.0
+      ],
+      "next-audio-output": [
+        648.0,
+        401.0,
+        101.0,
+        39.0
+      ],
+      "next-frame": [
+        394.0,
+        450.0,
+        96.0,
+        39.0
+      ],
+      "no-audio-output": [
+        866.0,
+        401.0,
+        81.0,
+        39.0
+      ],
+      "play-pause": [
+        496.0,
+        401.0,
+        50.0,
+        39.0
+      ],
+      "previous-frame": [
+        265.0,
+        450.0,
+        119.0,
+        39.0
+      ],
+      "retry-audio-output": [
+        759.0,
+        401.0,
+        97.0,
+        39.0
+      ],
+      "timeline-fit": [
+        386.0,
+        549.0,
+        30.0,
+        27.0
+      ]
+    },
+    "clock_epoch": 4,
+    "current_source_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "displayed_generation": 1,
+    "displayed_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "error": null,
+    "fps": 30,
+    "image_metrics": {
+      "dropped": 1,
+      "queued": 1,
+      "release_failures": 0,
+      "resident": 1
+    },
+    "muted": false,
+    "output_device": "Default",
+    "paint_frame": 0,
+    "paint_serial": 1,
+    "pid": 3280318,
+    "playing": false,
+    "position": 0,
+    "preview_extent": [
+      718,
+      132
+    ],
+    "preview_scale": 0.18333333333333332,
+    "preview_status": "Displayed",
+    "project_path": "/tmp/studio-m2-native-final",
+    "pump_metrics": {
+      "late_frames": 0,
+      "owned_processes": 0,
+      "queue_high_water": 1,
+      "render_max_ms": 4.778145,
+      "renders": 1,
+      "thumbnail_queue_high_water": 12
+    },
+    "ruler_bounds": [
+      265.0,
+      582.0,
+      718.0,
+      20.0
+    ],
+    "seek_serial": 1,
+    "thumbnail_metrics": {
+      "bytes": 0,
+      "entries": 0,
+      "fit_bounds": [
+        386.0,
+        549.0,
+        30.0,
+        27.0
+      ],
+      "high_water_bytes": 0,
+      "high_water_entries": 0,
+      "pixels_per_second": 130.54545454545453,
+      "release_failures": 0,
+      "ruler_bounds": [
+        265.0,
+        582.0,
+        718.0,
+        20.0
+      ],
+      "scroll_x": 0.0
+    },
+    "total_frames": 165
+  },
+  "cleanup_leases": [],
+  "passed": true,
+  "paused": {
+    "audio_identity_matches": true,
+    "audio_metrics": null,
+    "audio_note": "Audio unavailable \u00b7 monotonic fallback",
+    "audio_ready": false,
+    "busy": false,
+    "buttons": {
+      "build-preview": [
+        265.0,
+        652.0,
+        110.0,
+        39.0
+      ],
+      "cancel-preview": [
+        385.0,
+        652.0,
+        101.0,
+        39.0
+      ],
+      "close": [
+        1116.0,
+        22.0,
+        107.0,
+        39.0
+      ],
+      "mute-audio": [
+        556.0,
+        652.0,
+        82.0,
+        39.0
+      ],
+      "next-audio-output": [
+        648.0,
+        652.0,
+        101.0,
+        39.0
+      ],
+      "next-frame": [
+        485.0,
+        701.0,
+        96.0,
+        39.0
+      ],
+      "no-audio-output": [
+        265.0,
+        701.0,
+        81.0,
+        39.0
+      ],
+      "play-pause": [
+        496.0,
+        652.0,
+        50.0,
+        39.0
+      ],
+      "previous-frame": [
+        356.0,
+        701.0,
+        119.0,
+        39.0
+      ],
+      "retry-audio-output": [
+        759.0,
+        652.0,
+        97.0,
+        39.0
+      ],
+      "timeline-fit": [
+        386.0,
+        849.0,
+        30.0,
+        27.0
+      ]
+    },
+    "clock_epoch": 6,
+    "current_source_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "displayed_generation": 1,
+    "displayed_revision": "06038f01fb5a0948816446905cef4e4998f6395356ad86dfd820c87967b571f8",
+    "error": null,
+    "fps": 30,
+    "image_metrics": {
+      "dropped": 3,
+      "queued": 1,
+      "release_failures": 0,
+      "resident": 1
+    },
+    "muted": false,
+    "output_device": "Default",
+    "paint_frame": 70,
+    "paint_serial": 4,
+    "pid": 3280318,
+    "playing": false,
+    "position": 70,
+    "preview_extent": [
+      678,
+      383
+    ],
+    "preview_scale": 0.5296875,
+    "preview_status": "Displayed",
+    "project_path": "/tmp/studio-m2-native-final",
+    "pump_metrics": {
+      "late_frames": 0,
+      "owned_processes": 0,
+      "queue_high_water": 1,
+      "render_max_ms": 14.732864,
+      "renders": 3,
+      "thumbnail_queue_high_water": 12
+    },
+    "ruler_bounds": [
+      265.0,
+      882.0,
+      678.0,
+      20.0
+    ],
+    "seek_serial": 4,
+    "thumbnail_metrics": {
+      "bytes": 115200,
+      "entries": 2,
+      "fit_bounds": [
+        386.0,
+        849.0,
+        30.0,
+        27.0
+      ],
+      "high_water_bytes": 115200,
+      "high_water_entries": 2,
+      "pixels_per_second": 130.54545454545453,
+      "release_failures": 0,
+      "ruler_bounds": [
+        265.0,
+        882.0,
+        678.0,
+        20.0
+      ],
+      "scroll_x": 0.0
+    },
+    "total_frames": 165
+  }
+}
