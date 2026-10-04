@@ -130,11 +130,16 @@ impl FrameRenderer for CpuFrameRenderer {
 
         let pixmap = match self.pixmap.take() {
             Some(pixmap) if pixmap.width() == width && pixmap.height() == height => pixmap,
-            _ => tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
-                FFramesRendererError::Internal(format!(
-                    "can not allocate a {width}x{height} pixmap"
-                ))
-            })?,
+            _ => {
+                // Static subtrees are rasterized at the canvas scale but keyed only by hash.
+                // A thumbnail and main frame cannot reuse each other's static pixels.
+                self.cache.clear_static_cache();
+                tiny_skia::Pixmap::new(width, height).ok_or_else(|| {
+                    FFramesRendererError::Internal(format!(
+                        "can not allocate a {width}x{height} pixmap"
+                    ))
+                })?
+            }
         };
         let mut pixmap = pixmap;
 

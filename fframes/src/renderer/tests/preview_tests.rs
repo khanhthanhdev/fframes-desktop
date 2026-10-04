@@ -82,6 +82,55 @@ fn previews_paint_the_background_and_fit_the_output_size() {
     assert_eq!(&small.pixels[right..right + 4], &[0, 0, 255, 255]);
 }
 
+#[cfg(feature = "compile-time-svgtree")]
+#[test]
+fn static_raster_cache_obeys_main_thumbnail_main_scale_changes() {
+    struct StaticVideo;
+    impl Video for StaticVideo {
+        const FPS: usize = 30;
+        const WIDTH: usize = 128;
+        const HEIGHT: usize = 128;
+        const BACKGROUND_COLOR: Color = Color::rgb(0, 0, 255);
+        fn duration(&self) -> crate::Duration<'_> {
+            crate::Duration::Frames(1)
+        }
+        fn audio(&self) -> AudioMap<'_> {
+            AudioMap::none()
+        }
+        fn render_frame<'a>(&'a self, _: Frame, _: &FFramesContext<'a, '_>) -> Svgr<'a> {
+            crate::svgr!(<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128">
+                <g opacity="0.5"><rect x="80" y="56" width="32" height="24" fill="#ff0000" /></g>
+            </svg>)
+        }
+    }
+    let mut previewer = Previewer::new(&StaticVideo, &RenderOptions::default()).unwrap();
+    let mut renderer = CpuFrameRenderer::default();
+    let tree = previewer.svg_tree(0).unwrap();
+    match &tree.root().children()[0] {
+        usvgr::Node::Group(group) => assert!(group.static_hash().is_some()),
+        _ => panic!("fixture must contain a cacheable static group"),
+    }
+    let main = previewer.render(0, &mut renderer).unwrap();
+    for scale in [0.125, 1., 0.125, 1.] {
+        previewer.set_scale(scale);
+        let frame = previewer.render(0, &mut renderer).unwrap();
+        let width = frame.width as usize;
+        let (x, y) = if scale == 1. { (96, 64) } else { (12, 8) };
+        let red = (y * width + x) * 4;
+        assert_eq!(
+            &frame.pixels[red..red + 4],
+            &[128, 0, 128, 255],
+            "scale {scale}"
+        );
+        let outside_x = if scale == 1. { 120 } else { 15 };
+        let blue = (y * width + outside_x) * 4;
+        assert_eq!(&frame.pixels[blue..blue + 4], &[0, 0, 255, 255]);
+        if scale == 1. {
+            assert_eq!(frame.pixels, main.pixels);
+        }
+    }
+}
+
 #[test]
 fn panics_report_frame_time_and_scene() {
     let video = TwoScenes;
