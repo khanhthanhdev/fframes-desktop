@@ -86,6 +86,34 @@ impl WorkerTransport {
         self.frame_out.flush()?;
         Ok(())
     }
+
+    /// Writes an M2 tagged record: a bounded JSON header followed by its exact payload.
+    pub fn write_binary_record(
+        &mut self,
+        header: &fframes_studio_protocol::BinaryRecordHeader,
+        payload: &[u8],
+    ) -> Result<(), WorkerError> {
+        header
+            .validate()
+            .map_err(|error| WorkerError::Custom(error.to_string()))?;
+        if header.payload_len != payload.len() {
+            return Err(WorkerError::Custom(
+                "binary record payload length mismatch".into(),
+            ));
+        }
+        let encoded = serde_json::to_vec(header)?;
+        if encoded.len() > MAX_CONTROL_MESSAGE_SIZE {
+            return Err(WorkerError::Custom(
+                "binary record header exceeds control bound".into(),
+            ));
+        }
+        self.frame_out
+            .write_all(&(encoded.len() as u32).to_be_bytes())?;
+        self.frame_out.write_all(&encoded)?;
+        self.frame_out.write_all(payload)?;
+        self.frame_out.flush()?;
+        Ok(())
+    }
 }
 
 /// The borrowed worker serving loop.
