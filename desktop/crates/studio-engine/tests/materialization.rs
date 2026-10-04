@@ -106,3 +106,50 @@ fn contained_dependency_with_absolute_path_is_rewritten_to_copied_workspace() {
     let copied_helper = build.root.join("helper");
     assert!(materialized_cargo.contains(&copied_helper.to_string_lossy().to_string()));
 }
+
+#[test]
+fn cancelled_copy_removes_partial_tree_and_preserves_captured_source() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("video");
+    let sdk = temp.path().join("sdk");
+    fs::create_dir(&sdk).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
+    studio_project::create(&root, "Video", sdk_pin(&compatibility), "1.1.0", "0.1.0").unwrap();
+    let bytes = vec![93; 2 * 1024 * 1024];
+    fs::write(root.join("media/large.bin"), &bytes).unwrap();
+    let project = studio_project::open(&root).unwrap();
+    let calls = std::cell::Cell::new(0);
+    let builds = temp.path().join("builds");
+    let result = studio_engine::build_materialization::materialize_with_cancel(
+        &project,
+        &sdk,
+        compatibility,
+        &builds,
+        &|| {
+            calls.set(calls.get() + 1);
+            calls.get() >= 4
+        },
+    );
+    assert!(result.err().unwrap().to_string().contains("cancelled"));
+    assert_eq!(fs::read(root.join("media/large.bin")).unwrap(), bytes);
+    assert_eq!(
+        studio_project::open(&root).unwrap().inventory,
+        project.inventory
+    );
+    fn check(path: &std::path::Path) {
+        for e in fs::read_dir(path).unwrap() {
+            let path = e.unwrap().path();
+            if path.is_dir() {
+                assert!(
+                    !path
+                        .file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("build-")
+                );
+                check(&path);
+            }
+        }
+    }
+    check(&builds);
+}

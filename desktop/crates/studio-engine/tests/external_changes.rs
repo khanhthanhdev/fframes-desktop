@@ -5,6 +5,41 @@ use studio_engine::{
 use studio_sdk::CompatibilityManifest;
 
 #[test]
+fn source_reads_do_not_dirty_the_install_fence_but_external_writes_do() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("video");
+    let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    studio_project::create(
+        &root,
+        "Video",
+        sdk_pin(&CompatibilityManifest::default_linux_x64()),
+        "1.1.0",
+        "0.1.0",
+    )
+    .unwrap();
+    let mut controller = Controller::open(&root, &paths).unwrap();
+    controller.reconcile().unwrap();
+    fs::read(root.join("src/lib.rs")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        !controller.changed_hint(),
+        "read-only source scan blocks installation"
+    );
+    fs::write(root.join("src/lib.rs"), "// external write").unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while !controller.changed_hint() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "external write must fence installation"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    controller.reconcile().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    assert!(!controller.changed_hint());
+}
+
+#[test]
 fn external_edit_rejects_late_completion_and_preserves_baseline_and_draft() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");

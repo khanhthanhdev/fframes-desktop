@@ -29,6 +29,7 @@ pub struct Controller {
     pub history_was_available: bool,
     pub recovery_notice: Option<String>,
     pub processes: studio_bootstrap::ProcessTreeManager,
+    operations: studio_bootstrap::ProcessTreeManager,
 }
 impl Controller {
     pub fn open(root: &Path, paths: &AppPaths) -> Result<Self, EngineError> {
@@ -131,8 +132,12 @@ impl Controller {
         let dirty = Arc::new(AtomicBool::new(false));
         let flag = dirty.clone();
         let mut watcher =
-            notify::recommended_watcher(move |_: Result<notify::Event, notify::Error>| {
-                flag.store(true, Ordering::Release);
+            notify::recommended_watcher(move |event: Result<notify::Event, notify::Error>| {
+                // Reading source during reconciliation must not invalidate its own
+                // install fence. Writes still emit Create/Modify/Remove events.
+                if !matches!(event, Ok(ref e) if matches!(e.kind, notify::EventKind::Access(_))) {
+                    flag.store(true, Ordering::Release);
+                }
             })
             .map_err(|e| {
                 EngineError::Diagnostic(format!(
@@ -147,6 +152,8 @@ impl Controller {
                     project.root.display()
                 ))
             })?;
+        let processes = studio_bootstrap::ProcessTreeManager::new();
+        let operations = processes.sub_manager();
         Ok(Self {
             project,
             record,
@@ -165,11 +172,16 @@ impl Controller {
                         format!("Source degraded ({err}). Safe checkpoint export is available.")
                     })
                 }),
-            processes: studio_bootstrap::ProcessTreeManager::new(),
+            processes,
+            operations,
         })
     }
     pub fn state(&self) -> &ProjectState {
         &self.record.state
+    }
+    /// Compiler/candidate work is cancellable without terminating displayed workers.
+    pub fn operation_processes(&self) -> studio_bootstrap::ProcessTreeManager {
+        self.operations.clone()
     }
     pub fn draft(&self) -> Option<&Path> {
         self.record.draft.as_deref()
@@ -275,7 +287,7 @@ impl Controller {
                 // Invalidate in memory before persistence: even a history write failure
                 // must not allow an edit-back to resurrect an old completion.
                 self.record.state.invalidate_source()?;
-                self.processes.terminate_all(Duration::from_millis(300));
+                self.operations.shutdown(Duration::from_millis(300));
                 self.recovery_notice = Some(format!(
                     "Source reconciliation failed ({error}). Repair source and retry; safe checkpoint export is available."
                 ));
@@ -289,7 +301,7 @@ impl Controller {
             .reconcile_source(project.inventory.revision.clone())?;
         self.project = project;
         if self.state().source() != &previous {
-            self.processes.terminate_all(Duration::from_millis(300));
+            self.operations.shutdown(Duration::from_millis(300));
             self.persist(self.record.clone())?;
         }
         Ok(())
@@ -326,6 +338,8 @@ impl Controller {
         self.reconcile()?;
         let mut record = self.record.clone();
         let tag = record.state.queue(kind)?;
+        self.operations.shutdown(Duration::ZERO);
+        self.operations = self.processes.sub_manager();
         let name = format!(
             "{}-{}",
             uuid::Uuid::from_bytes(tag.session.0),
@@ -406,7 +420,7 @@ impl Controller {
         let mut record = self.record.clone();
         record.state.request_cancel()?;
         self.persist(record)?;
-        self.processes.terminate_all(Duration::from_millis(300));
+        self.operations.shutdown(Duration::from_millis(300));
         let mut record = self.record.clone();
         record.state.interrupt()?;
         self.persist(record)

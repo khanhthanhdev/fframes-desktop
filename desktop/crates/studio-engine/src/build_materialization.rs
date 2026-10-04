@@ -1,11 +1,11 @@
 use std::{
     fs,
+    io::{Read, Write},
     path::{Path, PathBuf},
 };
 
 use studio_project::{
     OpenProject, ProjectError, ProjectPath, SourceInventory,
-    checkpoint::copy_draft,
     lifecycle::{atomic_write, read_cargo},
 };
 use studio_sdk::{CompatibilityManifest, environment::SdkEnvironment};
@@ -17,6 +17,8 @@ pub struct MaterializedBuild {
     pub worker_target: String,
     pub manifest: PathBuf,
     pub isolated_bin_dir: PathBuf,
+    // The worker and any frame/audio consumers retain this lease. Never prune a live tree.
+    _directory: tempfile::TempDir,
 }
 
 pub fn sdk_pin(manifest: &CompatibilityManifest) -> studio_project::manifest::SdkPin {
@@ -32,6 +34,16 @@ pub fn materialize(
     sdk: &Path,
     compatibility: CompatibilityManifest,
     app_builds: &Path,
+) -> Result<MaterializedBuild, ProjectError> {
+    materialize_with_cancel(project, sdk, compatibility, app_builds, &|| false)
+}
+
+pub fn materialize_with_cancel(
+    project: &OpenProject,
+    sdk: &Path,
+    compatibility: CompatibilityManifest,
+    app_builds: &Path,
+    cancelled: &impl Fn() -> bool,
 ) -> Result<MaterializedBuild, ProjectError> {
     let error = |path: &Path, reason: String| {
         ProjectError::new(
@@ -81,9 +93,37 @@ pub fn materialize(
         .tempdir_in(&build_key)
         .map_err(|e| error(&build_key, e.to_string()))?;
     let root = staging.path().join("project");
-    copy_draft(&project.root, &root)?;
-    if SourceInventory::scan(&root)?.revision != project.inventory.revision
-        || SourceInventory::scan(&project.root)?.revision != project.inventory.revision
+    fs::create_dir(&root).map_err(|e| error(&root, e.to_string()))?;
+    let mut buffer = [0; 64 * 1024];
+    for source in &project.inventory.files {
+        let target = root.join(source.path.as_str());
+        fs::create_dir_all(target.parent().unwrap()).map_err(|e| error(&target, e.to_string()))?;
+        let mut input = source.path.open_file(&project.root)?;
+        let mut output = fs::File::create(&target).map_err(|e| error(&target, e.to_string()))?;
+        loop {
+            if cancelled() {
+                return Err(error(&root, "Materialization cancelled".into()));
+            }
+            let n = input
+                .read(&mut buffer)
+                .map_err(|e| error(&target, e.to_string()))?;
+            if n == 0 {
+                break;
+            }
+            output
+                .write_all(&buffer[..n])
+                .map_err(|e| error(&target, e.to_string()))?;
+        }
+        #[cfg(unix)]
+        if source.executable {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&target, fs::Permissions::from_mode(0o755))
+                .map_err(|e| error(&target, e.to_string()))?;
+        }
+    }
+    if SourceInventory::scan_with_cancel(&root, cancelled)?.revision != project.inventory.revision
+        || SourceInventory::scan_with_cancel(&project.root, cancelled)?.revision
+            != project.inventory.revision
     {
         return Err(error(
             &project.root,
@@ -91,6 +131,9 @@ pub fn materialize(
         ));
     }
     for file in &project.inventory.files {
+        if cancelled() {
+            return Err(error(&root, "Materialization cancelled".into()));
+        }
         if file.path.as_str().rsplit('/').next() != Some("Cargo.toml") {
             continue;
         }
@@ -121,7 +164,9 @@ pub fn materialize(
     if root.join("Cargo.lock").exists() {
         fs::remove_file(root.join("Cargo.lock")).map_err(|e| error(&root, e.to_string()))?;
     }
-    if SourceInventory::scan(&project.root)?.revision != project.inventory.revision {
+    if SourceInventory::scan_with_cancel(&project.root, cancelled)?.revision
+        != project.inventory.revision
+    {
         return Err(error(
             &project.root,
             "Source changed during SDK binding; refresh and retry".into(),
@@ -132,7 +177,7 @@ pub fn materialize(
         .join(compatibility.digest())
         .join(&compatibility.target_triple);
     let environment = SdkEnvironment::new(&sdk, target, compatibility, true);
-    let staging_path = staging.keep();
+    let staging_path = staging.path();
     let isolated_bin_dir = staging_path.join("bin");
     fs::create_dir_all(&isolated_bin_dir).map_err(|e| error(&isolated_bin_dir, e.to_string()))?;
     let root = staging_path.join("project");
@@ -143,6 +188,7 @@ pub fn materialize(
         package: project.manifest.entry.package.clone(),
         worker_target: project.manifest.entry.worker_target.clone(),
         isolated_bin_dir,
+        _directory: staging,
     })
 }
 

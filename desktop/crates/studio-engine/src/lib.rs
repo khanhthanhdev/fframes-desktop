@@ -3,10 +3,16 @@ pub mod app_paths;
 pub mod build_materialization;
 pub mod controller;
 pub mod journal;
+pub mod playback_clock;
+pub mod preview_state;
 pub mod state;
 pub mod store;
+pub mod timeline;
 pub use controller::Controller;
+pub use playback_clock::*;
+pub use preview_state::*;
 pub use state::*;
+pub use timeline::*;
 
 #[derive(Debug, thiserror::Error)]
 pub enum EngineError {
