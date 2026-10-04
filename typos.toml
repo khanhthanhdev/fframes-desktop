@@ -4,3 +4,4 @@ extend-exclude = ["*.snapshot.txt", "sessions.json"]
 hd = "hd"
 # "PNGs" is split into "PN" + "Gs"
 PN = "PN"
+seeked = "seeked"

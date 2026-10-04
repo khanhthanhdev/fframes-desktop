@@ -455,7 +455,7 @@ fn real_cpal_output_clock_mute_pause_seek_and_cleanup() {
     service.stage(ready.clone(), 2, 30, OutputDevice::Default);
     service.stage(ready.clone(), 3, 90, OutputDevice::Default);
     let deadline = Instant::now() + Duration::from_secs(10);
-    let seeked = loop {
+    let seek_output = loop {
         match service.event() {
             Some(AudioEvent::Staged {
                 epoch: 3,
@@ -473,7 +473,7 @@ fn real_cpal_output_clock_mute_pause_seek_and_cleanup() {
     service.commit(3, true);
     let deadline = Instant::now() + Duration::from_secs(2);
     let snapshot = loop {
-        if let Some(snapshot) = seeked.snapshot() {
+        if let Some(snapshot) = seek_output.snapshot() {
             break snapshot;
         }
         assert!(Instant::now() < deadline, "seek clock snapshot deadline");
@@ -481,7 +481,7 @@ fn real_cpal_output_clock_mute_pause_seek_and_cleanup() {
     };
     assert_eq!(snapshot.epoch, 3);
     assert!(
-        snapshot.start_sample < u64::from(seeked.sample_rate) / 4,
+        snapshot.start_sample < u64::from(seek_output.sample_rate) / 4,
         "new epoch clock must be relative to its seek: {snapshot:?}"
     );
 

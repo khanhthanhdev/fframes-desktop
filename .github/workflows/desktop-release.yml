@@ -115,11 +115,12 @@ jobs:
       - name: Focused tests and lint
         run: |
           cargo fmt --manifest-path desktop/Cargo.toml --all --check
-          cargo test --locked --manifest-path desktop/Cargo.toml -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio
-          cargo clippy --locked --manifest-path desktop/Cargo.toml -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio --all-targets -- -D warnings
+          cargo test --locked --manifest-path desktop/Cargo.toml -p studio-project -p studio-engine -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio
+          cargo clippy --locked --manifest-path desktop/Cargo.toml -p studio-project -p studio-engine -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio --all-targets -- -D warnings
           cargo test --locked -p fframes-studio-protocol -p fframes-studio-runtime
           python3 desktop/scripts/test-packaging.py
           python3 desktop/scripts/validate-qualification.py desktop/qualification/m0-results.json
+          python3 desktop/scripts/validate-qualification.py desktop/qualification/m2-results.json
       - name: Build and render annotated worker
         run: |
           cargo build --release --manifest-path desktop/fixtures/annotated-video-overlay/Cargo.toml

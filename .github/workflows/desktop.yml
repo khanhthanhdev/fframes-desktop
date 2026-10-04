@@ -84,7 +84,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm xvfb xdotool pulseaudio pulseaudio-utils mesa-vulkan-drivers
+          sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm xvfb xdotool pulseaudio pulseaudio-utils mesa-vulkan-drivers python3-pil
           python3 -m pip install Pillow
           llvm_lib="$(find /usr/lib -name "libclang.so" 2>/dev/null | head -n1)"
           if [ -n "$llvm_lib" ]; then

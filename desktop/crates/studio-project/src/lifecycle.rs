@@ -208,6 +208,8 @@ pub fn sync_directory(path: &Path) -> Result<(), ProjectError> {
     fs::File::open(path)
         .and_then(|f| f.sync_all())
         .map_err(|e| io_error(path, e))?;
+    #[cfg(not(unix))]
+    let _ = path;
     Ok(())
 }
 
