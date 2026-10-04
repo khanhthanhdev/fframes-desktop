@@ -562,7 +562,8 @@ type ChildList = Arc<Mutex<Vec<Arc<Mutex<TrackedChild>>>>>;
 pub struct ProcessTreeManager {
     children: ChildList,
     stopped: Arc<AtomicBool>,
-    parent: Option<ChildList>,
+    ancestors: Vec<Arc<AtomicBool>>,
+    parents: Vec<ChildList>,
     lifecycle: Arc<Mutex<()>>,
 }
 
@@ -571,19 +572,24 @@ impl ProcessTreeManager {
         Self {
             children: Arc::new(Mutex::new(Vec::new())),
             stopped: Arc::new(AtomicBool::new(false)),
-            parent: None,
+            ancestors: Vec::new(),
+            parents: Vec::new(),
             lifecycle: Arc::new(Mutex::new(())),
         }
     }
 
-    /// Creates a sub-manager that shares the app cancellation / shutdown signal,
-    /// publishes spawned children to the parent for app-wide shutdown, but can terminate
-    /// only its own scoped children on demand without sweeping unrelated processes.
+    /// A terminal child scope cancels its descendants, not siblings. The root retains
+    /// every process for app-wide shutdown, including nested scopes.
     pub fn sub_manager(&self) -> Self {
+        let mut ancestors = self.ancestors.clone();
+        ancestors.push(self.stopped.clone());
+        let mut parents = self.parents.clone();
+        parents.push(self.children.clone());
         Self {
             children: Arc::new(Mutex::new(Vec::new())),
-            stopped: Arc::clone(&self.stopped),
-            parent: Some(Arc::clone(self.parent.as_ref().unwrap_or(&self.children))),
+            stopped: Arc::new(AtomicBool::new(false)),
+            ancestors,
+            parents,
             lifecycle: Arc::clone(&self.lifecycle),
         }
     }
@@ -609,7 +615,7 @@ impl ProcessTreeManager {
             }
         });
         list.push(Arc::clone(&arc_child));
-        if let Some(parent) = &self.parent {
+        for parent in &self.parents {
             let mut parent_list = parent.lock();
             parent_list.retain(|c| {
                 if let Some(mut lock) = c.try_lock() {
@@ -644,7 +650,7 @@ impl ProcessTreeManager {
                 terminated.push(Arc::clone(&child_arc));
             }
         }
-        if let Some(parent) = &self.parent {
+        for parent in &self.parents {
             parent
                 .lock()
                 .retain(|child| !terminated.iter().any(|done| Arc::ptr_eq(child, done)));
@@ -662,6 +668,10 @@ impl ProcessTreeManager {
 
     pub fn is_shutdown(&self) -> bool {
         self.stopped.load(Ordering::Acquire)
+            || self
+                .ancestors
+                .iter()
+                .any(|flag| flag.load(Ordering::Acquire))
     }
 
     pub fn active_count(&self) -> usize {
@@ -860,5 +870,29 @@ mod tests {
         assert!(sibling_survived);
         assert_eq!(parent_count, 1);
         assert!(sibling_exited);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn terminal_operation_scope_reaps_nested_children_without_cancelling_displayed_scope() {
+        let root = ProcessTreeManager::new();
+        let operation = root.sub_manager();
+        let nested = operation.sub_manager();
+        let displayed = root.sub_manager();
+        let mut opts = SpawnOptions::new("sleep");
+        opts.arg("30");
+        let child = nested.spawn(opts).unwrap();
+        operation.shutdown(Duration::ZERO);
+        assert!(child.lock().try_wait().unwrap().is_some());
+        assert!(nested.is_shutdown());
+        assert!(nested.spawn(SpawnOptions::new("sleep")).is_err());
+        assert!(!displayed.is_shutdown());
+        let mut opts = SpawnOptions::new("sleep");
+        opts.arg("30");
+        let live = displayed.spawn(opts).unwrap();
+        root.shutdown(Duration::ZERO);
+        assert!(live.lock().try_wait().unwrap().is_some());
+        assert!(displayed.is_shutdown());
+        assert_eq!(root.active_count(), 0);
     }
 }
