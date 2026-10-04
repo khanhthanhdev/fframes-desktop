@@ -63,15 +63,30 @@ Add a project controller with explicit source revision, accepted revision, candi
 
 ### M2 — Preview, timeline and audio
 
-Implement the GPUI-free renderer runtime library and a project worker that owns the concrete Video and its media/caches. Define worker hello/version negotiation, timeline, frame, inspect and shutdown operations. Start with a simple bounded binary frame transport and measure before adopting shared memory.
+Execution detail: [Phase 2 step-by-step preview, timeline and audio plan](../../plans/261002-1457-desktop-phase-two-preview-timeline-audio/plan.md). Its four sequential execution stages belong to M2; they do not replace milestones M2–M5. Revision-safe CPU preview, compiled timeline controls and CPAL output-clock scheduling are implemented locally, uncommitted and unpushed. Linux X11 software rendering and virtual audio exercise the real app/SDK path; representative CLI pixels and sequential PCM agree within recorded tolerances. The [M2 qualification record](../../desktop/qualification/m2-results.json) separates resource/control evidence from pending physical output timing and platform qualification. M2 is not release-qualified.
+
+Build on the existing Phase 0 GPUI-free runtime/protocol, binary frame transport and presentation checks, and the Phase 1 portable project, isolated SDK build, controller and recovery foundation. Continue development under the previously accepted Linux X11 evidence boundary; physical GPU/display/IME, Windows/macOS interactive and authenticated-provider qualification remain open.
+
+| Execution stage | Deliverable | Depends on |
+| --- | --- | --- |
+| 1 | Validated worker negotiation, compiled reports, inspection, scaled frames and revision-bound audio preparation | M0/M1 foundation |
+| 2 | Background build/preview coordination, bounded frame presentation and atomic worker replacement | Stage 1 |
+| 3 | Compiled scene/audio timeline, geometry, playback controls, selection and bounded thumbnails | Stage 2 |
+| 4 | App audio output, audio-clock scheduling and integrated milestone verification | Stages 1–3 |
+
+Extend the existing GPUI-free renderer runtime and project worker, which retain the concrete Video and its media/caches. Harden worker hello/version negotiation, timeline, frame and shutdown operations, and add inspection and audio preparation. Retain the bounded binary frame transport and measure before adopting shared memory.
 
 Build scene/audio tracks from compiled timeline reports; add play/pause, frame step, scrub, timeline zoom, range selection, overlapping-scene selection, thumbnails and time display. Put all time geometry and hit-testing arithmetic in a UI-independent module.
 
 Add the app audio service and a matching mix for each preview revision. Keep video presentation aligned to the audio clock and drop late frames rather than drift. Worker/build replacement must reject stale generation results and preserve the last successful preview.
 
+Separate source-sensitive build cancellation from the lifetime of the displayed immutable worker. A saved checkpoint is not proof of a successful build. Install a replacement preview only when its worker, timeline, first frame and matching audio are ready; preserve the previous preview on failure and reject superseded seeks even within the same worker generation. Keep timeline geometry in the existing GPUI-free engine and audio output in the app, without adding another UI event loop.
+
 **Acceptance:** a real multi-scene fframes project plays with matching audio, seeks correctly while paused and playing, reaches the end cleanly, and preserves/clamps the playhead after a successful rebuild. A compile failure leaves the prior video usable. A repeated scrub/play session does not grow image/frame buffers indefinitely.
 
 Use color/alpha reference frames to qualify conversion, and check the same representative frame through the selected preview/export backend. Include a shader example so unsupported fallback behavior is visible.
+
+Qualification must also cover overlapping-scene selection, half-open ranges, thumbnail eviction, mute/silent/no-device playback, audio-device failure/reconnection, interrupted audio preparation, source changes during a build and project close/reopen cleanup. Use the existing CPU path initially and identify unsupported shader rendering explicitly. Compare it with the same backend through the existing frame CLI; export controls remain in M7. Record native presentation, audio timing, memory and process evidence separately from headless tests.
 
 ### M3 — Complete an agent edit transaction
 

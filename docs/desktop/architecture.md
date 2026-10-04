@@ -324,7 +324,7 @@ The existing skill is a starting point, but desktop instructions should route pr
 
 For the first integration slice, Studio can build a project once and invoke its compiled CLI for timeline JSON, PNG frames, inspection and a cached draft MP4. This proves the authoring loop. It does not establish smooth interactive frame generation.
 
-The shipping interactive path uses a persistent worker with the concrete Video, media provider, Previewer, decoder state and renderer caches kept alive. The worker exposes versioned operations such as hello, timeline, render_frame, element_metadata, inspect, prepare_audio and export. Standard output carries protocol messages; logs go to stderr. Bulk image/audio data travels through a separate bounded binary transport.
+The implemented M2 path keeps the concrete Video, media provider, Previewer and CPU renderer caches alive in an immutable project worker. Its additive `--preview-worker` contract negotiates hello, timeline, scaled frames, inspection, prepared PCM/windows and shutdown; the legacy `--worker` route remains unchanged. Standard output carries bounded JSON control; pixels and PCM windows use a loopback binary transport. Element metadata and export remain separate later scope.
 
 Each message includes protocol version, project/source revision, worker generation and request ID. A paused seek is latest-wins. Reject late results from superseded requests or old renderer generations. On a successful rebuild, start a new worker, prepare its first frame, then switch atomically at the UI model level while preserving/clamping playhead and selection.
 
@@ -332,7 +332,7 @@ Each message includes protocol version, project/source revision, worker generati
 
 Define dimensions, byte stride, channel order, alpha mode, color space and frame number in the frame header. fframes' RgbaFrame is straight RGBA; other paths may produce premultiplied data. Convert into the representation expected by the pinned GPUI API once at the presentation boundary and verify with known colors/transparency.
 
-A bounded binary pipe is acceptable for the first static-frame spike. For sustained playback, evaluate a small shared-memory ring with explicit ownership/release or another measured binary transport. Do not send full-resolution base64 images inside ACP or control JSON.
+A bounded binary transport remains the selected implementation. One render and one latest desired target coalesce playback requests; stale identity/seek serial/clock-epoch completions cannot replace the main image. Thumbnails yield to main-frame requests and use a separate completion destination. Do not send full-resolution base64 images inside ACP or control JSON. Shared memory is not required by M2.
 
 At 1280×720, one RGBA frame is about 3.5 MiB; 30 frames per second moves about 105 MiB/s before extra copies. Use preview resolution, bounded queues, latest-wins coalescing and explicit GPUI image eviction. Zero-copy texture interop between Skia and GPUI is a later platform-specific optimization.
 
@@ -344,9 +344,11 @@ Initially, a scene resize/reorder/trim gesture creates an agent request and ghos
 
 ### Audio and presentation clock
 
-First support an audio mix prepared for an immutable preview revision; an app-owned audio service handles play/pause/seek and uses the audio clock to schedule/drop video frames. The exact mix/audio API must be proven in the worker spike. Later add streaming audio preparation for long projects.
+The worker prepares the core sequential stereo mix for an immutable revision. The app validates and retains its open PCM file and materialization lease off the UI thread. A dedicated native owner creates/controls/drops CPAL streams. A bounded positioned reader and windowed-sinc resampler feed a fixed SPSC ring; the callback only converts channels/sample formats, consumes packets, writes silence on underrun/mute, and publishes atomic timestamps. It performs no allocation, locking or I/O. Long-project streaming mix preparation remains later scope.
 
-Keep the audio revision coupled to the visible renderer revision. Resuming playback after a rebuild must use a matching mix and seek position. Test mute, output-device changes, end-of-video and rebuild while playing.
+`PlaybackClock` maps epoch-relative submitted samples against callback/predicted playback time, clamps to submitted samples and the inclusive end cursor, and rejects stale/backward timestamps. These are predicted output times, not measured physical DAC position. Invalid timestamp backends expose an estimated-latency mode. No-device/device-loss playback uses an explicit monotonic fallback; mute continues sample consumption. Pause/seek/device changes invalidate old output and re-prime the matching first frame before resuming.
+
+Keep the audio revision coupled to the visible renderer revision. Rebuilds preserve old playback until candidate readiness, then freeze the current mapped position, re-prime its newest seek serial and reserve a fresh output epoch before committing the worker, timeline, first frame and audio together. Cancellation/precommit failure resumes the old revision; source checkpoints do not advance. Physical output residual/pause-drain latency and other native platforms remain qualification gates in the M2 record.
 
 Use the same selected rendering backend and fonts/media for preview and export. A tiny-skia fallback cannot reproduce Skia-only shaders; report that capability gap or use a validated Skia CPU path. GPUI acceleration and fframes renderer acceleration are separate capabilities.
 
