@@ -1,4 +1,5 @@
 pub mod app;
+pub mod audio_service;
 pub mod frame_image;
 pub mod selection_spike;
 pub mod setup_view;
@@ -16,7 +17,11 @@ pub use text_input::TextInput;
 pub use worker_client::WorkerClient;
 
 pub mod presentation_stress;
+pub mod preview_coordinator;
 pub mod preview_element;
+pub mod preview_worker_client;
+pub mod thumbnail_cache;
+pub mod timeline_view;
 
 pub mod agent_spike;
 pub mod project_view;

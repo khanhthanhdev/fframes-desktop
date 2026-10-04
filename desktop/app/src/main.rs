@@ -15,7 +15,24 @@ struct PresentationQualification {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str).unwrap_or("studio") {
-        "studio" => run_studio(),
+        "studio" => run_studio(None),
+        "qualify-m2" => {
+            let argument = |key: &str| {
+                args.iter()
+                    .position(|arg| arg == key)
+                    .and_then(|index| args.get(index + 1))
+                    .map(PathBuf::from)
+            };
+            match (argument("--project"), argument("--telemetry")) {
+                (Some(project), Some(output)) if project.is_dir() && !output.exists() => {
+                    run_studio(Some((project, output)))
+                }
+                _ => {
+                    eprintln!("qualify-m2 requires --project DIR and a fresh --telemetry FILE");
+                    std::process::exit(1);
+                }
+            }
+        }
         "spike-ui" | "--spike-ui" => run_spike_ui(None),
         "qualify-presentation" => {
             let result = (|| -> Result<_, Box<dyn std::error::Error>> {
@@ -66,6 +83,7 @@ fn main() {
         "help" | "--help" | "-h" => {
             println!("fframes-studio [studio] — native project workspace");
             println!("fframes-studio spike-ui");
+            println!("fframes-studio qualify-m2 --project DIR --telemetry FILE");
             println!(
                 "fframes-studio qualify-presentation --bundle DIR --sdk-home DIR --project DIR --output FILE"
             );
@@ -78,23 +96,39 @@ fn main() {
     }
 }
 
-fn run_studio() {
-    gpui_platform::application().run(|cx: &mut App| {
-        cx.on_window_closed(|cx, _| cx.quit()).detach();
+fn run_studio(qualification: Option<(PathBuf, PathBuf)>) {
+    gpui_platform::application().run(move |cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
-        cx.open_window(
-            WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                titlebar: Some(gpui::TitlebarOptions {
-                    title: Some("fframes Studio".into()),
-                    appears_transparent: false,
-                    traffic_light_position: None,
-                }),
-                ..Default::default()
-            },
-            |window, cx| cx.new(|cx| fframes_studio::studio_shell::StudioShell::new(window, cx)),
-        )
-        .expect("failed to open Studio");
+        let window = cx
+            .open_window(
+                WindowOptions {
+                    window_bounds: Some(WindowBounds::Windowed(bounds)),
+                    titlebar: Some(gpui::TitlebarOptions {
+                        title: Some("fframes Studio".into()),
+                        appears_transparent: false,
+                        traffic_light_position: None,
+                    }),
+                    ..Default::default()
+                },
+                move |window, cx| {
+                    cx.new(|cx| {
+                        let mut shell = fframes_studio::studio_shell::StudioShell::new(window, cx);
+                        if let Some((project, output)) = qualification {
+                            shell.start_qualification(project, output, cx);
+                        }
+                        shell
+                    })
+                },
+            )
+            .expect("failed to open Studio");
+        // Closing the last window must not release the shell before its awaited
+        // quit hook can stop audio and drop the final materialization consumers.
+        let shell = window.entity(cx).expect("Studio root entity");
+        cx.on_window_closed(move |cx, _| {
+            let _keep_alive = &shell;
+            cx.quit();
+        })
+        .detach();
         cx.activate(true);
     });
 }

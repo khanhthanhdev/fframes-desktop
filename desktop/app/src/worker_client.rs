@@ -100,6 +100,7 @@ pub struct WorkerClient {
     latest_pixels: Option<Vec<u8>>,
     crashed: bool,
     stderr_logs: Arc<Mutex<String>>,
+    lease: Option<Arc<studio_engine::build_materialization::MaterializedBuild>>,
 }
 
 impl WorkerClient {
@@ -118,6 +119,7 @@ impl WorkerClient {
             pipes: None,
             crashed: false,
             stderr_logs: Arc::new(Mutex::new(String::new())),
+            lease: None,
         }
     }
 
@@ -125,7 +127,7 @@ impl WorkerClient {
         self.request_timeout = timeout;
     }
 
-    fn with_deadline<T>(
+    pub(crate) fn with_deadline<T>(
         &mut self,
         operation: impl FnOnce(&mut Self) -> Result<T, WorkerClientError>,
     ) -> Result<T, WorkerClientError> {
@@ -144,6 +146,19 @@ impl WorkerClient {
 
     pub fn recent_logs(&self) -> String {
         self.stderr_logs.lock().clone()
+    }
+
+    pub(crate) fn retain_build(
+        &mut self,
+        build: Arc<studio_engine::build_materialization::MaterializedBuild>,
+    ) {
+        self.lease = Some(build);
+    }
+
+    pub(crate) fn build_lease(
+        &self,
+    ) -> Option<Arc<studio_engine::build_materialization::MaterializedBuild>> {
+        self.lease.clone()
     }
 
     pub fn attach_pipes(
@@ -281,11 +296,23 @@ impl WorkerClient {
     }
 
     pub fn write_control_request(&mut self, req: &WorkerRequest) -> Result<(), WorkerClientError> {
+        self.write_message(req)
+    }
+
+    pub(crate) fn write_message(
+        &mut self,
+        req: &impl serde::Serialize,
+    ) -> Result<(), WorkerClientError> {
         let pipes = self
             .pipes
             .as_mut()
             .ok_or_else(|| WorkerClientError::Other("worker pipes not attached".into()))?;
         let json_bytes = serde_json::to_vec(req)?;
+        if json_bytes.len() > 1024 * 1024 {
+            return Err(WorkerClientError::Other(
+                "Control request exceeds 1 MiB".into(),
+            ));
+        }
         let len_bytes = (json_bytes.len() as u32).to_be_bytes();
         pipes.control_writer.write_all(&len_bytes)?;
         pipes.control_writer.write_all(&json_bytes)?;
@@ -294,6 +321,12 @@ impl WorkerClient {
     }
 
     pub fn read_control_response(&mut self) -> Result<WorkerResponse, WorkerClientError> {
+        self.read_message()
+    }
+
+    pub(crate) fn read_message<T: serde::de::DeserializeOwned>(
+        &mut self,
+    ) -> Result<T, WorkerClientError> {
         let pipes = self
             .pipes
             .as_mut()
@@ -317,8 +350,40 @@ impl WorkerClient {
             self.crashed = true;
             WorkerClientError::Io(e)
         })?;
-        let resp: WorkerResponse = serde_json::from_slice(&buf)?;
+        let resp = serde_json::from_slice(&buf)?;
         Ok(resp)
+    }
+
+    pub(crate) fn read_record(
+        &mut self,
+        expected: &fframes_studio_protocol::BinaryRecordHeader,
+    ) -> Result<Vec<u8>, WorkerClientError> {
+        expected
+            .validate()
+            .map_err(|e| WorkerClientError::Other(e.to_string()))?;
+        let pipes = self
+            .pipes
+            .as_mut()
+            .ok_or_else(|| WorkerClientError::Other("Worker pipes not attached".into()))?;
+        let mut length = [0; 4];
+        pipes.frame_reader.read_exact(&mut length)?;
+        let length = u32::from_be_bytes(length) as usize;
+        if length > 1024 * 1024 {
+            return Err(WorkerClientError::Other(
+                "Binary header exceeds 1 MiB".into(),
+            ));
+        }
+        let mut header = vec![0; length];
+        pipes.frame_reader.read_exact(&mut header)?;
+        let header: fframes_studio_protocol::BinaryRecordHeader = serde_json::from_slice(&header)?;
+        if &header != expected {
+            return Err(WorkerClientError::Other(
+                "Binary record identity/kind/length mismatch".into(),
+            ));
+        }
+        let mut pixels = vec![0; header.payload_len];
+        pipes.frame_reader.read_exact(&mut pixels)?;
+        Ok(pixels)
     }
 
     pub fn send_hello(&mut self) -> Result<HelloResponse, WorkerClientError> {

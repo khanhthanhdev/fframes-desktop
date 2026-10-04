@@ -15,6 +15,15 @@ pub enum ConversionError {
     BufferConstructionFailed,
 }
 
+/// Fit validated video dimensions to the physical preview extent without
+/// upscaling or exceeding the negotiated preview cap.
+pub fn preview_scale(width: usize, height: usize, extent: (u32, u32)) -> f64 {
+    use fframes_studio_protocol::{MAX_PREVIEW_HEIGHT, MAX_PREVIEW_WIDTH};
+    (f64::from(extent.0.min(MAX_PREVIEW_WIDTH)) / width as f64)
+        .min(f64::from(extent.1.min(MAX_PREVIEW_HEIGHT)) / height as f64)
+        .min(1.)
+}
+
 /// Converts a protocol frame payload into raw BGRA8 pixels with row padding removed,
 /// ready for GPUI `RenderImage`.
 pub fn convert_rgba_to_gpui_bgra(
@@ -214,6 +223,14 @@ impl ImagePresentationManager {
     /// Replaces the current image with the new image, invoking `window.drop_image()`
     /// on the prior image to evict it from GPUI's sprite atlas and prevent memory leaks.
     pub fn replace_image(&mut self, new_image: Arc<RenderImage>, window: &mut Window) {
+        self.clear(window);
+        self.current_image = Some(new_image);
+        self.resident_count = 1;
+        self.queue_depth = 1;
+    }
+
+    /// Evict the actual GPUI texture on close/detach, not only its Rust reference.
+    pub fn clear(&mut self, window: &mut Window) {
         if let Some(prior) = self.current_image.take() {
             if window.drop_image(prior).is_err() {
                 self.release_failures += 1;
@@ -223,15 +240,23 @@ impl ImagePresentationManager {
                 self.resident_count -= 1;
             }
         }
-        self.current_image = Some(new_image);
-        self.resident_count += 1;
-        self.queue_depth = 1;
+        self.queue_depth = 0;
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preview_fits_physical_extent_aspect_and_protocol_cap_without_upscaling() {
+        assert_eq!(preview_scale(1280, 720, (718, 134)), 134. / 720.);
+        assert_eq!(preview_scale(1080, 1920, (718, 134)), 134. / 1920.);
+        assert_eq!(preview_scale(1280, 720, (1436, 268)), 268. / 720.);
+        assert_eq!(preview_scale(1920, 1080, (2560, 1440)), 2. / 3.);
+        assert_eq!(preview_scale(320, 180, (718, 134)), 134. / 180.);
+        assert_eq!(preview_scale(320, 180, (718, 400)), 1.);
+    }
 
     #[test]
     fn test_convert_rgba_to_bgra_without_stride_padding() {
