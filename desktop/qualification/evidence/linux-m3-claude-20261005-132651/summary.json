@@ -1,0 +1,32 @@
+{
+  "group": "summary",
+  "profile": "full",
+  "test": "m3_development_evidence",
+  "groups": {
+    "resource-bounds.json": {
+      "seconds": 1.706336003,
+      "group": "resource_bounds"
+    },
+    "compiler-count.json": {
+      "seconds": 0.05837376,
+      "group": "compiler_count"
+    },
+    "cycles.json": {
+      "seconds": 10.723366664,
+      "group": "cycles"
+    },
+    "cli-mcp-parity.json": {
+      "seconds": 0.540192843,
+      "group": "cli_mcp_parity"
+    },
+    "publication-primitive.json": {
+      "seconds": 0.058767509,
+      "group": "publication_primitive"
+    }
+  },
+  "total_seconds": 13.088496987,
+  "schema_version": 1,
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "scope": "scripted ACP peer + fake preview worker + real controller; no provider, adapter, account, device or other OS"
+}

@@ -1,0 +1,708 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M3QualificationResults",
+  "description": "Ledger of the M3 agent-transaction qualification. 'development' gates are proven with repository fixtures (scripted ACP peer, fake SDK tree/preview worker, real controller) and say nothing about a provider. 'authentic' gates need a real authenticated adapter, physical devices or other operating systems: they are not_run until an operator supplies that, and an authentic pass may only cite structured evidence records of schema 'm3-authentic/1' (evidence_kind 'authentic', fixture_only false, bound to that one gate, the measured platform and the adapter's launch identity, with the gate's own measurements and a clean teardown) with a non-fixture adapter identity; a development pass must be backed by the recorded harness run. Structural rules the schema cannot express (hash checks, evidence containment, NUL-safe secret-pattern and private-path scan, per-gate authentic measurement contracts, harness-run backing of development passes, derivation of the acceptance field) are enforced by scripts/validate-qualification.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "kind",
+    "schema_version",
+    "timestamp",
+    "environment",
+    "gates",
+    "acceptance"
+  ],
+  "properties": {
+    "kind": {
+      "const": "m3"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "scope",
+        "os",
+        "toolchain",
+        "git",
+        "sdk",
+        "adapter",
+        "harness"
+      ],
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "os": {
+          "type": "object",
+          "required": [
+            "system",
+            "release",
+            "machine"
+          ],
+          "properties": {
+            "system": {
+              "type": "string",
+              "minLength": 1
+            },
+            "release": {
+              "type": "string",
+              "minLength": 1
+            },
+            "version": {
+              "type": "string"
+            },
+            "machine": {
+              "type": "string",
+              "minLength": 1
+            },
+            "distribution": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cpu_count": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "memory_kib": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "evidence_filesystem": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "description": "Mount (point, type, source) of the evidence directory."
+            }
+          }
+        },
+        "toolchain": {
+          "type": "object",
+          "required": [
+            "rustc",
+            "host",
+            "cargo",
+            "acp_sdk_crate"
+          ],
+          "properties": {
+            "rustc": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rustc_commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "host": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cargo": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "pinned_channel": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "python": {
+              "type": "string"
+            },
+            "acp_sdk_crate": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "agent-client-protocol crate version from Cargo.lock."
+            },
+            "cargo_lock_sha256": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "xvfb": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "xdotool": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "git": {
+          "type": "object",
+          "required": [
+            "commit",
+            "dirty_paths",
+            "tree_fingerprint_sha256"
+          ],
+          "properties": {
+            "commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "branch": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "dirty_paths": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "tree_fingerprint_sha256": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "Digest of `git diff HEAD` plus untracked files outside desktop/qualification: names the exact tree a dirty run used."
+            },
+            "fingerprint_note": {
+              "type": "string"
+            }
+          }
+        },
+        "sdk": {
+          "type": "object",
+          "required": [
+            "provided"
+          ],
+          "properties": {
+            "provided": {
+              "type": "boolean"
+            },
+            "note": {
+              "type": "string"
+            },
+            "sdk_id": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "fframes_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "cargo_fframes_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "target_triple": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "rust_toolchain": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "compatibility_sha256": {
+              "type": "string"
+            },
+            "directory_name": {
+              "type": "string"
+            },
+            "ffmpeg_tag": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "adapter": {
+          "description": "null unless --adapter was given. Never contains credentials: only auth variable NAMES.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "required": [
+                "agent_name",
+                "protocol_version",
+                "fixture_detected",
+                "probe_status"
+              ],
+              "properties": {
+                "requested_executable": {
+                  "type": "string"
+                },
+                "resolved_executable_sha256": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "agent_name": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "agent_version": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "protocol_version": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "auth_methods": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "auth_route": {
+                  "type": "string"
+                },
+                "capabilities": {
+                  "type": [
+                    "object",
+                    "null"
+                  ]
+                },
+                "probe_status": {
+                  "type": "string"
+                },
+                "fixture_detected": {
+                  "type": "boolean"
+                },
+                "arguments": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "description": "Adapter arguments as given (redacted); credentials come from environment variable NAMES only."
+                },
+                "executable_sha256": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "SHA-256 of the adapter executable's bytes. The path is never recorded."
+                },
+                "launch_identity": {
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{64}$",
+                  "description": "launch_identity_digest of the exact launch (executable bytes, argument words, files the arguments name, sign-in variable names). The application derives the same value before it trusts a writer-containment qualification, and every authentic evidence record must carry it."
+                },
+                "platform": {
+                  "type": "object",
+                  "required": ["system", "machine"],
+                  "properties": {
+                    "system": {"type": "string"},
+                    "machine": {"type": "string"}
+                  }
+                }
+              }
+            }
+          ]
+        },
+        "harness": {
+          "type": "object",
+          "required": [
+            "script",
+            "arguments"
+          ],
+          "properties": {
+            "script": {
+              "type": "string",
+              "minLength": 1
+            },
+            "arguments": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "auth_env_names": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "started": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dev_acp_transport",
+        "dev_engine_transactions",
+        "dev_workflow_fixture",
+        "dev_tools_and_validation",
+        "dev_native_ui_workflow",
+        "dev_native_x11_shell",
+        "dev_resource_bounds",
+        "dev_compiler_count",
+        "dev_cleanup_cycles",
+        "dev_cli_mcp_parity",
+        "dev_publication_primitive",
+        "dev_real_sdk_workflow",
+        "auth_adapter_probe_v1",
+        "auth_two_edit_undo_restart",
+        "auth_writer_process_group",
+        "auth_compiler_error_repair",
+        "auth_interaction_and_failure_modes",
+        "auth_mcp_cli_support",
+        "auth_twenty_cycle_cleanup",
+        "auth_visual_ime",
+        "auth_physical_audio",
+        "auth_windows",
+        "auth_macos"
+      ],
+      "properties": {
+        "dev_acp_transport": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_engine_transactions": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_workflow_fixture": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_tools_and_validation": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_native_ui_workflow": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_native_x11_shell": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_resource_bounds": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_compiler_count": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_cleanup_cycles": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_cli_mcp_parity": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_publication_primitive": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "dev_real_sdk_workflow": {
+          "$ref": "#/definitions/developmentGate"
+        },
+        "auth_adapter_probe_v1": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_two_edit_undo_restart": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_writer_process_group": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_compiler_error_repair": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_interaction_and_failure_modes": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_mcp_cli_support": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_twenty_cycle_cleanup": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_visual_ime": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_physical_audio": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_windows": {
+          "$ref": "#/definitions/authenticGate"
+        },
+        "auth_macos": {
+          "$ref": "#/definitions/authenticGate"
+        }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "m3_authenticated",
+        "reason"
+      ],
+      "properties": {
+        "m3_authenticated": {
+          "enum": [
+            "pass",
+            "not_run"
+          ],
+          "description": "pass exactly when every authentic gate passes (derived and enforced by the validator)."
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "definitions": {
+    "developmentGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "status",
+        "criteria",
+        "notes",
+        "evidence"
+      ],
+      "properties": {
+        "kind": {
+          "const": "development"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "blocked",
+            "not_run"
+          ]
+        },
+        "criteria": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Relative to the ledger's directory; must resolve inside qualification/evidence/."
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-fA-F0-9]{64}$",
+                "description": "Checked against the file's bytes by validate-qualification.py."
+              }
+            }
+          }
+        },
+        "prerequisite": {
+          "type": "string",
+          "minLength": 20,
+          "description": "The exact missing prerequisite. Required when status is not_run or blocked; forbidden otherwise."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "pass"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          },
+          "description": "No pass without hashed evidence."
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "not_run",
+                  "blocked"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "prerequisite"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "prerequisite"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "authenticGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "status",
+        "criteria",
+        "notes",
+        "evidence"
+      ],
+      "properties": {
+        "kind": {
+          "const": "authentic"
+        },
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "blocked",
+            "not_run"
+          ]
+        },
+        "criteria": {
+          "type": "string",
+          "minLength": 1
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "path",
+              "sha256"
+            ],
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Relative to the ledger's directory; must resolve inside qualification/evidence/."
+              },
+              "sha256": {
+                "type": "string",
+                "pattern": "^[a-fA-F0-9]{64}$",
+                "description": "Checked against the file's bytes by validate-qualification.py."
+              }
+            }
+          }
+        },
+        "prerequisite": {
+          "type": "string",
+          "minLength": 20,
+          "description": "The exact missing prerequisite. Required when status is not_run or blocked; forbidden otherwise."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "pass"
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "evidence": {
+                "minItems": 1
+              }
+            }
+          },
+          "description": "No pass without hashed evidence."
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": [
+                  "not_run",
+                  "blocked"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "prerequisite"
+            ]
+          },
+          "else": {
+            "not": {
+              "required": [
+                "prerequisite"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

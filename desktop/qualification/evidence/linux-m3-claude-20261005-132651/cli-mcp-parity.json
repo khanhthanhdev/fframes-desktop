@@ -1,0 +1,98 @@
+{
+  "group": "cli_mcp_parity",
+  "broker": "one app-owned ToolBroker, one task capability file, two helper routes (studio-tools, studio-mcp)",
+  "mcp_protocol": "2025-06-18",
+  "tools_listed": [
+    "project_context",
+    "timeline",
+    "render_frame",
+    "render_strip",
+    "inspect",
+    "build_status"
+  ],
+  "compared": [
+    {
+      "tool": "project_context",
+      "identical_raw": true,
+      "identical_after_dropping_volatile_fields": true,
+      "reply_bytes_cli": 2313,
+      "reply_bytes_mcp": 2313,
+      "reply_keys": [
+        "revision",
+        "result",
+        "artifacts"
+      ],
+      "reply_sha256_normalized": "fca79b6e735b2225bfec6ed944a9dfea11c55eaf24eef7d5be47d3865aecec34"
+    },
+    {
+      "tool": "timeline",
+      "identical_raw": true,
+      "identical_after_dropping_volatile_fields": true,
+      "reply_bytes_cli": 695,
+      "reply_bytes_mcp": 695,
+      "reply_keys": [
+        "revision",
+        "result",
+        "artifacts"
+      ],
+      "reply_sha256_normalized": "d326e29b70c3a39d9f15d95ec382db374b35e896fff14b05e6b4c7c46e073727"
+    },
+    {
+      "tool": "inspect",
+      "identical_raw": true,
+      "identical_after_dropping_volatile_fields": true,
+      "reply_bytes_cli": 217,
+      "reply_bytes_mcp": 217,
+      "reply_keys": [
+        "revision",
+        "result",
+        "artifacts"
+      ],
+      "reply_sha256_normalized": "553d18dc1f433e90ce22d34010feb7a48174fa950cdec06a1e1a48495f8e0ade"
+    },
+    {
+      "tool": "render_frame",
+      "identical_raw": false,
+      "identical_after_dropping_volatile_fields": true,
+      "reply_bytes_cli": 540,
+      "reply_bytes_mcp": 540,
+      "reply_keys": [
+        "revision",
+        "result",
+        "artifacts"
+      ],
+      "reply_sha256_normalized": "6bd2041a152249f141548177fc13a86f6239b444ce7075bb39b06f9ffca99b30"
+    }
+  ],
+  "volatile_fields_dropped": [
+    "expires_at_unix",
+    "id",
+    "path"
+  ],
+  "frame_parity": {
+    "compared": true,
+    "identical": true,
+    "png_sha256": "b05ce3c9f3b2da7fa91c61129b26df0954e82a4d85705c5624d951e44ce09d64"
+  },
+  "fixture_note": "fake preview worker and scripted compiler; no pixel comparison against the project CLI (the real-SDK frame-zero parity lives in real_sdk_candidates, run with SDK_ACTIVE)",
+  "capability_dead_after_task": true,
+  "cleanup": {
+    "settle_ms": 0,
+    "ownership": {
+      "owned_processes": 0,
+      "workflow_owned_processes": 0,
+      "broker_grants": 0,
+      "tool_workers": 0,
+      "capability_files": 0,
+      "build_leased_entries": 0,
+      "build_in_flight": 0,
+      "build_cached_entries": 0,
+      "open_permissions": 0,
+      "resident_rows": 2
+    }
+  },
+  "schema_version": 1,
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "scope": "scripted ACP peer + fake preview worker + real controller; no provider, adapter, account, device or other OS"
+}

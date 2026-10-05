@@ -1,0 +1,75 @@
+$ cargo test --locked -p fframes-studio --test agent_workflow
+# cwd: desktop   returncode: 0   timed_out: False   seconds: 9.555
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running tests/agent_workflow.rs (target/debug/deps/agent_workflow-75521abec54161a2)
+
+running 65 tests
+test a_history_page_never_blocks_the_caller_or_the_actor_when_the_log_read_blocks ... ok
+test a_missing_adapter_is_reported_by_the_probe_and_by_submit_without_a_task ... ok
+test a_probe_worker_that_cannot_start_reports_it_and_readiness_is_not_stuck_checking ... ok
+test a_conversation_log_that_cannot_be_written_stops_the_task_and_keeps_memory_bounded ... ok
+test a_provider_crash_fails_the_task_with_the_draft_retained_and_no_writer ... ok
+test a_brief_becomes_a_validated_candidate_is_auto_applied_and_accepted ... ok
+test a_promotion_worker_that_panics_fails_the_task_and_publishes_nothing ... ok
+test a_promotion_worker_that_cannot_start_leaves_the_candidate_applicable ... ok
+test a_plain_helper_inside_the_process_group_is_reaped_and_does_not_block_capture ... ok
+test a_clarification_is_a_subsequent_prompt_in_the_same_provider_session ... ok
+test a_compiler_failure_gets_structured_repair_context_and_exactly_one_repair_turn ... ok
+test a_follow_up_task_keeps_the_pending_preview_of_the_accepted_revision ... ok
+test a_configured_credential_never_reaches_a_persisted_row_card_or_repair_prompt ... ok
+test a_blocked_publication_gate_retains_the_candidate_and_apply_can_be_retried ... ok
+test an_adapter_that_dies_during_startup_fails_the_task_cleanly ... ok
+test a_rejected_permission_lets_the_agent_finish_without_changes_and_the_user_answers ... ok
+test a_second_failure_is_terminal_with_the_draft_and_candidate_retained ... ok
+test advertised_options_can_be_changed_and_unadvertised_ones_are_refused ... ok
+test an_engine_refusal_before_the_session_is_registered_fails_boundedly_and_close_completes ... ok
+test a_policy_change_mid_task_only_affects_the_next_task ... ok
+test a_committed_revision_is_handed_to_the_preview_and_a_failed_handoff_is_exposed_honestly ... ok
+test a_crashing_first_task_never_fails_its_queued_successors ... ok
+test a_source_edit_during_review_ends_in_conflict_with_paths_and_the_candidate_kept ... ok
+test a_tool_call_updated_after_its_card_left_the_window_is_one_persisted_card ... ok
+test a_second_edit_waits_for_the_first_writer_and_starts_from_the_published_source ... ok
+test an_unqualified_adapter_blocks_capture_and_retains_the_draft_locked ... ok
+test a_pipeline_worker_that_cannot_start_or_panics_settles_the_task_and_the_queue_continues ... ok
+test an_escaped_writer_blocks_apply_retains_the_draft_and_locks_it_until_acknowledged ... ok
+test commands_are_refused_before_they_reach_the_actor ... ok
+test closing_the_workflow_mid_task_reaps_everything ... ok
+test open_detached_delivers_the_workflow_on_its_own_thread_and_the_replay_never_runs_on_the_caller ... ok
+test an_escaped_writer_locks_the_draft_when_the_project_closes ... ok
+test real_sdk_workflow_edits_applies_hands_off_undoes_and_closes_clean ... ignored, requires SDK_BUNDLE or SDK_ACTIVE; real compiler + preview worker; scripted agent
+test an_escaped_writer_locks_the_draft_when_the_user_stops_the_task ... ok
+test opening_a_project_launches_no_agent_and_readiness_is_an_explicit_probe ... ok
+test an_open_permission_stays_answerable_after_its_card_leaves_the_transcript_window ... ok
+test an_interrupted_task_is_recovered_on_open_with_its_draft_locked_until_confirmed ... ok
+test an_interrupted_undo_is_rolled_back_by_recovery_and_stays_available ... ok
+test an_acknowledgement_sent_from_inside_the_handoff_is_not_lost ... ok
+test an_interrupted_publication_is_rolled_back_by_recovery_and_work_continues ... ok
+test closing_during_validation_and_during_review_leaves_nothing_behind ... ok
+test discarding_a_reviewed_candidate_keeps_the_source_and_the_working_copy ... ok
+test stop_during_editing_reaps_the_adapter_and_retains_the_draft ... ok
+test stop_while_a_permission_is_open_closes_it_as_cancelled ... ok
+test stop_is_dispatched_while_the_controller_is_held_and_a_queued_refresh_waits_behind_it ... ok
+test an_escaped_writer_locks_the_draft_when_stop_cancels_the_quiescence ... ok
+test permission_replies_are_correlated_and_stale_or_duplicate_ones_are_rejected ... ok
+test stop_during_the_repair_turn_ends_the_task ... ok
+test project_tools_are_offered_over_mcp_only_when_policy_allows_and_die_with_the_task ... ok
+test manual_review_retains_the_candidate_and_apply_publishes_it ... ok
+test an_escaped_writer_locks_the_draft_when_the_provider_fails ... ok
+test stop_while_validating_cancels_the_compile_and_keeps_the_draft ... ok
+test stop_during_publication_cannot_cancel_the_commit_and_reports_it ... ok
+test stop_while_waiting_for_an_answer_ends_the_task ... ok
+test undo_without_an_accepted_edit_explains_itself ... ok
+test stop_while_a_promotion_waits_for_the_controller_cancels_it_and_nothing_is_published ... ok
+test without_any_tool_route_no_capability_exists_and_the_snapshot_says_so ... ok
+test the_queue_is_bounded_cancellable_and_cleared_by_stop ... ok
+test the_resident_transcript_is_bounded_and_older_rows_are_paged_from_the_log ... ok
+test settings_are_refused_for_a_just_submitted_task_and_for_an_undo_before_any_snapshot_shows_them ... ok
+test the_command_line_route_has_a_task_capability_when_mcp_is_disabled_or_its_helper_is_missing ... ok
+test an_undo_worker_that_cannot_start_or_panics_never_leaves_the_undo_in_progress ... ok
+test undo_is_validated_published_and_handed_off_like_an_apply ... ok
+test streaming_text_is_bounded_by_bytes_and_never_one_unbounded_row ... ok
+test twenty_four_edit_and_failed_task_cycles_leak_no_process_capability_or_lease ... ok
+
+test result: ok. 64 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 9.06s
+
