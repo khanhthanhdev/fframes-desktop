@@ -90,6 +90,8 @@ Qualification must also cover overlapping-scene selection, half-open ranges, thu
 
 ### M3 — Complete an agent edit transaction
 
+Execution detail: [Phase 3 agent editing transaction plan](../../plans/261004-0730-desktop-phase-three-agent-transactions/plan.md). Its four sequential execution stages belong to M3 and reuse M0 ACP/process evidence, M1 project/checkpoint recovery and M2 immutable preview/audio coordination. Implementation and authenticated-provider qualification remain pending; the plan preserves the recorded Linux development boundary.
+
 Implement the app-owned driver interface and ACP v1 client through the official SDK candidate. Build a process supervisor with GUI executable discovery, managed adapter paths, separate stderr handling, bounded logs, auth/setup feedback and cancellation cleanup.
 
 Implement a streaming conversation panel with virtualized messages, tool cards, permissions/questions, provider options, explicit task state and Stop. Use authoritative protocol completion and preserve structured error details. Do not finish tasks based on silence.
