@@ -167,6 +167,7 @@ fn prepare_real() -> (
         tag,
         compiler: controller.operation_processes(),
         worker: controller.processes.sub_manager(),
+        service: fframes_studio::worker_project::shared_build_service(),
     });
     let deadline = Instant::now() + Duration::from_secs(240);
     let ready = loop {

@@ -1,5 +1,7 @@
 pub mod process;
 
 pub use process::{
-    ChildEnvironment, ProcessError, ProcessTreeManager, SpawnOptions, TrackedChild, spawn_tracked,
+    ChildEnvironment, GroupMembership, ProcessError, ProcessTreeManager, ScopeObservation,
+    ScopeTermination, SpawnOptions, TerminationReport, TrackedChild, WriterOwnership,
+    spawn_tracked,
 };

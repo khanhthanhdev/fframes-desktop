@@ -51,6 +51,7 @@ fn spec(
         tag,
         compiler: c.operation_processes(),
         worker: c.processes.sub_manager(),
+        service: fframes_studio::worker_project::shared_build_service(),
     }
 }
 fn wait_ready(p: &PreviewCoordinator, c: &mut Controller) -> Arc<ReadyPreview> {
@@ -368,6 +369,10 @@ fn real_failed_build_and_invalid_source_preserve_seekable_immutable_revision_and
     // Release the final consumers before checking coordinator cleanup.
     drop(r);
     drop(latest);
+    // Completed builds are cached by the shared service until the project closes; the
+    // product close path releases them, so the leak check must do the same.
+    fframes_studio::worker_project::shared_build_service()
+        .close_project(&String::from(c.project.manifest.project_id.clone()));
     fn assert_no_live_trees(path: &std::path::Path) {
         for e in fs::read_dir(path).unwrap() {
             let p = e.unwrap().path();

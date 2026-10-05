@@ -7,7 +7,8 @@ use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
 use studio_bootstrap::{
-    ChildEnvironment, ProcessError, ProcessTreeManager, SpawnOptions, TrackedChild,
+    ChildEnvironment, ProcessError, ProcessTreeManager, SpawnOptions, TerminationReport,
+    TrackedChild,
 };
 use thiserror::Error;
 
@@ -80,6 +81,16 @@ impl AgentSupervisor {
         Ok(())
     }
 
+    /// Terminates an adapter's owned process group (graceful drain, then forced) and
+    /// reports the verified outcome. Group verification cannot see helpers that
+    /// escaped the group (for example through `setsid`).
+    pub fn terminate_adapter(
+        child_arc: &Arc<Mutex<TrackedChild>>,
+        grace: Duration,
+    ) -> Result<TerminationReport, SupervisorError> {
+        Ok(child_arc.lock().terminate_verified(grace)?)
+    }
+
     /// Reads bounded stderr from a child (up to max_bytes), redacting any secret tokens.
     pub fn drain_bounded_stderr(
         mut stderr_reader: impl Read,
@@ -137,6 +148,27 @@ mod tests {
         assert_eq!(manager.active_count(), 1);
 
         AgentSupervisor::cancel_task(&child).expect("cancels task");
+        assert_eq!(manager.active_count(), 0);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn terminate_adapter_forces_term_ignoring_trees_and_reports_a_verified_group() {
+        let manager = ProcessTreeManager::new();
+        let supervisor = AgentSupervisor::new(manager.clone());
+        let tmp = tempfile::tempdir().unwrap();
+        let child = supervisor
+            .spawn_adapter(
+                Path::new("sh"),
+                &["-c".into(), "trap '' TERM; sleep 30 & wait".into()],
+                tmp.path(),
+                None,
+            )
+            .expect("spawns adapter");
+        std::thread::sleep(Duration::from_millis(200));
+        let report = AgentSupervisor::terminate_adapter(&child, Duration::from_millis(100))
+            .expect("terminates");
+        assert!(report.forced && report.verified(), "{report:?}");
         assert_eq!(manager.active_count(), 0);
     }
 

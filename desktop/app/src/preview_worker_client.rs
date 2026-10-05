@@ -14,6 +14,10 @@ fn invalid(message: impl Into<String>) -> WorkerClientError {
     WorkerClientError::Other(message.into())
 }
 
+/// The negotiation failed because the worker is not a compatible M2 preview worker
+/// (version, capability, backend or limits): an SDK/environment problem, not an edit.
+pub const INCOMPATIBLE_BRIDGE: &str = "Incompatible preview SDK/worker bridge; source unchanged. Select an M2-capable SDK and explicit preview entry.";
+
 impl PreviewWorkerClient {
     pub fn new(transport: WorkerClient, identity: PreviewIdentity) -> Self {
         Self {
@@ -23,6 +27,14 @@ impl PreviewWorkerClient {
             hello: None,
             timeline: None,
         }
+    }
+    /// Capabilities the negotiated worker declared unavailable (for example
+    /// `shader_preview`). Empty before negotiation.
+    pub fn capability_gaps(&self) -> Vec<String> {
+        self.hello
+            .as_ref()
+            .map(|h| h.capability_gaps.clone())
+            .unwrap_or_default()
     }
     pub fn identity(&self) -> &PreviewIdentity {
         &self.identity
@@ -218,15 +230,24 @@ impl PreviewWorkerClient {
                 request_id: e.request_id,
             }))?;
             match t.read_message::<PreviewResponse>()? {
-                PreviewResponse::Hello(h) if h.identity == *id && h.request_id == e.request_id
-                    && h.contract_version == PREVIEW_CONTRACT_VERSION
-                    && h.supported_versions.contains(&PREVIEW_CONTRACT_VERSION)
-                    && PREVIEW_CAPABILITIES.iter().all(|s| h.capabilities.iter().any(|c| c == s))
-                    && h.backend == "cpu" && h.max_frame_bytes <= MAX_FRAME_PAYLOAD_BYTES
-                    && h.max_control_bytes <= 1024 * 1024 && h.max_preview_width == MAX_PREVIEW_WIDTH
-                    && h.max_preview_height == MAX_PREVIEW_HEIGHT
-                    && h.audio_sample_format == "f32le_stereo_interleaved" => Ok(h),
-                _ => Err(invalid("Incompatible preview SDK/worker bridge; source unchanged. Select an M2-capable SDK and explicit preview entry.")),
+                PreviewResponse::Hello(h)
+                    if h.identity == *id
+                        && h.request_id == e.request_id
+                        && h.contract_version == PREVIEW_CONTRACT_VERSION
+                        && h.supported_versions.contains(&PREVIEW_CONTRACT_VERSION)
+                        && PREVIEW_CAPABILITIES
+                            .iter()
+                            .all(|s| h.capabilities.iter().any(|c| c == s))
+                        && h.backend == "cpu"
+                        && h.max_frame_bytes <= MAX_FRAME_PAYLOAD_BYTES
+                        && h.max_control_bytes <= 1024 * 1024
+                        && h.max_preview_width == MAX_PREVIEW_WIDTH
+                        && h.max_preview_height == MAX_PREVIEW_HEIGHT
+                        && h.audio_sample_format == "f32le_stereo_interleaved" =>
+                {
+                    Ok(h)
+                }
+                _ => Err(invalid(INCOMPATIBLE_BRIDGE)),
             }
         });
         match result {

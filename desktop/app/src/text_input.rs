@@ -7,6 +7,9 @@ use gpui::{
 };
 use std::ops::Range;
 
+/// Key context shared by every input built on [`TextInput`].
+pub const KEY_CONTEXT: &str = "TextInput";
+
 actions!(
     text_input,
     [
@@ -24,6 +27,29 @@ actions!(
         Copy,
     ]
 );
+
+/// Binds the editing keys of [`TextInput`] (cursor movement, deletion, selection and
+/// clipboard). Call once per application before the first input renders; without it an
+/// input still receives composed text (IME and plain typing) but not Backspace, arrows or
+/// clipboard shortcuts.
+pub fn bind_keys(cx: &mut App) {
+    use gpui::KeyBinding;
+    let context = Some(KEY_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("backspace", Backspace, context),
+        KeyBinding::new("delete", Delete, context),
+        KeyBinding::new("left", Left, context),
+        KeyBinding::new("right", Right, context),
+        KeyBinding::new("shift-left", SelectLeft, context),
+        KeyBinding::new("shift-right", SelectRight, context),
+        KeyBinding::new("home", Home, context),
+        KeyBinding::new("end", End, context),
+        KeyBinding::new("secondary-a", SelectAll, context),
+        KeyBinding::new("secondary-c", Copy, context),
+        KeyBinding::new("secondary-x", Cut, context),
+        KeyBinding::new("secondary-v", Paste, context),
+    ]);
+}
 
 /// Safely converts a UTF-16 range relative to `text` into a UTF-8 byte range inside `text`.
 pub fn utf16_range_to_utf8_in_slice(text: &str, range_utf16: &Range<usize>) -> Range<usize> {
@@ -63,12 +89,14 @@ pub struct TextInput {
     pub marked_range: Option<Range<usize>>,
     pub last_layout: Option<ShapedLine>,
     pub last_bounds: Option<Bounds<Pixels>>,
+    /// Hide the composition status line unless a composition is in progress.
+    pub compact: bool,
 }
 
 impl TextInput {
     pub fn new(cx: &mut Context<Self>) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: cx.focus_handle().tab_stop(true),
             content: "".into(),
             placeholder: "Type composed text here...".into(),
             selected_range: 0..0,
@@ -76,6 +104,7 @@ impl TextInput {
             marked_range: None,
             last_layout: None,
             last_bounds: None,
+            compact: false,
         }
     }
 
@@ -86,6 +115,10 @@ impl TextInput {
         cx.notify();
     }
 
+    /// An IME composition is in progress: Enter/Tab/Escape belong to the IME, not the form.
+    pub fn is_composing(&self) -> bool {
+        self.marked_range.is_some()
+    }
     pub fn content(&self) -> &str {
         &self.content
     }
@@ -444,12 +477,12 @@ impl Render for TextInput {
                     .w_full()
                     .child(TextElement { input: cx.entity() }),
             )
-            .child(
+            .children((!self.compact || self.marked_range.is_some()).then(|| {
                 div()
                     .text_xs()
                     .text_color(rgb(0x888888))
-                    .child(composition_info),
-            )
+                    .child(composition_info)
+            }))
     }
 }
 

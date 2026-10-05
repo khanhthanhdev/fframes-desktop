@@ -1,13 +1,12 @@
 use parking_lot::Mutex;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
-#[cfg(unix)]
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -24,6 +23,10 @@ pub enum ProcessError {
     JobAssignmentFailed { command: String, pid: u32 },
     #[error("process '{command}' (pid {pid}) timed out during graceful termination")]
     TerminationTimeout { command: String, pid: u32 },
+    #[error(
+        "process '{command}' (pid {pid}) left running members in its task process group after termination"
+    )]
+    GroupSurvivors { command: String, pid: u32 },
     #[error("process error: {0}")]
     Custom(String),
 }
@@ -121,6 +124,12 @@ impl ChildEnvironment {
 
     pub fn get(&self, key: &str) -> Option<&str> {
         self.vars.get(key).map(|s| s.as_str())
+    }
+
+    /// Every variable in deterministic (name) order, unredacted: for fingerprinting the
+    /// exact environment a child will receive, never for logging.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.vars.iter().map(|(k, v)| (k.as_str(), v.as_str()))
     }
 
     /// Prepend a path directory to PATH within this child environment,
@@ -239,14 +248,329 @@ impl SpawnOptions {
     }
 }
 
-#[cfg(unix)]
-fn is_process_group_alive(pgid: i32) -> bool {
-    let ret = unsafe { libc::kill(-pgid, 0) };
-    if ret == 0 {
-        true
+/// Members of a task process group (job object on Windows).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GroupMembership {
+    /// No live (non-zombie) member remains.
+    Empty,
+    /// Live members whose pids could be enumerated.
+    Members(Vec<u32>),
+    /// Live members exist but could not be enumerated on this platform.
+    Present,
+}
+
+/// Verified outcome of terminating a task tree. `group_empty` covers the task
+/// process group only; it cannot see helpers that escaped it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminationReport {
+    /// SIGKILL (or job termination) was required after the graceful drain.
+    pub forced: bool,
+    pub direct_child_exited: bool,
+    pub group_empty: bool,
+    /// Live group members after termination when enumerable.
+    pub remaining: Vec<u32>,
+}
+impl TerminationReport {
+    /// Direct child gone and no member left in the owned group.
+    pub fn verified(&self) -> bool {
+        self.direct_child_exited && self.group_empty
+    }
+}
+
+/// Outcome of terminating every tree owned by a [`ProcessTreeManager`] scope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeTermination {
+    pub children: Vec<TerminationReport>,
+}
+impl ScopeTermination {
+    /// Every owned tree was terminated and its group verified empty.
+    pub fn verified(&self) -> bool {
+        self.children.iter().all(TerminationReport::verified)
+    }
+
+    /// One report for the whole scope: forced if any tree needed it, exited/empty only
+    /// if every tree was. A scope with no owned trees is trivially clean.
+    pub fn merged(&self) -> TerminationReport {
+        TerminationReport {
+            forced: self.children.iter().any(|c| c.forced),
+            direct_child_exited: self.children.iter().all(|c| c.direct_child_exited),
+            group_empty: self.children.iter().all(|c| c.group_empty),
+            remaining: self
+                .children
+                .iter()
+                .flat_map(|c| c.remaining.iter().copied())
+                .collect(),
+        }
+    }
+}
+
+/// Non-destructive snapshot of every tree a scope owns.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ScopeObservation {
+    /// Number of owned trees that are still alive (leader running or group non-empty).
+    pub live_children: usize,
+    /// Combined state of the owned trees; clean iff `live_children == 0`.
+    pub termination: TerminationReport,
+    /// Descendants that already left their task process group (Linux; only visible
+    /// while the escaping parent is alive, so an empty list never proves containment).
+    pub escaped: Vec<u32>,
+}
+impl ScopeObservation {
+    pub fn is_clean(&self) -> bool {
+        self.live_children == 0 && self.termination.verified() && self.escaped.is_empty()
+    }
+}
+
+/// Whether an adapter's writers are known to stay inside the owned process group.
+/// Only an explicit qualification of a specific adapter produces
+/// [`WriterOwnership::ProcessGroupContained`]; escaped, background or unmodelled
+/// writers are never claimed detectable, so everything else blocks candidate capture.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum WriterOwnership {
+    /// Qualified: this adapter's writer descendants remain in the task process group.
+    ProcessGroupContained { qualification: String },
+    /// An escape from the task process group was observed.
+    Detached,
+    /// Not qualified; a surviving writer cannot be ruled out.
+    Unknown,
+}
+impl WriterOwnership {
+    pub fn is_qualified(&self) -> bool {
+        matches!(self, Self::ProcessGroupContained { .. })
+    }
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::ProcessGroupContained { .. } => "process-group-contained",
+            Self::Detached => "detached",
+            Self::Unknown => "unknown",
+        }
+    }
+}
+
+const GROUP_VERIFY_TIMEOUT: Duration = Duration::from_secs(2);
+const POLL_INTERVAL: Duration = Duration::from_millis(10);
+
+/// One consistent look at the process table. `complete` is false whenever any part of
+/// the enumeration could not be read, so an absent member can never be mistaken for a
+/// vanished one.
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone, Default)]
+struct ProcScan {
+    entries: Vec<ProcEntry>,
+    complete: bool,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, Clone)]
+struct ProcEntry {
+    pid: u32,
+    ppid: u32,
+    pgrp: i32,
+    start: u64,
+    zombie: bool,
+}
+
+#[cfg(target_os = "linux")]
+fn parse_proc_stat(pid: u32, stat: &str) -> Option<ProcEntry> {
+    // The command name may contain spaces and parentheses; fields follow the last ')'.
+    let rest = stat.get(stat.rfind(')')? + 1..)?;
+    let mut fields = rest.split_whitespace();
+    let state = fields.next()?;
+    let ppid = fields.next()?.parse().ok()?;
+    let pgrp = fields.next()?.parse().ok()?;
+    // starttime is field 22 of the line, i.e. index 19 after the state field.
+    let start = fields.nth(16)?.parse().ok()?;
+    Some(ProcEntry {
+        pid,
+        ppid,
+        pgrp,
+        start,
+        zombie: state == "Z" || state == "X",
+    })
+}
+
+/// Snapshot of /proc. Any unreadable piece makes the scan incomplete.
+#[cfg(target_os = "linux")]
+fn scan_proc() -> ProcScan {
+    let mut scan = ProcScan {
+        entries: Vec::new(),
+        complete: true,
+    };
+    let Ok(dir) = std::fs::read_dir("/proc") else {
+        scan.complete = false;
+        return scan;
+    };
+    for entry in dir {
+        let Ok(entry) = entry else {
+            scan.complete = false;
+            continue;
+        };
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|n| n.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        match std::fs::read_to_string(entry.path().join("stat")) {
+            Ok(stat) => match parse_proc_stat(pid, &stat) {
+                Some(parsed) => scan.entries.push(parsed),
+                None => scan.complete = false,
+            },
+            // The process exited between listing and reading: genuinely gone.
+            Err(e) if matches!(e.raw_os_error(), Some(libc::ENOENT | libc::ESRCH)) => {}
+            Err(_) => scan.complete = false,
+        }
+    }
+    scan
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Debug, PartialEq, Eq)]
+enum ScanVerdict {
+    Members(Vec<u32>),
+    /// Only zombies (or nothing) remain in the group.
+    Quiet,
+    /// The table was not fully readable: nothing can be concluded.
+    Incomplete,
+    /// The group id now belongs to an unrelated process family.
+    Foreign,
+}
+
+#[cfg(target_os = "linux")]
+fn classify_scan(scan: &ProcScan, pgid: i32, leader_start: Option<u64>) -> ScanVerdict {
+    if !scan.complete {
+        return ScanVerdict::Incomplete;
+    }
+    // A live-or-zombie process owning the group id that is not our leader means the id
+    // was recycled; that group is not ours and is never signalled.
+    if let (Some(expected), Some(leader)) = (
+        leader_start,
+        scan.entries.iter().find(|p| p.pid as i32 == pgid),
+    ) && leader.start != expected
+    {
+        return ScanVerdict::Foreign;
+    }
+    let members: Vec<u32> = scan
+        .entries
+        .iter()
+        .filter(|p| p.pgrp == pgid && !p.zombie)
+        .map(|p| p.pid)
+        .collect();
+    if members.is_empty() {
+        ScanVerdict::Quiet
     } else {
-        let err = std::io::Error::last_os_error().raw_os_error();
-        err != Some(libc::ESRCH)
+        ScanVerdict::Members(members)
+    }
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Probe {
+    Exists,
+    Gone,
+    Unknown,
+}
+
+#[cfg(unix)]
+fn probe_group(pgid: i32) -> Probe {
+    // SAFETY: signal 0 only probes the group this tracker owns.
+    if unsafe { libc::kill(-pgid, 0) } == 0 {
+        Probe::Exists
+    } else if std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+        Probe::Gone
+    } else {
+        Probe::Unknown
+    }
+}
+
+/// Pure membership decision over injectable probe/scan sources.
+///
+/// A group is `Empty` only when the kernel says it is gone, or when two consecutive
+/// complete scans show nothing but zombies. An incomplete scan is `Present`: a member
+/// that merely could not be seen is never treated as having exited.
+#[cfg(target_os = "linux")]
+fn membership_with(
+    pgid: i32,
+    leader_start: Option<u64>,
+    probe: &mut dyn FnMut() -> Probe,
+    scan: &mut dyn FnMut() -> ProcScan,
+    pause: &dyn Fn(),
+) -> GroupMembership {
+    match probe() {
+        Probe::Gone => return GroupMembership::Empty,
+        Probe::Unknown => return GroupMembership::Present,
+        Probe::Exists => {}
+    }
+    let mut quiet = 0;
+    for _ in 0..4 {
+        match classify_scan(&scan(), pgid, leader_start) {
+            ScanVerdict::Incomplete => return GroupMembership::Present,
+            ScanVerdict::Foreign => return GroupMembership::Empty,
+            ScanVerdict::Members(pids) => return GroupMembership::Members(pids),
+            ScanVerdict::Quiet => {
+                quiet += 1;
+                if quiet == 2 {
+                    return GroupMembership::Empty;
+                }
+                pause();
+            }
+        }
+    }
+    GroupMembership::Present
+}
+
+#[cfg(target_os = "linux")]
+fn escaped_in_scan(
+    scan: &ProcScan,
+    root_pid: u32,
+    pgid: i32,
+    leader_start: Option<u64>,
+) -> Vec<u32> {
+    if !scan.complete {
+        return Vec::new();
+    }
+    if let (Some(expected), Some(root)) = (
+        leader_start,
+        scan.entries.iter().find(|p| p.pid == root_pid),
+    ) && root.start != expected
+    {
+        return Vec::new();
+    }
+    let mut descendants = vec![root_pid];
+    let mut escaped = Vec::new();
+    let mut index = 0;
+    while index < descendants.len() {
+        let parent = descendants[index];
+        index += 1;
+        for process in scan.entries.iter().filter(|p| p.ppid == parent) {
+            if descendants.contains(&process.pid) {
+                continue;
+            }
+            descendants.push(process.pid);
+            if process.pgrp != pgid && !process.zombie {
+                escaped.push(process.pid);
+            }
+        }
+    }
+    escaped
+}
+
+#[cfg(windows)]
+fn job_has_active_processes(job: windows_sys::Win32::Foundation::HANDLE) -> bool {
+    // SAFETY: queries a job object handle owned by the tracker.
+    unsafe {
+        let mut accounting: windows_sys::Win32::System::JobObjects::JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
+        let mut ret_len = 0;
+        let res = windows_sys::Win32::System::JobObjects::QueryInformationJobObject(
+            job,
+            windows_sys::Win32::System::JobObjects::JobObjectBasicAccountingInformation,
+            &mut accounting as *mut _ as _,
+            std::mem::size_of_val(&accounting) as u32,
+            &mut ret_len,
+        );
+        // A failed query cannot prove the owned descendants exited.
+        res == 0 || accounting.ActiveProcesses > 0
     }
 }
 
@@ -255,9 +579,16 @@ pub struct TrackedChild {
     pub pid: u32,
     #[cfg(unix)]
     pgid: i32,
+    /// Kernel start time of the leader; distinguishes our group from a recycled id.
+    #[cfg(target_os = "linux")]
+    leader_start: Option<u64>,
     child: Child,
     #[cfg(windows)]
     job_handle: windows_sys::Win32::Foundation::HANDLE,
+    /// Set once the group was verified empty and the leader reaped. After this the
+    /// group/job id may belong to someone else: it is never probed or signalled again.
+    terminal: Option<TerminationReport>,
+    os_calls: u32,
 }
 unsafe impl Send for TrackedChild {}
 unsafe impl Sync for TrackedChild {}
@@ -271,106 +602,261 @@ impl TrackedChild {
         &mut self.child
     }
 
+    /// Number of signals and group probes issued so far. Diagnostic: a tracker whose
+    /// group is already verified empty must never increase it.
+    pub fn os_calls(&self) -> u32 {
+        self.os_calls
+    }
+
+    /// Whether the group was verified empty and this tracker is permanently inert.
+    pub fn is_terminated(&self) -> bool {
+        self.terminal.is_some()
+    }
+
     pub fn try_wait(&mut self) -> Result<Option<ExitStatus>, ProcessError> {
-        Ok(self.child.try_wait()?)
+        let status = self.child.try_wait()?;
+        if status.is_some() && self.terminal.is_none() {
+            // The leader is reaped; if nothing else is left, latch before the id can recycle.
+            self.latch_if_finished(false);
+        }
+        Ok(status)
     }
 
     pub fn wait(&mut self) -> Result<ExitStatus, ProcessError> {
-        Ok(self.child.wait()?)
+        let status = self.child.wait()?;
+        if self.terminal.is_none() {
+            self.latch_if_finished(false);
+        }
+        Ok(status)
     }
 
     pub fn is_alive(&mut self) -> bool {
-        #[cfg(unix)]
-        {
-            if matches!(self.child.try_wait(), Ok(None)) {
-                return true;
-            }
-            is_process_group_alive(self.pgid)
+        if self.terminal.is_some() {
+            return false;
         }
-        #[cfg(windows)]
-        {
-            if matches!(self.child.try_wait(), Ok(None)) {
-                return true;
-            }
-            unsafe {
-                let mut accounting: windows_sys::Win32::System::JobObjects::JOBOBJECT_BASIC_ACCOUNTING_INFORMATION = std::mem::zeroed();
-                let mut ret_len = 0;
-                let res = windows_sys::Win32::System::JobObjects::QueryInformationJobObject(
-                    self.job_handle,
-                    windows_sys::Win32::System::JobObjects::JobObjectBasicAccountingInformation,
-                    &mut accounting as *mut _ as _,
-                    std::mem::size_of_val(&accounting) as u32,
-                    &mut ret_len,
-                );
-                // A failed query cannot prove the owned descendants exited.
-                res == 0 || accounting.ActiveProcesses > 0
-            }
+        if matches!(self.child.try_wait(), Ok(None)) {
+            return true;
         }
+        self.group_membership() != GroupMembership::Empty
     }
 
     /// Gracefully terminate the child process and its entire process tree/group.
     /// Sends SIGTERM (or closes job on Windows), allows up to `drain_timeout` for exit,
-    /// then forces SIGKILL if any processes in the tree remain.
-    pub fn terminate_gracefully(&mut self, _drain_timeout: Duration) -> Result<(), ProcessError> {
+    /// then forces SIGKILL if any processes in the tree remain. Fails when the group
+    /// still has live members after forced termination; direct-child exit alone is
+    /// never reported as success.
+    pub fn terminate_gracefully(&mut self, drain_timeout: Duration) -> Result<(), ProcessError> {
+        let report = self.terminate_verified(drain_timeout)?;
+        self.require_empty(&report)
+    }
+
+    /// Same termination as [`Self::terminate_gracefully`] but returns the verified
+    /// outcome so callers can record whether forced cleanup was needed and which
+    /// group members remain. The verification covers only the task process group
+    /// (job object on Windows): a helper that escaped it (for example through
+    /// `setsid`) is invisible here. Every wait is bounded; an unverifiable group is
+    /// reported as not empty rather than assumed gone. A tracker whose group was
+    /// already verified empty returns the recorded report without any OS call.
+    pub fn terminate_verified(
+        &mut self,
+        drain_timeout: Duration,
+    ) -> Result<TerminationReport, ProcessError> {
+        if let Some(report) = &self.terminal {
+            return Ok(report.clone());
+        }
+        if self.group_membership() == GroupMembership::Empty && self.reap_leader() {
+            return Ok(self.latch_report(false));
+        }
         #[cfg(unix)]
         {
-            let child_exited = matches!(self.child.try_wait(), Ok(Some(_)));
-            if child_exited && !is_process_group_alive(self.pgid) {
-                return Ok(());
-            }
-
-            // Send SIGTERM to the process group
-            unsafe {
-                libc::kill(-self.pgid, libc::SIGTERM);
-            }
-
+            self.signal_group(libc::SIGTERM);
             let start = Instant::now();
-            let poll_interval = Duration::from_millis(20);
-            while start.elapsed() < _drain_timeout {
-                let _ = self.child.try_wait();
-                if !is_process_group_alive(self.pgid) {
-                    let _ = self.child.wait();
-                    return Ok(());
+            while start.elapsed() < drain_timeout {
+                if self.group_membership() == GroupMembership::Empty && self.reap_leader() {
+                    return Ok(self.latch_report(false));
                 }
-                std::thread::sleep(poll_interval);
+                std::thread::sleep(POLL_INTERVAL.min(drain_timeout));
             }
-
-            // Still alive after drain_timeout: send SIGKILL to the whole group
-            unsafe {
-                libc::kill(-self.pgid, libc::SIGKILL);
-            }
-            let _ = self.child.wait();
-            Ok(())
+            self.signal_group(libc::SIGKILL);
         }
-
         #[cfg(windows)]
         {
-            unsafe {
-                windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job_handle, 1);
+            let _ = drain_timeout;
+            self.terminate_job();
+        }
+        self.await_group_empty();
+        Ok(self.report(true))
+    }
+
+    /// Forcefully kill the entire process tree immediately and verify the group is empty.
+    pub fn kill_forcefully(&mut self) -> Result<(), ProcessError> {
+        if self.terminal.is_some() {
+            return Ok(());
+        }
+        #[cfg(unix)]
+        self.signal_group(libc::SIGKILL);
+        #[cfg(windows)]
+        self.terminate_job();
+        self.await_group_empty();
+        let report = self.report(true);
+        self.require_empty(&report)
+    }
+
+    /// Current membership of the task process group (job object on Windows).
+    pub fn group_membership(&mut self) -> GroupMembership {
+        if self.terminal.is_some() {
+            return GroupMembership::Empty;
+        }
+        #[cfg(unix)]
+        {
+            self.os_calls += 1;
+            #[cfg(target_os = "linux")]
+            {
+                let pgid = self.pgid;
+                let start = self.leader_start;
+                membership_with(
+                    pgid,
+                    start,
+                    &mut || probe_group(pgid),
+                    &mut scan_proc,
+                    &|| std::thread::sleep(Duration::from_millis(3)),
+                )
             }
-            let _ = self.child.wait();
-            Ok(())
+            #[cfg(not(target_os = "linux"))]
+            {
+                match probe_group(self.pgid) {
+                    Probe::Gone => GroupMembership::Empty,
+                    _ => GroupMembership::Present,
+                }
+            }
+        }
+        #[cfg(windows)]
+        {
+            self.os_calls += 1;
+            if job_has_active_processes(self.job_handle) {
+                GroupMembership::Present
+            } else {
+                GroupMembership::Empty
+            }
         }
     }
 
-    /// Forcefully kill the entire process tree immediately.
-    pub fn kill_forcefully(&mut self) -> Result<(), ProcessError> {
-        #[cfg(unix)]
-        {
-            unsafe {
-                libc::kill(-self.pgid, libc::SIGKILL);
-            }
-            let _ = self.child.wait();
-            Ok(())
+    /// Descendants of the direct child that are no longer in the task process group
+    /// (Linux only; empty elsewhere). Detects an escape such as `setsid` only while
+    /// the escaping parent is still alive: a double-forked helper is reparented to init
+    /// and is not observable, so an empty answer never proves containment.
+    pub fn escaped_descendants(&self) -> Vec<u32> {
+        if self.terminal.is_some() {
+            return Vec::new();
         }
-
-        #[cfg(windows)]
+        #[cfg(target_os = "linux")]
         {
-            unsafe {
-                windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job_handle, 1);
+            escaped_in_scan(&scan_proc(), self.pid, self.pgid, self.leader_start)
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            Vec::new()
+        }
+    }
+
+    #[cfg(unix)]
+    fn signal_group(&mut self, signal: i32) {
+        if self.terminal.is_some() {
+            return;
+        }
+        self.os_calls += 1;
+        // SAFETY: signalling a process group this tracker created and still owns:
+        // `terminal` is unset, so the group was not yet verified empty.
+        unsafe {
+            libc::kill(-self.pgid, signal);
+        }
+    }
+
+    #[cfg(windows)]
+    fn terminate_job(&mut self) {
+        if self.terminal.is_some() {
+            return;
+        }
+        self.os_calls += 1;
+        // SAFETY: terminates the job object owned by this tracker.
+        unsafe {
+            windows_sys::Win32::System::JobObjects::TerminateJobObject(self.job_handle, 1);
+        }
+    }
+
+    /// Reaps the direct child within a bounded time; false if it did not exit.
+    fn reap_leader(&mut self) -> bool {
+        let deadline = Instant::now() + GROUP_VERIFY_TIMEOUT;
+        loop {
+            if matches!(self.child.try_wait(), Ok(Some(_))) {
+                return true;
             }
-            let _ = self.child.wait();
+            if Instant::now() >= deadline {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    fn await_group_empty(&mut self) {
+        let deadline = Instant::now() + GROUP_VERIFY_TIMEOUT;
+        loop {
+            if self.group_membership() == GroupMembership::Empty {
+                self.reap_leader();
+                return;
+            }
+            if Instant::now() >= deadline {
+                return;
+            }
+            std::thread::sleep(POLL_INTERVAL);
+        }
+    }
+
+    fn report(&mut self, forced: bool) -> TerminationReport {
+        let membership = self.group_membership();
+        let report = TerminationReport {
+            forced,
+            direct_child_exited: matches!(self.child.try_wait(), Ok(Some(_))),
+            group_empty: membership == GroupMembership::Empty,
+            remaining: match membership {
+                GroupMembership::Members(pids) => pids,
+                _ => Vec::new(),
+            },
+        };
+        if report.verified() {
+            self.terminal = Some(report.clone());
+        }
+        report
+    }
+
+    fn latch_report(&mut self, forced: bool) -> TerminationReport {
+        let report = TerminationReport {
+            forced,
+            direct_child_exited: true,
+            group_empty: true,
+            remaining: Vec::new(),
+        };
+        self.terminal = Some(report.clone());
+        report
+    }
+
+    /// Latches terminal emptiness when the leader is reaped and the group is empty.
+    fn latch_if_finished(&mut self, forced: bool) {
+        if matches!(self.child.try_wait(), Ok(Some(_)))
+            && self.group_membership() == GroupMembership::Empty
+        {
+            self.latch_report(forced);
+        }
+    }
+
+    fn require_empty(&self, report: &TerminationReport) -> Result<(), ProcessError> {
+        if report.group_empty {
             Ok(())
+        } else {
+            Err(ProcessError::GroupSurvivors {
+                command: self.command.clone(),
+                pid: self.pid,
+            })
         }
     }
 }
@@ -378,11 +864,12 @@ impl TrackedChild {
 #[cfg(unix)]
 impl Drop for TrackedChild {
     fn drop(&mut self) {
-        if is_process_group_alive(self.pgid) {
-            unsafe {
-                libc::kill(-self.pgid, libc::SIGKILL);
-            }
-            let _ = self.child.wait();
+        if self.terminal.is_some() {
+            return;
+        }
+        if self.group_membership() != GroupMembership::Empty {
+            self.signal_group(libc::SIGKILL);
+            self.await_group_empty();
         }
     }
 }
@@ -428,12 +915,21 @@ pub fn spawn_tracked(opts: SpawnOptions) -> Result<TrackedChild, ProcessError> {
 
         let pid = child.id();
         let pgid = pid as i32;
+        #[cfg(target_os = "linux")]
+        let leader_start = std::fs::read_to_string(format!("/proc/{pid}/stat"))
+            .ok()
+            .and_then(|stat| parse_proc_stat(pid, &stat))
+            .map(|entry| entry.start);
 
         Ok(TrackedChild {
             command: cmd_str,
             pid,
             pgid,
+            #[cfg(target_os = "linux")]
+            leader_start,
             child,
+            terminal: None,
+            os_calls: 0,
         })
     }
 
@@ -550,6 +1046,8 @@ pub fn spawn_tracked(opts: SpawnOptions) -> Result<TrackedChild, ProcessError> {
                 pid,
                 child,
                 job_handle: job,
+                terminal: None,
+                os_calls: 0,
             })
         }
     }
@@ -634,16 +1132,25 @@ impl ProcessTreeManager {
         self.terminate_all_locked(drain_timeout);
     }
 
-    fn terminate_all_locked(&self, drain_timeout: Duration) {
+    fn terminate_all_locked(&self, drain_timeout: Duration) -> Vec<TerminationReport> {
         let list = {
             let mut l = self.children.lock();
             std::mem::take(&mut *l)
         };
         let mut survivors = Vec::new();
         let mut terminated = Vec::new();
+        let mut reports = Vec::new();
         for child_arc in list {
             let mut child = child_arc.lock();
-            let _ = child.terminate_gracefully(drain_timeout);
+            match child.terminate_verified(drain_timeout) {
+                Ok(report) => reports.push(report),
+                Err(_) => reports.push(TerminationReport {
+                    forced: true,
+                    direct_child_exited: false,
+                    group_empty: false,
+                    remaining: Vec::new(),
+                }),
+            }
             if child.is_alive() {
                 survivors.push(Arc::clone(&child_arc));
             } else {
@@ -657,13 +1164,71 @@ impl ProcessTreeManager {
         }
         // Preserve ownership if cleanup fails; active_count must not claim success.
         self.children.lock().extend(survivors);
+        reports
     }
 
     /// Terminal cancellation shared by all clones; unlike terminate_all, rejects future spawns.
     pub fn shutdown(&self, drain_timeout: Duration) {
+        let _ = self.shutdown_verified(drain_timeout);
+    }
+
+    /// Seals the scope against any future spawn (including from clones held by background
+    /// threads), then terminates and verifies every owned tree. The returned report lists
+    /// one verified outcome per owned child; an unverifiable child is reported not empty.
+    pub fn shutdown_verified(&self, drain_timeout: Duration) -> ScopeTermination {
         let _lifecycle = self.lifecycle.lock();
         self.stopped.store(true, Ordering::Release);
-        self.terminate_all_locked(drain_timeout);
+        ScopeTermination {
+            children: self.terminate_all_locked(drain_timeout),
+        }
+    }
+
+    /// Seals the scope against future spawns without terminating anything.
+    pub fn seal(&self) {
+        let _lifecycle = self.lifecycle.lock();
+        self.stopped.store(true, Ordering::Release);
+    }
+
+    /// Observes every owned tree without signalling or reaping it. Escapes are read
+    /// while their parents are still alive, so call this before any termination.
+    /// Serialized with spawn and shutdown: with the scope sealed the answer cannot go
+    /// stale through a new spawn.
+    pub fn observe(&self) -> ScopeObservation {
+        let _lifecycle = self.lifecycle.lock();
+        let list: Vec<_> = self.children.lock().iter().cloned().collect();
+        let mut observation = ScopeObservation {
+            live_children: 0,
+            termination: TerminationReport {
+                forced: false,
+                direct_child_exited: true,
+                group_empty: true,
+                remaining: Vec::new(),
+            },
+            escaped: Vec::new(),
+        };
+        for child_arc in list {
+            let mut child = child_arc.lock();
+            if child.is_terminated() {
+                continue;
+            }
+            observation.escaped.extend(child.escaped_descendants());
+            let exited = matches!(child.child_mut().try_wait(), Ok(Some(_)));
+            let membership = child.group_membership();
+            if exited && membership == GroupMembership::Empty {
+                continue;
+            }
+            observation.live_children += 1;
+            observation.termination.direct_child_exited &= exited;
+            match membership {
+                GroupMembership::Empty => {}
+                GroupMembership::Members(pids) => {
+                    observation.termination.group_empty = false;
+                    observation.termination.remaining.extend(pids);
+                }
+                GroupMembership::Present => observation.termination.group_empty = false,
+            }
+        }
+        observation
     }
 
     pub fn is_shutdown(&self) -> bool {
@@ -894,5 +1459,446 @@ mod tests {
         assert!(live.lock().try_wait().unwrap().is_some());
         assert!(displayed.is_shutdown());
         assert_eq!(root.active_count(), 0);
+    }
+
+    #[cfg(unix)]
+    fn shell(script: &str) -> TrackedChild {
+        let mut opts = SpawnOptions::new("sh");
+        opts.arg("-c").arg(script);
+        spawn_tracked(opts).expect("spawn shell")
+    }
+
+    #[cfg(unix)]
+    fn read_pid_line(child: &mut TrackedChild) -> i32 {
+        use std::io::{BufRead, BufReader};
+        let stdout = child.child_mut().stdout.take().expect("piped stdout");
+        let mut line = String::new();
+        BufReader::new(stdout).read_line(&mut line).unwrap();
+        line.trim().parse().expect("helper pid line")
+    }
+
+    #[cfg(unix)]
+    fn pid_alive(pid: i32) -> bool {
+        // A zombie still answers signal 0 but cannot write; /proc distinguishes it.
+        // SAFETY: signal 0 probes existence only.
+        let exists = unsafe { libc::kill(pid, 0) } == 0;
+        exists
+            && std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .map(|s| !s.rsplit(") ").next().unwrap_or("").starts_with('Z'))
+                .unwrap_or(false)
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn forced_termination_verifies_term_ignoring_group_members_are_gone() {
+        let mut child = shell("trap '' TERM; sleep 30 & echo $!; wait");
+        let helper = read_pid_line(&mut child);
+        let report = child
+            .terminate_verified(Duration::from_millis(100))
+            .expect("terminates");
+        assert!(report.forced, "TERM-ignoring tree needs a forced kill");
+        assert!(report.verified(), "{report:?}");
+        assert!(report.remaining.is_empty());
+        assert!(!pid_alive(helper));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn dead_leader_with_surviving_group_member_is_not_reported_clean() {
+        let mut child = shell("sleep 30 & echo $!; exit 0");
+        let helper = read_pid_line(&mut child);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child.try_wait().unwrap().is_none() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        // The direct child has exited but a group member is alive.
+        let membership = child.group_membership();
+        assert!(matches!(
+            &membership,
+            GroupMembership::Members(pids) if pids.contains(&(helper as u32))
+        ));
+        assert!(child.is_alive());
+        let report = child
+            .terminate_verified(Duration::from_millis(500))
+            .expect("terminates");
+        assert!(report.verified(), "{report:?}");
+        assert!(!pid_alive(helper));
+        assert!(!child.is_alive());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn setsid_escaped_helper_survives_group_verification_and_is_observable_only_while_parented() {
+        let mut child = shell("setsid sleep 30 & echo $!; wait");
+        let helper = read_pid_line(&mut child);
+        // Linux can see the escape while the helper is still a descendant.
+        #[cfg(target_os = "linux")]
+        assert_eq!(child.escaped_descendants(), vec![helper as u32]);
+        let report = child
+            .terminate_verified(Duration::from_millis(500))
+            .expect("terminates");
+        let survived = pid_alive(helper);
+        // Clean up only the known test-owned helper before asserting.
+        // SAFETY: helper is the pid this test spawned and read from the shell.
+        unsafe {
+            libc::kill(helper, libc::SIGKILL);
+        }
+        assert!(
+            report.verified(),
+            "group verification only covers the group: {report:?}"
+        );
+        assert!(survived, "setsid helper escapes the process group");
+    }
+
+    #[test]
+    fn writer_ownership_is_qualified_only_for_process_group_containment() {
+        assert!(
+            WriterOwnership::ProcessGroupContained {
+                qualification: "fixture".into()
+            }
+            .is_qualified()
+        );
+        assert!(!WriterOwnership::Detached.is_qualified());
+        assert!(!WriterOwnership::Unknown.is_qualified());
+    }
+
+    #[cfg(target_os = "linux")]
+    fn stat_line(pid: u32, comm: &str, state: &str, ppid: u32, pgrp: i32, start: u64) -> String {
+        // pid (comm) state ppid pgrp session tty tpgid flags minflt cminflt majflt cmajflt
+        // utime stime cutime cstime priority nice threads itrealvalue starttime ...
+        format!(
+            "{pid} ({comm}) {state} {ppid} {pgrp} 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 {start} 0 0"
+        )
+    }
+
+    #[cfg(target_os = "linux")]
+    fn entry(pid: u32, ppid: u32, pgrp: i32, start: u64, zombie: bool) -> ProcEntry {
+        ProcEntry {
+            pid,
+            ppid,
+            pgrp,
+            start,
+            zombie,
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    fn complete(entries: Vec<ProcEntry>) -> ProcScan {
+        ProcScan {
+            entries,
+            complete: true,
+        }
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn proc_stat_parser_handles_spaces_parentheses_and_reads_start_time() {
+        let entry = parse_proc_stat(7, &stat_line(7, "we ird) name", "S", 1, 42, 9001)).unwrap();
+        assert_eq!(
+            (entry.ppid, entry.pgrp, entry.start, entry.zombie),
+            (1, 42, 9001, false)
+        );
+        assert!(
+            parse_proc_stat(8, &stat_line(8, "x", "Z", 1, 9, 5))
+                .unwrap()
+                .zombie
+        );
+        // A truncated line is a parse failure, which makes a scan incomplete.
+        assert!(parse_proc_stat(8, "8 (x) Z 1 9 9").is_none());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn unreadable_scan_is_unverified_present_never_empty() {
+        let mut probes = 0;
+        let membership = membership_with(
+            500,
+            Some(1),
+            &mut || {
+                probes += 1;
+                Probe::Exists
+            },
+            // Injected scan failure: the group is known to exist but cannot be enumerated.
+            &mut || ProcScan {
+                entries: vec![entry(1, 0, 1, 1, false)],
+                complete: false,
+            },
+            &|| {},
+        );
+        assert_eq!(membership, GroupMembership::Present);
+        // The same scan that merely lacks the group still cannot clear it.
+        assert_eq!(
+            classify_scan(
+                &ProcScan {
+                    entries: vec![],
+                    complete: false
+                },
+                500,
+                None
+            ),
+            ScanVerdict::Incomplete
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn zombie_only_group_needs_two_quiet_scans_and_a_fork_between_them_is_seen() {
+        // Scan 1 sees only a zombie leader; before scan 2 a live member appears
+        // (a fork racing the enumeration). The group is not empty.
+        let mut scans = vec![
+            complete(vec![entry(500, 1, 500, 77, true)]),
+            complete(vec![
+                entry(500, 1, 500, 77, true),
+                entry(501, 500, 500, 90, false),
+            ]),
+        ]
+        .into_iter();
+        let membership = membership_with(
+            500,
+            Some(77),
+            &mut || Probe::Exists,
+            &mut || scans.next().expect("no more than two scans"),
+            &|| {},
+        );
+        assert_eq!(membership, GroupMembership::Members(vec![501]));
+
+        // Two consecutive quiet scans clear it.
+        let quiet = complete(vec![entry(500, 1, 500, 77, true)]);
+        let membership = membership_with(
+            500,
+            Some(77),
+            &mut || Probe::Exists,
+            &mut || quiet.clone(),
+            &|| {},
+        );
+        assert_eq!(membership, GroupMembership::Empty);
+        // Kernel says gone: empty without scanning at all.
+        let membership = membership_with(
+            500,
+            Some(77),
+            &mut || Probe::Gone,
+            &mut || panic!("no scan needed"),
+            &|| {},
+        );
+        assert_eq!(membership, GroupMembership::Empty);
+        let membership = membership_with(
+            500,
+            Some(77),
+            &mut || Probe::Unknown,
+            &mut || panic!("no scan needed"),
+            &|| {},
+        );
+        assert_eq!(membership, GroupMembership::Present);
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn a_recycled_group_id_is_foreign_and_never_ours() {
+        // Same numeric id, different leader start time: an unrelated process family.
+        let recycled = complete(vec![entry(500, 1, 500, 99_999, false)]);
+        assert_eq!(
+            classify_scan(&recycled, 500, Some(77)),
+            ScanVerdict::Foreign
+        );
+        let membership = membership_with(
+            500,
+            Some(77),
+            &mut || Probe::Exists,
+            &mut || recycled.clone(),
+            &|| {},
+        );
+        assert_eq!(membership, GroupMembership::Empty);
+        assert!(escaped_in_scan(&recycled, 500, 500, Some(77)).is_empty());
+        // Our own leader is recognised.
+        let ours = complete(vec![entry(500, 1, 500, 77, false)]);
+        assert_eq!(
+            classify_scan(&ours, 500, Some(77)),
+            ScanVerdict::Members(vec![500])
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn escape_detection_follows_descendants_and_ignores_incomplete_scans() {
+        let scan = complete(vec![
+            entry(500, 1, 500, 77, false),
+            entry(501, 500, 500, 78, false),
+            entry(502, 501, 700, 79, false),
+            entry(503, 501, 700, 80, true),
+        ]);
+        assert_eq!(escaped_in_scan(&scan, 500, 500, Some(77)), vec![502]);
+        let mut partial = scan;
+        partial.complete = false;
+        assert!(escaped_in_scan(&partial, 500, 500, Some(77)).is_empty());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_verified_terminated_tracker_is_inert_and_never_probes_or_signals_again() {
+        let mut child = shell("sleep 30 & wait");
+        let report = child
+            .terminate_verified(Duration::from_millis(200))
+            .unwrap();
+        assert!(report.verified());
+        assert!(child.is_terminated());
+        let calls = child.os_calls();
+        assert!(calls > 0);
+        // Everything below runs while the numeric group id could already belong to
+        // someone else. None of it may touch the OS again.
+        assert_eq!(
+            child.terminate_verified(Duration::from_millis(50)).unwrap(),
+            report
+        );
+        child
+            .terminate_gracefully(Duration::from_millis(50))
+            .unwrap();
+        child.kill_forcefully().unwrap();
+        assert!(!child.is_alive());
+        assert_eq!(child.group_membership(), GroupMembership::Empty);
+        assert!(child.escaped_descendants().is_empty());
+        assert!(child.try_wait().unwrap().is_some());
+        assert_eq!(
+            child.os_calls(),
+            calls,
+            "no probe or signal after the latch"
+        );
+        drop(child);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn naturally_exited_group_latches_when_observed_and_is_never_signalled() {
+        let mut child = shell("exit 0");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while child.is_alive() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(child.try_wait().unwrap().is_some());
+        assert!(child.is_terminated());
+        let calls = child.os_calls();
+        child.kill_forcefully().unwrap();
+        assert_eq!(child.os_calls(), calls);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn termination_is_bounded_even_when_the_leader_ignores_term() {
+        let mut child = shell("trap '' TERM; while :; do sleep 1; done");
+        let started = Instant::now();
+        let report = child
+            .terminate_verified(Duration::from_millis(100))
+            .unwrap();
+        assert!(report.forced && report.verified(), "{report:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn verified_scope_shutdown_seals_first_and_reports_every_tree() {
+        let scope = ProcessTreeManager::new().sub_manager();
+        let background = scope.clone();
+        let mut options = SpawnOptions::new("sh");
+        options.arg("-c").arg("sleep 30 & wait");
+        let child = scope.spawn(options).unwrap();
+        let report = scope.shutdown_verified(Duration::from_millis(200));
+        assert_eq!(report.children.len(), 1);
+        assert!(report.verified(), "{report:?}");
+        assert!(child.lock().is_terminated());
+        // A clone held elsewhere can no longer spawn into the sealed scope.
+        assert!(background.spawn(SpawnOptions::new("sleep")).is_err());
+        assert!(background.is_shutdown());
+        // Sealing alone terminates nothing.
+        let other = ProcessTreeManager::new();
+        let mut options = SpawnOptions::new("sleep");
+        options.arg("30");
+        let live = other.spawn(options).unwrap();
+        other.seal();
+        assert!(other.spawn(SpawnOptions::new("sleep")).is_err());
+        assert!(live.lock().try_wait().unwrap().is_none());
+        other.shutdown(Duration::ZERO);
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn scope_observation_reports_live_members_without_terminating_anything() {
+        let scope = ProcessTreeManager::new().sub_manager();
+        assert!(scope.observe().is_clean(), "an empty scope is clean");
+        let mut options = SpawnOptions::new("sleep");
+        options.arg("30");
+        let child = scope.spawn(options).unwrap();
+        let observed = scope.observe();
+        assert_eq!(observed.live_children, 1);
+        assert!(!observed.is_clean());
+        assert!(!observed.termination.group_empty);
+        assert!(!observed.termination.direct_child_exited);
+        assert_eq!(observed.termination.remaining, vec![child.lock().pid()]);
+        assert!(
+            child.lock().try_wait().unwrap().is_none(),
+            "observing never signals or reaps"
+        );
+        let merged = scope.shutdown_verified(Duration::from_millis(200)).merged();
+        assert!(
+            merged.verified() && merged.remaining.is_empty(),
+            "{merged:?}"
+        );
+        assert!(scope.observe().is_clean());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn scope_observation_sees_a_setsid_escape_before_the_kill() {
+        let scope = ProcessTreeManager::new().sub_manager();
+        let mut options = SpawnOptions::new("sh");
+        options.arg("-c").arg("setsid sleep 30 & echo $!; wait");
+        let child = scope.spawn(options).unwrap();
+        let helper = {
+            use std::io::{BufRead, BufReader};
+            let stdout = child
+                .lock()
+                .child_mut()
+                .stdout
+                .take()
+                .expect("piped stdout");
+            let mut line = String::new();
+            BufReader::new(stdout).read_line(&mut line).unwrap();
+            line.trim().parse::<u32>().expect("helper pid line")
+        };
+        let observed = scope.observe();
+        assert_eq!(observed.escaped, vec![helper]);
+        assert!(!observed.is_clean());
+        let termination = scope.shutdown_verified(Duration::from_millis(500));
+        // SAFETY: helper is the pid this test spawned and read from the shell.
+        unsafe {
+            libc::kill(helper as i32, libc::SIGKILL);
+        }
+        assert!(
+            termination.verified(),
+            "group verification alone cannot see the escape: {termination:?}"
+        );
+    }
+
+    #[test]
+    fn merged_termination_is_clean_only_if_every_tree_is() {
+        let clean = TerminationReport {
+            forced: false,
+            direct_child_exited: true,
+            group_empty: true,
+            remaining: vec![],
+        };
+        assert!(ScopeTermination { children: vec![] }.merged().verified());
+        let dirty = TerminationReport {
+            forced: true,
+            direct_child_exited: true,
+            group_empty: false,
+            remaining: vec![9],
+        };
+        let merged = ScopeTermination {
+            children: vec![clean, dirty],
+        }
+        .merged();
+        assert!(merged.forced && !merged.verified());
+        assert_eq!(merged.remaining, vec![9]);
     }
 }

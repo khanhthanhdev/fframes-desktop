@@ -4,6 +4,8 @@ pub mod checkpoint;
 pub mod lifecycle;
 pub mod manifest;
 pub mod paths;
+#[cfg(target_os = "linux")]
+pub mod publish;
 pub mod revision;
 
 pub use lifecycle::{OpenProject, create, import, open, open_for_recovery};

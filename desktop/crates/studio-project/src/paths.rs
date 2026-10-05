@@ -176,3 +176,75 @@ pub(crate) fn link_error(path: &Path) -> ProjectError {
         "Copy the linked content into the project as ordinary files",
     )
 }
+
+/// Prefix of every file the edit-transaction layer creates inside the project tree.
+pub const TX_PREFIX: &str = ".fframes-tx-";
+
+/// The purpose of one app-generated transaction file. Each belongs to exactly one
+/// transaction (`tx`, 32 lowercase hex digits) and one operation index.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TxRole {
+    /// The after bytes, staged next to their destination.
+    Stage,
+    /// The displaced original.
+    Original,
+    /// Our own published file, moved aside while rolling back.
+    Rollback,
+    /// A foreign variant retained after an outside writer interfered.
+    Variant(u32),
+}
+impl TxRole {
+    fn suffix(self) -> String {
+        match self {
+            Self::Stage => "stage".into(),
+            Self::Original => "orig".into(),
+            Self::Rollback => "undo".into(),
+            Self::Variant(n) => format!("var{n}"),
+        }
+    }
+}
+
+/// The exact name of a transaction file: `.fframes-tx-<tx>-<index>.<role>`.
+pub fn transaction_file_name(tx: &str, index: usize, role: TxRole) -> String {
+    debug_assert!(is_transaction_id(tx));
+    format!("{TX_PREFIX}{tx}-{index}.{}", role.suffix())
+}
+
+/// A transaction id as embedded in file names: exactly 32 lowercase hex digits.
+pub fn is_transaction_id(tx: &str) -> bool {
+    tx.len() == 32
+        && tx
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Whether `name` (one path component) is exactly a name the transaction layer
+/// generates. Only these names are excluded from the source inventory (and only when
+/// they are regular files); any other file, including one that merely starts with the
+/// prefix, is user content.
+pub fn is_transaction_internal_name(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix(TX_PREFIX) else {
+        return false;
+    };
+    let Some((tx, tail)) = rest.split_at_checked(32) else {
+        return false;
+    };
+    let Some(tail) = tail.strip_prefix('-') else {
+        return false;
+    };
+    let Some((index, role)) = tail.split_once('.') else {
+        return false;
+    };
+    let digits = |s: &str| {
+        !s.is_empty()
+            && s.len() <= 9
+            && s.bytes().all(|b| b.is_ascii_digit())
+            && (s == "0" || !s.starts_with('0'))
+    };
+    is_transaction_id(tx)
+        && digits(index)
+        && match role {
+            "stage" | "orig" | "undo" => true,
+            _ => role.strip_prefix("var").is_some_and(digits),
+        }
+}

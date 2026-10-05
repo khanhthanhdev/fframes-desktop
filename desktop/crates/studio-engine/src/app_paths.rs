@@ -43,6 +43,22 @@ impl AppPaths {
     pub fn builds(&self) -> PathBuf {
         self.data.join("builds")
     }
+    /// Per-project agent workspace root (outside portable source and Git).
+    pub fn agent(&self, id: &studio_project::ProjectId) -> PathBuf {
+        self.project(id).join("agent")
+    }
+    /// Stable agent working directory: the same path for every task of the project.
+    pub fn agent_draft(&self, id: &studio_project::ProjectId) -> PathBuf {
+        self.agent(id).join("draft")
+    }
+    /// Durable draft ownership marker, kept beside (never inside) the draft.
+    pub fn agent_draft_state(&self, id: &studio_project::ProjectId) -> PathBuf {
+        self.agent(id).join("draft-state.json")
+    }
+    /// Retained failed drafts are moved here before the stable draft is refreshed.
+    pub fn agent_archive(&self, id: &studio_project::ProjectId) -> PathBuf {
+        self.agent(id).join("archive")
+    }
     pub fn contains_source(&self, source: &Path) -> bool {
         self.data.starts_with(source) || source.starts_with(&self.data)
     }

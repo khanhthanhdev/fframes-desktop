@@ -14,8 +14,54 @@ import time
 ROOT = Path(__file__).resolve().parents[2]
 
 
+APP_BINARY = "fframes-studio"
+# The agent is told `studio-tools --capability <file> <tool>` and MCP uses `studio-mcp`; the app
+# finds both next to its own executable (`agent_tools::sibling_binary` in app/src/agent_tools.rs).
+HELPER_BINARIES = ("studio-tools", "studio-mcp")
+PACKAGED_BINARIES = (APP_BINARY, "studio_setup", *HELPER_BINARIES)
+
+
 def run(args, **kwargs):
     return subprocess.run(args, check=True, text=True, **kwargs)
+
+
+def install_binaries(source, destination, names, suffix):
+    for name in names:
+        shutil.copy2(Path(source) / (name + suffix), destination)
+
+
+def sibling_binary(app_binary, name, suffix):
+    """The same lookup as `agent_tools::sibling_binary`: a file next to the running executable."""
+    path = Path(app_binary).parent / (name + suffix)
+    return path if path.is_file() else None
+
+
+def verify_helpers(app_binary, suffix):
+    missing = [name for name in HELPER_BINARIES if sibling_binary(app_binary, name, suffix) is None]
+    if missing:
+        raise ValueError(f"Project-tool helpers are not next to the application executable: {', '.join(missing)}")
+
+
+def native_dependencies(bin_dir):
+    tool = "ldd" if platform.system() == "Linux" else "otool"
+    sections = []
+    for name in (APP_BINARY, *HELPER_BINARIES):
+        command = [tool, str(bin_dir / name)] if tool == "ldd" else [tool, "-L", str(bin_dir / name)]
+        dependencies = run(command, capture_output=True).stdout
+        if "not found" in dependencies:
+            raise ValueError(f"{name} has unresolved runtime dependencies")
+        sections.append(f"# {name}\n{dependencies}")
+    return "\n".join(sections)
+
+
+def write_inventory(output, target, sdk_included):
+    files = []
+    for path in sorted(output.rglob("*")):
+        if path.is_file():
+            with path.open("rb") as stream:
+                digest = hashlib.file_digest(stream, "sha256").hexdigest()
+            files.append({"path": path.relative_to(output).as_posix(), "size_bytes": path.stat().st_size, "sha256": digest})
+    (output / "inventory.json").write_text(json.dumps({"target": target, "sdk_included": sdk_included, "files": files}, indent=2) + "\n")
 
 
 def verify_sdk(bundle):
@@ -53,8 +99,8 @@ def package(output, sdk_bundle=None):
     bin_dir = output / "bin"
     bin_dir.mkdir()
     suffix = ".exe" if os.name == "nt" else ""
-    for binary in ["fframes-studio", "studio_setup"]:
-        shutil.copy2(release / (binary + suffix), bin_dir)
+    install_binaries(release, bin_dir, PACKAGED_BINARIES, suffix)
+    verify_helpers(bin_dir / ("fframes-studio" + suffix), suffix)
     shutil.copytree(ROOT / "desktop/fixtures/annotated-video-overlay", output / "worker-source", ignore=shutil.ignore_patterns("target"))
     shutil.copytree(ROOT / "desktop/packaging/sdk/notices", output / "notices")
     shutil.copy(ROOT / "desktop/fixtures/annotated-video-overlay/media/OFL.txt", output / "notices/DM-Sans-OFL.txt")
@@ -75,16 +121,13 @@ def package(output, sdk_bundle=None):
         launcher = output / "launch.sh"
         launcher.write_text('#!/usr/bin/env sh\nset -eu\npackage_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexport FFRAMES_SDK_BUNDLE="$package_dir/sdk"\nexec "$package_dir/bin/fframes-studio" spike-ui\n')
         launcher.chmod(0o755)
-        tool = "ldd" if platform.system() == "Linux" else "otool"
-        command = [tool, str(bin_dir / "fframes-studio")] if tool == "ldd" else [tool, "-L", str(bin_dir / "fframes-studio")]
-        dependencies = run(command, capture_output=True).stdout
-        if "not found" in dependencies:
-            raise ValueError("Native application has unresolved runtime dependencies")
-        (output / "native-dependencies.txt").write_text(dependencies)
+        (output / "native-dependencies.txt").write_text(native_dependencies(bin_dir))
         if platform.system() == "Darwin":
             contents = output / "fframes Studio.app/Contents"
             (contents / "MacOS").mkdir(parents=True)
             shutil.copy2(bin_dir / "fframes-studio", contents / "MacOS/fframes-studio")
+            install_binaries(bin_dir, contents / "MacOS", HELPER_BINARIES, "")
+            verify_helpers(contents / "MacOS/fframes-studio", "")
             if sdk_bundle:
                 shutil.move(str(output / "sdk"), str(contents / "sdk"))
             with (contents / "Info.plist").open("wb") as stream:
@@ -102,13 +145,7 @@ def package(output, sdk_bundle=None):
             gate["passed"] = False
         gate["notes"] = "Native artifact built; this gate needs its own reproducible native run."
     (output / "qualification.json").write_text(json.dumps(ledger, indent=2) + "\n")
-    files = []
-    for path in sorted(output.rglob("*")):
-        if path.is_file():
-            with path.open("rb") as stream:
-                digest = hashlib.file_digest(stream, "sha256").hexdigest()
-            files.append({"path": path.relative_to(output).as_posix(), "size_bytes": path.stat().st_size, "sha256": digest})
-    (output / "inventory.json").write_text(json.dumps({"target": target, "sdk_included": bool(sdk), "files": files}, indent=2) + "\n")
+    write_inventory(output, target, bool(sdk))
     shutil.make_archive(str(output), "zip", output.parent, output.name)
     return output
 

@@ -274,7 +274,15 @@ fn enumerate(
         if meta.is_dir() {
             enumerate(root, &native, paths, cancelled)?;
         } else if meta.is_file() {
-            paths.push(path);
+            // Exact app-generated transaction files (staged bytes, displaced originals,
+            // retained variants) are bookkeeping, not project source.
+            let internal = native
+                .file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(crate::paths::is_transaction_internal_name);
+            if !internal {
+                paths.push(path);
+            }
         } else {
             return Err(io_error(&native, "unsupported special file"));
         }

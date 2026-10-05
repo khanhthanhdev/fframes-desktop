@@ -1,5 +1,10 @@
+pub mod agent_tools;
+pub mod agent_workflow;
 pub mod app;
 pub mod audio_service;
+pub mod build_service;
+pub mod candidate_runner;
+pub mod conversation_panel;
 pub mod frame_image;
 pub mod selection_spike;
 pub mod setup_view;
@@ -27,4 +32,5 @@ pub mod agent_spike;
 pub mod project_view;
 pub mod stress_metrics;
 pub mod studio_shell;
+pub mod teardown;
 pub mod worker_project;

@@ -29,6 +29,8 @@ parking_lot = "0.12"
 image = { version = "0.25", default-features = false, features = ["png"] }
 smallvec = "1.16"
 cpal = "=0.18.2"
+agent-client-protocol = "=2.2.0"
+futures = "0.3"
 
 [workspace.dependencies.gpui]
 git = "https://github.com/zed-industries/zed.git"

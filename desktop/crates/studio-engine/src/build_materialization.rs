@@ -38,6 +38,14 @@ pub fn materialize(
     materialize_with_cancel(project, sdk, compatibility, app_builds, &|| false)
 }
 
+/// Cargo target directory shared by every build with the same compatibility manifest.
+pub fn target_dir(app_builds: &Path, compatibility: &CompatibilityManifest) -> PathBuf {
+    app_builds
+        .join("targets")
+        .join(compatibility.digest())
+        .join(&compatibility.target_triple)
+}
+
 pub fn materialize_with_cancel(
     project: &OpenProject,
     sdk: &Path,
@@ -45,6 +53,30 @@ pub fn materialize_with_cancel(
     app_builds: &Path,
     cancelled: &impl Fn() -> bool,
 ) -> Result<MaterializedBuild, ProjectError> {
+    let sdk = fs::canonicalize(sdk).map_err(|e| {
+        ProjectError::new(
+            sdk,
+            "managed build",
+            e.to_string(),
+            "Choose a compatible SDK or copy/relink dependencies inside the workspace",
+        )
+    })?;
+    let target = target_dir(app_builds, &compatibility);
+    let environment = SdkEnvironment::new(sdk, target, compatibility, true);
+    materialize_in_environment(project, environment, app_builds, cancelled)
+}
+
+/// Materialize `project` for exactly `environment`: its (canonical) SDK directory, its
+/// compatibility manifest and its target directory. The returned build keeps that
+/// environment, so a frozen one is the very environment the compile and every worker use.
+pub fn materialize_in_environment(
+    project: &OpenProject,
+    environment_binding: SdkEnvironment,
+    app_builds: &Path,
+    cancelled: &impl Fn() -> bool,
+) -> Result<MaterializedBuild, ProjectError> {
+    let sdk = environment_binding.sdk_dir.clone();
+    let compatibility = environment_binding.manifest.clone();
     let error = |path: &Path, reason: String| {
         ProjectError::new(
             path,
@@ -55,9 +87,9 @@ pub fn materialize_with_cancel(
     };
     compatibility
         .validate()
-        .map_err(|e| error(sdk, e.to_string()))?;
+        .map_err(|e| error(&sdk, e.to_string()))?;
     if project.manifest.sdk != sdk_pin(&compatibility) {
-        return Err(error(sdk, "SDK pin mismatch".into()));
+        return Err(error(&sdk, "SDK pin mismatch".into()));
     }
     if !project.worker_available {
         return Err(error(
@@ -65,7 +97,6 @@ pub fn materialize_with_cancel(
             "Worker bridge missing; add an explicit worker entry before building".into(),
         ));
     }
-    let sdk = fs::canonicalize(sdk).map_err(|e| error(sdk, e.to_string()))?;
     for ancestor in project.root.ancestors().skip(1) {
         if ancestor.join(".cargo/config.toml").exists() || ancestor.join(".cargo/config").exists() {
             return Err(error(
@@ -172,11 +203,7 @@ pub fn materialize_with_cancel(
             "Source changed during SDK binding; refresh and retry".into(),
         ));
     }
-    let target = app_builds
-        .join("targets")
-        .join(compatibility.digest())
-        .join(&compatibility.target_triple);
-    let environment = SdkEnvironment::new(&sdk, target, compatibility, true);
+    let environment = environment_binding;
     let staging_path = staging.path();
     let isolated_bin_dir = staging_path.join("bin");
     fs::create_dir_all(&isolated_bin_dir).map_err(|e| error(&isolated_bin_dir, e.to_string()))?;

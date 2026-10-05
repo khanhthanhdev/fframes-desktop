@@ -186,6 +186,7 @@ fn real_compiled_tracks_and_thumbnail_seek_destinations() {
         tag,
         compiler: controller.operation_processes(),
         worker: controller.processes.sub_manager(),
+        service: fframes_studio::worker_project::shared_build_service(),
     });
     let deadline = Instant::now() + Duration::from_secs(180);
     let ready = loop {
@@ -297,6 +298,11 @@ fn real_compiled_tracks_and_thumbnail_seek_destinations() {
     assert_eq!(controller.processes.active_count(), 0);
     // The final preview owns its PCM/materialization independently of the worker.
     drop(ready);
+    // Completed builds stay cached by the shared service until the project closes (the
+    // product close path releases them); do the same before checking for leaks.
+    fframes_studio::worker_project::shared_build_service().close_project(&String::from(
+        controller.project.manifest.project_id.clone(),
+    ));
     fn no_leased_trees(path: &std::path::Path) {
         for entry in fs::read_dir(path).unwrap() {
             let path = entry.unwrap().path();

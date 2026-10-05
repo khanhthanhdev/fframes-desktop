@@ -1,5 +1,5 @@
 //! Ephemeral preview readiness. Neither compilation nor checkpoint acceptance installs pixels.
-use crate::{JobState, OperationTag, ProjectState, StateError};
+use crate::{JobState, OperationTag, ProjectState, PromotionAuthorization, StateError};
 use fframes_studio_protocol::*;
 use std::{fs::File, sync::Arc};
 
@@ -106,6 +106,9 @@ pub struct PreparedAudioSource {
     pub file: File,
     pub descriptor: PreparedAudioDescriptor,
     _lease: Arc<crate::build_materialization::MaterializedBuild>,
+    /// Budget accounting of the PCM bytes (an opaque guard owned by the build service
+    /// that releases them when this source, and so the open file, is dropped).
+    accounting: std::sync::OnceLock<Box<dyn std::any::Any + Send + Sync>>,
 }
 impl PreparedAudioSource {
     pub fn build(&self) -> &Arc<crate::build_materialization::MaterializedBuild> {
@@ -120,7 +123,13 @@ impl PreparedAudioSource {
             file,
             descriptor,
             _lease: lease,
+            accounting: std::sync::OnceLock::new(),
         }
+    }
+    /// Ties `guard` to this source's lifetime. Only the first guard is kept; returns
+    /// false (dropping `guard`, which releases whatever it accounted) when one is set.
+    pub fn hold_accounting(&self, guard: Box<dyn std::any::Any + Send + Sync>) -> bool {
+        self.accounting.set(guard).is_ok()
     }
 }
 impl std::fmt::Debug for PreparedAudioSource {
@@ -280,6 +289,13 @@ impl PreviewState {
         self.candidate = Some(tag);
         self.status = PreviewStatus::Building;
     }
+    /// Starts handoff of a staged preview of just-published bytes. The candidate tag is
+    /// the authorization's own (base source = the published revision), never the task
+    /// base or a forged build tag.
+    pub fn begin_promotion(&mut self, authorization: &PromotionAuthorization) {
+        self.candidate = Some(authorization.tag().clone());
+        self.status = PreviewStatus::Preparing;
+    }
     pub fn cancel_build(&mut self) {
         self.candidate = None;
         if self.status != PreviewStatus::Closed {
@@ -296,6 +312,10 @@ impl PreviewState {
         }
         self.status = PreviewStatus::Preparing;
         Ok(())
+    }
+    /// The tag of the build or promotion currently being prepared, if any.
+    pub fn candidate(&self) -> Option<&OperationTag> {
+        self.candidate.as_ref()
     }
     pub fn displayed(&self) -> Option<&PreviewIdentity> {
         self.displayed.as_ref()
@@ -327,6 +347,21 @@ impl PreviewState {
         source: &ProjectState,
     ) -> Result<(), StateError> {
         let t = ready.tag();
+        if let Some(promotion) = source.promotion()
+            && promotion.tag() == t
+        {
+            // A promoted preview is installable only under the authorization issued for
+            // exactly this published revision, session and source generation.
+            return if self.candidate.as_ref() == Some(t)
+                && promotion.is_current(source)
+                && ready.seek_serial == self.serial
+                && ready.position == self.position.min(ready.timeline.total_frames)
+            {
+                Ok(())
+            } else {
+                Err(StateError::StaleResult)
+            };
+        }
         if self.candidate.as_ref() != Some(t)
             || t.project != *source.project()
             || t.session != *source.session()

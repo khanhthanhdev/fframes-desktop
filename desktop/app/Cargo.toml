@@ -4,12 +4,21 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 description = "Minimal native desktop studio application for fframes"
+default-run = "fframes-studio"
 [lib]
 path = "src/lib.rs"
 
 [[bin]]
 name = "fframes-studio"
 path = "src/main.rs"
+
+[[bin]]
+name = "studio-tools"
+path = "src/bin/studio_tools.rs"
+
+[[bin]]
+name = "studio-mcp"
+path = "src/bin/studio_mcp.rs"
 
 
 [dependencies]
@@ -28,6 +37,10 @@ smallvec = { workspace = true }
 parking_lot = { workspace = true }
 sha2 = { workspace = true }
 cpal = { workspace = true }
+uuid = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

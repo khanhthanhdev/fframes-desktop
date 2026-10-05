@@ -1,4 +1,7 @@
-use crate::{AgentSupervisor, SupervisorError, driver::redact_sensitive_string};
+use crate::{
+    AgentSupervisor, SupervisorError,
+    driver::{McpStdioServer, redact_sensitive_string},
+};
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -200,6 +203,7 @@ pub struct AcpSession {
     readers: Vec<JoinHandle<()>>,
     next_id: u64,
     project_root: PathBuf,
+    mcp_servers: Vec<McpStdioServer>,
 }
 impl AcpSession {
     pub fn spawn(
@@ -207,9 +211,27 @@ impl AcpSession {
         project: &Path,
         manager: ProcessTreeManager,
     ) -> Result<Self, SupervisorError> {
+        Self::spawn_with_mcp_servers(config, project, manager, Vec::new())
+    }
+    /// Like [`Self::spawn`], but `session/new` carries these stdio MCP servers (ACP v1
+    /// wire shape). Env values are redacted from diagnostics and permission titles.
+    pub fn spawn_with_mcp_servers(
+        config: &AdapterConfig,
+        project: &Path,
+        manager: ProcessTreeManager,
+        mcp_servers: Vec<McpStdioServer>,
+    ) -> Result<Self, SupervisorError> {
+        for server in &mcp_servers {
+            server
+                .validate()
+                .map_err(|error| SupervisorError::Other(error.to_string()))?;
+        }
         let project_root = project.canonicalize()?;
         let mut env = ChildEnvironment::default_allowlist();
-        let mut secrets = Vec::new();
+        let mut secrets: Vec<String> = mcp_servers
+            .iter()
+            .flat_map(|server| server.secrets().map(str::to_owned))
+            .collect();
         for name in &config.auth_env_names {
             if let Ok(value) = std::env::var(name) {
                 secrets.push(value.clone());
@@ -305,6 +327,7 @@ impl AcpSession {
             readers: vec![reader, log_reader, writer_thread],
             next_id: 1,
             project_root,
+            mcp_servers,
         })
     }
     fn request(
@@ -423,7 +446,7 @@ impl AcpSession {
             );
             let session = self.request(
                 "session/new",
-                json!({"cwd":cwd,"mcpServers":[]}),
+                json!({"cwd":cwd,"mcpServers":self.mcp_servers.iter().map(McpStdioServer::to_wire_json).collect::<Vec<_>>()}),
                 Duration::from_secs(30),
             )?;
             let id = session["sessionId"]
@@ -769,5 +792,62 @@ mod tests {
         let error = worker.join().unwrap().unwrap_err().to_string();
         assert!(!error.contains("split-secret"));
         assert!(control.progress.lock().stop_reason.is_none());
+    }
+    #[test]
+    fn session_new_carries_configured_stdio_servers_in_the_acp_wire_shape() {
+        let manager = ProcessTreeManager::new();
+        let config = AdapterConfig {
+            executable: if cfg!(windows) { "python" } else { "python3" }.into(),
+            args: vec![
+                format!("{}/tests/acp-peer.py", env!("CARGO_MANIFEST_DIR")),
+                "question".into(),
+                String::new(),
+            ],
+            auth_env_names: vec![],
+        };
+        let run = |servers: Vec<McpStdioServer>| {
+            let root = tempfile::tempdir().unwrap();
+            let mut config = config.clone();
+            config.args[2] = root.path().to_string_lossy().into_owned();
+            let mut session =
+                AcpSession::spawn_with_mcp_servers(&config, root.path(), manager.clone(), servers)
+                    .unwrap();
+            session.run_prompt(root.path(), "Edit title").unwrap();
+            let wire: Value = serde_json::from_slice(
+                &std::fs::read(root.path().join("target/session-new.json")).unwrap(),
+            )
+            .unwrap();
+            wire["mcpServers"].clone()
+        };
+        let command = std::env::temp_dir().join("studio-mcp");
+        let server = McpStdioServer::new(
+            "fframes-project",
+            command.clone(),
+            vec!["--task".into(), "t1".into()],
+            vec![("TOKEN".into(), "wire-secret".into())],
+        )
+        .unwrap();
+        assert_eq!(
+            run(vec![server]),
+            json!([{"name":"fframes-project","command":command,"args":["--task","t1"],"env":[{"name":"TOKEN","value":"wire-secret"}]}])
+        );
+        assert_eq!(run(Vec::new()), json!([]));
+        let invalid = McpStdioServer {
+            name: "srv".into(),
+            command: "relative".into(),
+            args: vec![],
+            env: vec![],
+        };
+        let root = tempfile::tempdir().unwrap();
+        let error = AcpSession::spawn_with_mcp_servers(
+            &config,
+            root.path(),
+            manager.clone(),
+            vec![invalid],
+        )
+        .err()
+        .unwrap();
+        assert!(error.to_string().contains("absolute"));
+        assert_eq!(manager.active_count(), 0);
     }
 }

@@ -116,6 +116,40 @@ impl Checkpoints {
         }
         Ok(())
     }
+    /// Streams a content-addressed object into `output`, verifying that its bytes hash
+    /// to `hash` and have `size` bytes. A missing, truncated or corrupt object is an
+    /// error and may leave a partial write in `output` for the caller to discard.
+    pub fn copy_object(
+        &self,
+        hash: &str,
+        size: u64,
+        output: &mut impl Write,
+    ) -> Result<(), ProjectError> {
+        let path = self.object_path(hash)?;
+        let mut input = fs::File::open(&path).map_err(|e| io_error(&path, e))?;
+        let mut counted = CountingWriter {
+            inner: output,
+            count: 0,
+        };
+        let digest = stream(&mut input, &mut counted).map_err(|e| io_error(&path, e))?;
+        if digest != hash || counted.count != size {
+            return Err(ProjectError::new(
+                &path,
+                "checkpoint",
+                "object integrity failure",
+                "Preserve history and repair the missing/corrupt object from backup",
+            ));
+        }
+        Ok(())
+    }
+    /// Verifies that every object of `revision` exists with the recorded size and
+    /// hash, and returns its verified inventory.
+    pub fn verified_inventory(
+        &self,
+        revision: &SourceRevision,
+    ) -> Result<SourceInventory, ProjectError> {
+        self.load(revision)
+    }
     pub fn draft(&self, revision: &SourceRevision, name: &str) -> Result<PathBuf, ProjectError> {
         let inventory = self.load(revision)?;
         let path = self
@@ -194,4 +228,19 @@ pub fn copy_draft(source: &Path, destination: &Path) -> Result<(), ProjectError>
         }
     }
     Ok(())
+}
+
+struct CountingWriter<'a, W: Write> {
+    inner: &'a mut W,
+    count: u64,
+}
+impl<W: Write> Write for CountingWriter<'_, W> {
+    fn write(&mut self, buffer: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buffer)?;
+        self.count += written as u64;
+        Ok(written)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
 }

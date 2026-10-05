@@ -2,11 +2,14 @@ use crate::manifest::CompatibilityManifest;
 use std::path::{Path, PathBuf};
 use studio_bootstrap::ChildEnvironment;
 
+#[derive(Debug, Clone)]
 pub struct SdkEnvironment {
     pub sdk_dir: PathBuf,
     pub target_dir: PathBuf,
     pub offline: bool,
     pub manifest: CompatibilityManifest,
+    /// When set, the exact environment resolved once; children never re-read the host.
+    frozen: Option<ChildEnvironment>,
 }
 
 impl SdkEnvironment {
@@ -21,12 +24,36 @@ impl SdkEnvironment {
             target_dir: target_dir.into(),
             offline,
             manifest,
+            frozen: None,
         }
     }
 
+    /// Resolve the child environment from `host` once and keep it: every later
+    /// `build_child_environment` returns exactly these variables, whatever the
+    /// process environment becomes.
+    pub fn freeze(mut self, host: ChildEnvironment) -> Self {
+        self.frozen = Some(self.resolve_child_environment(host));
+        self
+    }
+
+    /// The frozen environment, if this environment was frozen.
+    pub fn frozen_environment(&self) -> Option<&ChildEnvironment> {
+        self.frozen.as_ref()
+    }
+
     /// Builds a strictly isolated `ChildEnvironment` for project builds and renders.
+    /// A frozen environment returns its snapshot; otherwise the host allowlist is read now.
     pub fn build_child_environment(&self) -> ChildEnvironment {
-        let mut env = ChildEnvironment::default_allowlist();
+        match &self.frozen {
+            Some(frozen) => frozen.clone(),
+            None => self.resolve_child_environment(ChildEnvironment::default_allowlist()),
+        }
+    }
+
+    /// Applies the SDK-honored rules (toolchain/cargo homes, FFmpeg, libclang, PATH,
+    /// offline mode, leak stripping) on top of the allowlisted `host` variables.
+    pub fn resolve_child_environment(&self, host: ChildEnvironment) -> ChildEnvironment {
+        let mut env = host;
 
         // 1. App-managed toolchain and cargo homes
         let rustup_home = self.sdk_dir.join("rustup");
@@ -42,15 +69,7 @@ impl SdkEnvironment {
         env.set("FFMPEG_DIR", ffmpeg_dir.to_string_lossy());
         env.set("FFMPEG_BINARIES_CACHE", ffmpeg_cache.to_string_lossy());
 
-        // 3. Libclang resolution
-        if env.get("LIBCLANG_PATH").is_none()
-            && let Some(libclang) = std::env::var("LIBCLANG_PATH")
-                .ok()
-                .filter(|p| Path::new(p).exists())
-        {
-            env.set("LIBCLANG_PATH", libclang);
-        }
-
+        // 3. Libclang resolution (the host allowlist already carries LIBCLANG_PATH)
         if env.get("LIBCLANG_PATH").is_none() {
             #[cfg(target_os = "macos")]
             {

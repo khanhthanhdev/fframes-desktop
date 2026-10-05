@@ -1,14 +1,29 @@
 //! Per-open-project state, isolated SDK builds, durable checkpoints and recovery.
+pub mod agent_task;
 pub mod app_paths;
 pub mod build_materialization;
+pub mod candidate_validation;
 pub mod controller;
+pub mod diagnostics;
+pub mod edit_transaction;
 pub mod journal;
 pub mod playback_clock;
 pub mod preview_state;
 pub mod state;
 pub mod store;
 pub mod timeline;
-pub use controller::Controller;
+pub use agent_task::{
+    AgentTask, AgentTaskContext, AgentTaskId, AgentTaskManager, CandidateRevision, CaptureTicket,
+    DraftSnapshot, DraftState, DraftStore, FinishedTask, MAX_AUTOMATIC_REPAIRS, PreparedDraft,
+    QuiescenceBlock, QuiescenceEvidence, RepairBudget, RepairDecision, TaskError, TaskIdentity,
+    TaskSourceBase, TaskState, TurnCompletion, WriterGeneration, WriterGoneEvidence,
+    WriterObservation, evaluate_quiescence,
+};
+pub use controller::{CompletionOutcome, Controller, Promotion, RecoveryStatus, UndoPreparation};
+pub use edit_transaction::{
+    ApplyGate, Boundary, ConflictReport, Fault, FileDelta, FileState, NoHooks, PlanError,
+    PromotionError, TaskRevisionRecord, TransactionHooks, TransactionKind,
+};
 pub use playback_clock::*;
 pub use preview_state::*;
 pub use state::*;
@@ -28,6 +43,20 @@ pub enum EngineError {
     Json(#[from] serde_json::Error),
     #[error("{0}")]
     State(#[from] StateError),
+    #[error("{0}")]
+    Task(#[from] TaskError),
+    #[error("{0}")]
+    Candidate(#[from] crate::candidate_validation::CandidateError),
+    #[error("{0}")]
+    Promotion(#[from] PromotionError),
+    #[error(
+        "{what} was written by a newer Studio (format {found}, this version supports {supported}); update Studio. Source and history were not changed"
+    )]
+    NewerFormat {
+        what: String,
+        found: u32,
+        supported: u32,
+    },
     #[error("{0}")]
     Diagnostic(String),
 }

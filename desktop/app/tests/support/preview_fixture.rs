@@ -27,6 +27,13 @@ pub fn create(root: &Path, manifest: &CompatibilityManifest) {
     )
     .unwrap();
     fs::write(root.join("src/lib.rs"), SOURCE).unwrap();
+    fs::write(root.join("media/cue.wav"), wave(440., 660.)).unwrap();
+}
+
+/// The fixture's one-second stereo cue at the given tones: same length and format as the
+/// scaffolded one, different samples (a media-changing edit that keeps the timeline).
+#[allow(dead_code)]
+pub fn wave(left_hz: f64, right_hz: f64) -> Vec<u8> {
     let count = WAVE_FRAMES;
     let bytes = count * 4;
     let mut wav = Vec::with_capacity(bytes as usize + 44);
@@ -43,12 +50,13 @@ pub fn create(root: &Path, manifest: &CompatibilityManifest) {
     wav.extend(b"data");
     wav.extend(bytes.to_le_bytes());
     for sample in 0..count {
-        let left = ((sample as f64 * 440. * std::f64::consts::TAU / f64::from(WAVE_RATE)).sin()
+        let left = ((sample as f64 * left_hz * std::f64::consts::TAU / f64::from(WAVE_RATE)).sin()
             * 4000.) as i16;
-        let right = ((sample as f64 * 660. * std::f64::consts::TAU / f64::from(WAVE_RATE)).sin()
+        let right = ((sample as f64 * right_hz * std::f64::consts::TAU / f64::from(WAVE_RATE))
+            .sin()
             * 2000.) as i16;
         wav.extend(left.to_le_bytes());
         wav.extend(right.to_le_bytes());
     }
-    fs::write(root.join("media/cue.wav"), wav).unwrap();
+    wav
 }

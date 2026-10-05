@@ -16,6 +16,35 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str).unwrap_or("studio") {
         "studio" => run_studio(None),
+        "qualify-m3" => {
+            let argument = |key: &str| {
+                args.iter()
+                    .position(|arg| arg == key)
+                    .and_then(|index| args.get(index + 1))
+                    .map(PathBuf::from)
+            };
+            // Test-only injection for fixtures (never reachable from the product entry or
+            // the settings file): treats the adapter's writers as process-group
+            // contained WITHOUT qualification evidence, and the panel says so.
+            let test_ownership = argument("--test-writer-containment").map(|label| {
+                studio_bootstrap::WriterOwnership::ProcessGroupContained {
+                    qualification: format!("test-injection:{}", label.to_string_lossy()),
+                }
+            });
+            match (argument("--project"), argument("--telemetry")) {
+                (Some(project), Some(output)) if project.is_dir() && !output.exists() => {
+                    run_studio(Some(Qualification::AgentPanel {
+                        project,
+                        output,
+                        test_ownership,
+                    }))
+                }
+                _ => {
+                    eprintln!("qualify-m3 requires --project DIR and a fresh --telemetry FILE");
+                    std::process::exit(1);
+                }
+            }
+        }
         "qualify-m2" => {
             let argument = |key: &str| {
                 args.iter()
@@ -25,7 +54,7 @@ fn main() {
             };
             match (argument("--project"), argument("--telemetry")) {
                 (Some(project), Some(output)) if project.is_dir() && !output.exists() => {
-                    run_studio(Some((project, output)))
+                    run_studio(Some(Qualification::Playback { project, output }))
                 }
                 _ => {
                     eprintln!("qualify-m2 requires --project DIR and a fresh --telemetry FILE");
@@ -85,6 +114,9 @@ fn main() {
             println!("fframes-studio spike-ui");
             println!("fframes-studio qualify-m2 --project DIR --telemetry FILE");
             println!(
+                "fframes-studio qualify-m3 --project DIR --telemetry FILE [--test-writer-containment LABEL]"
+            );
+            println!(
                 "fframes-studio qualify-presentation --bundle DIR --sdk-home DIR --project DIR --output FILE"
             );
             println!("Use studio_setup for GPUI-free doctor and project scaffolding.");
@@ -96,8 +128,22 @@ fn main() {
     }
 }
 
-fn run_studio(qualification: Option<(PathBuf, PathBuf)>) {
+/// Observation entries of the production shell (telemetry files for the external
+/// harnesses; they never change behavior).
+enum Qualification {
+    /// M2: build the preview and record playback telemetry.
+    Playback { project: PathBuf, output: PathBuf },
+    /// M3: open the project and record the agent panel's redacted state.
+    AgentPanel {
+        project: PathBuf,
+        output: PathBuf,
+        test_ownership: Option<studio_bootstrap::WriterOwnership>,
+    },
+}
+
+fn run_studio(qualification: Option<Qualification>) {
     gpui_platform::application().run(move |cx: &mut App| {
+        fframes_studio::text_input::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1280.), px(800.)), cx);
         let window = cx
             .open_window(
@@ -113,8 +159,16 @@ fn run_studio(qualification: Option<(PathBuf, PathBuf)>) {
                 move |window, cx| {
                     cx.new(|cx| {
                         let mut shell = fframes_studio::studio_shell::StudioShell::new(window, cx);
-                        if let Some((project, output)) = qualification {
-                            shell.start_qualification(project, output, cx);
+                        match qualification {
+                            Some(Qualification::Playback { project, output }) => {
+                                shell.start_qualification(project, output, cx)
+                            }
+                            Some(Qualification::AgentPanel {
+                                project,
+                                output,
+                                test_ownership,
+                            }) => shell.start_agent_telemetry(project, output, test_ownership, cx),
+                            None => (),
                         }
                         shell
                     })
@@ -138,6 +192,7 @@ fn run_spike_ui(qualification: Option<PresentationQualification>) {
         .as_ref()
         .map(|qualification| qualification.output.clone());
     gpui_platform::application().run(move |cx: &mut App| {
+        fframes_studio::text_input::bind_keys(cx);
         let bounds = Bounds::centered(None, size(px(1000.), px(1000.)), cx);
         cx.open_window(
             WindowOptions {

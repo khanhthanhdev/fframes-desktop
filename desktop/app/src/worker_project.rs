@@ -1,7 +1,13 @@
-use crate::worker_client::WorkerClient;
+use crate::{
+    build_service::{
+        BuildKey, BuildLimits, BuildProfile, BuildService, CompileEnvironment, CompileRequest,
+        Compiler, Subscriber, SubscriberKind,
+    },
+    worker_client::{WorkerClient, WorkerClientError},
+};
 use std::{
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{Arc, OnceLock},
     time::{Duration, Instant},
 };
 use studio_agent_spike::source_revision;
@@ -35,7 +41,7 @@ pub fn launch_portable_worker(
     Ok(client)
 }
 
-fn worker_binary(build: &studio_engine::build_materialization::MaterializedBuild) -> PathBuf {
+pub fn worker_binary(build: &studio_engine::build_materialization::MaterializedBuild) -> PathBuf {
     build.isolated_bin_dir.join(format!(
         "{}{}",
         build.worker_target,
@@ -76,6 +82,86 @@ pub fn acquire_build_lock(
     }
 }
 
+/// The cargo-backed compile step used by the shared service.
+pub struct CargoCompiler;
+
+impl Compiler for CargoCompiler {
+    fn compile(
+        &self,
+        request: &CompileRequest,
+        scope: &ProcessTreeManager,
+    ) -> Result<Arc<studio_engine::build_materialization::MaterializedBuild>, String> {
+        compile_with_cargo(&request.project, &request.environment, scope)
+    }
+
+    fn accepts(&self, key: &BuildKey) -> Result<(), String> {
+        // `compile_with_cargo` builds the default-feature debug CPU worker and nothing else.
+        if !key.features.is_empty() {
+            return Err(format!("features {:?} are not supported", key.features));
+        }
+        if !key.options.is_empty() {
+            return Err(format!("options {:?} are not supported", key.options));
+        }
+        if key.backend != "cpu" {
+            return Err(format!(
+                "backend {:?} is not supported (cpu only)",
+                key.backend
+            ));
+        }
+        match key.profile {
+            BuildProfile::Debug => Ok(()),
+        }
+    }
+
+    fn verify(&self, build: &studio_engine::build_materialization::MaterializedBuild) -> bool {
+        build.manifest.is_file() && worker_binary(build).is_file()
+    }
+}
+
+/// Process-wide compile service. UI preparation and agent tools subscribe to it so equal
+/// build keys compile once.
+pub fn shared_build_service() -> BuildService {
+    static SERVICE: OnceLock<BuildService> = OnceLock::new();
+    SERVICE
+        .get_or_init(|| {
+            BuildService::new(
+                ProcessTreeManager::new(),
+                Arc::new(CargoCompiler),
+                BuildLimits::default(),
+            )
+        })
+        .clone()
+}
+
+/// Build (or join/lease) the worker for `project` through the shared service. The
+/// returned lease belongs to `subscriber`; cancelling `manager` detaches only this caller.
+pub fn compile_portable_worker_via(
+    service: &BuildService,
+    subscriber: Subscriber,
+    project: &studio_project::OpenProject,
+    sdk: &Path,
+    manifest: CompatibilityManifest,
+    builds: &Path,
+    manager: &ProcessTreeManager,
+) -> Result<Arc<studio_engine::build_materialization::MaterializedBuild>, String> {
+    let environment = CompileEnvironment::resolve(sdk, &manifest, builds)?;
+    let key = BuildKey::worker(project, &environment);
+    let request = CompileRequest {
+        project: project.clone(),
+        environment,
+        retained: None,
+    };
+    let lease = service
+        .subscribe(key, request, subscriber)
+        .map_err(|e| e.to_string())?
+        .wait(&|| manager.is_shutdown())
+        .map_err(|e| e.to_string())?;
+    if manager.is_shutdown() {
+        return Err("Build cancelled before launch".into());
+    }
+    Ok(lease.into_build())
+}
+
 pub fn compile_portable_worker(
     project: &studio_project::OpenProject,
     sdk: &Path,
@@ -83,11 +169,26 @@ pub fn compile_portable_worker(
     builds: &Path,
     manager: &ProcessTreeManager,
 ) -> Result<Arc<studio_engine::build_materialization::MaterializedBuild>, String> {
-    let build = studio_engine::build_materialization::materialize_with_cancel(
+    compile_portable_worker_via(
+        &shared_build_service(),
+        Subscriber::new(SubscriberKind::Ui, "portable worker"),
         project,
         sdk,
         manifest,
         builds,
+        manager,
+    )
+}
+
+fn compile_with_cargo(
+    project: &studio_project::OpenProject,
+    environment: &CompileEnvironment,
+    manager: &ProcessTreeManager,
+) -> Result<Arc<studio_engine::build_materialization::MaterializedBuild>, String> {
+    let build = studio_engine::build_materialization::materialize_in_environment(
+        project,
+        environment.sdk_environment(),
+        environment.builds(),
         &|| manager.is_shutdown(),
     )
     .map_err(|e| e.to_string())?;
@@ -136,15 +237,37 @@ pub fn compile_portable_worker(
     Ok(Arc::new(build))
 }
 
+/// Why a preview worker could not be launched and negotiated.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PreviewLaunchError {
+    /// The worker answered but is not a compatible CPU M2 preview worker (version,
+    /// capability, backend or limits). A property of the SDK, not of the edit.
+    #[error("{0}")]
+    Incompatible(String),
+    #[error("{0}")]
+    Failed(String),
+}
+
 pub fn launch_preview_worker(
     build: Arc<studio_engine::build_materialization::MaterializedBuild>,
     identity: fframes_studio_protocol::PreviewIdentity,
     manager: &ProcessTreeManager,
 ) -> Result<crate::preview_worker_client::PreviewWorkerClient, String> {
+    launch_preview_worker_checked(build, identity, manager).map_err(|e| e.to_string())
+}
+
+/// [`launch_preview_worker`] with the failure class preserved.
+pub fn launch_preview_worker_checked(
+    build: Arc<studio_engine::build_materialization::MaterializedBuild>,
+    identity: fframes_studio_protocol::PreviewIdentity,
+    manager: &ProcessTreeManager,
+) -> Result<crate::preview_worker_client::PreviewWorkerClient, PreviewLaunchError> {
     let binary = worker_binary(&build);
     let cwd = build.manifest.parent().unwrap_or(&build.root);
     let cache = build.isolated_bin_dir.join("audio");
-    let cache = cache.to_str().ok_or("Preview cache path must be UTF-8")?;
+    let cache = cache
+        .to_str()
+        .ok_or_else(|| PreviewLaunchError::Failed("Preview cache path must be UTF-8".into()))?;
     let mut transport = WorkerClient::new(&identity.source_revision, identity.worker_generation);
     transport
         .spawn_worker(
@@ -164,10 +287,17 @@ pub fn launch_preview_worker(
             build.environment.build_child_environment(),
             manager,
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| PreviewLaunchError::Failed(e.to_string()))?;
     transport.retain_build(build);
     let mut client = crate::preview_worker_client::PreviewWorkerClient::new(transport, identity);
-    client.negotiate().map_err(|e| e.to_string())?;
+    client.negotiate().map_err(|e| match e {
+        WorkerClientError::Other(message)
+            if message == crate::preview_worker_client::INCOMPATIBLE_BRIDGE =>
+        {
+            PreviewLaunchError::Incompatible(message)
+        }
+        other => PreviewLaunchError::Failed(other.to_string()),
+    })?;
     Ok(client)
 }
 
