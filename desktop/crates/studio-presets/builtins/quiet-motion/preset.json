@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "token_schema": 1,
+  "id": "quiet-motion",
+  "name": "Quiet Motion",
+  "version": "1.0.0",
+  "description": "Calm blue-grey palette in regular-weight type with generous whitespace, soft shadows and long, gentle easing.",
+  "author": "fframes contributors",
+  "design": {
+    "width": 1920,
+    "height": 1080,
+    "base_font_px": 16.0
+  },
+  "tokens": {
+    "path": "tokens.json",
+    "sha256": "c9b37a2250f139dd07d4eaf294da11b31eb7c4d374a0eb4dba67162962e378a8",
+    "bytes": 4290
+  },
+  "guide": {
+    "path": "guide.md",
+    "sha256": "62cbd525b369c89a6e1178b4547d92cd362b2794e90cbf07d8bbbe3cfbf03f06",
+    "bytes": 1300
+  },
+  "license": "LICENSE.txt",
+  "licenses": [
+    {
+      "spdx": "MIT",
+      "file": {
+        "path": "LICENSE.txt",
+        "sha256": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "bytes": 1079
+      }
+    },
+    {
+      "spdx": "OFL-1.1",
+      "file": {
+        "path": "licenses/DMSans-OFL.txt",
+        "sha256": "be5f632588774077cbb19a8d3fd788fbc7861af041f4e7165eae5822b11392b3",
+        "bytes": 4481
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "family": "DM Sans",
+      "file": {
+        "path": "fonts/DMSans-Regular.ttf",
+        "sha256": "9ae2da663d64342031e59b5fa680dd355171d021b7ebf83774efc7c0330ae7b5",
+        "bytes": 72000
+      },
+      "license": "licenses/DMSans-OFL.txt"
+    }
+  ],
+  "assets": [],
+  "examples": [
+    {
+      "file": {
+        "path": "examples/title-card.md",
+        "sha256": "fc1ac26da4d14137f5a1064d470f8f46764f45eb583494881aa572ee7b8dee12",
+        "bytes": 738
+      },
+      "license": "LICENSE.txt"
+    }
+  ]
+}

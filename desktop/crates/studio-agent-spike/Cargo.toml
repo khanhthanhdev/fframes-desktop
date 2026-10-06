@@ -10,6 +10,7 @@ path = "src/lib.rs"
 
 [dependencies]
 sha2 = { workspace = true }
+base64 = "0.22.1"
 studio-project = { workspace = true }
 studio-bootstrap = { workspace = true }
 serde = { workspace = true }

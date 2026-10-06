@@ -1834,6 +1834,7 @@ dependencies = [
  "studio-agent-spike",
  "studio-bootstrap",
  "studio-engine",
+ "studio-presets",
  "studio-project",
  "studio-sdk",
  "tempfile",
@@ -5696,6 +5697,7 @@ name = "studio-agent-spike"
 version = "0.1.0"
 dependencies = [
  "agent-client-protocol",
+ "base64 0.22.1",
  "futures",
  "libc",
  "parking_lot",
@@ -5733,12 +5735,27 @@ dependencies = [
  "serde_json",
  "sha2",
  "studio-bootstrap",
+ "studio-presets",
  "studio-project",
  "studio-sdk",
  "tempfile",
  "thiserror 2.0.21",
  "toml 0.8.23",
  "uuid",
+]
+
+[[package]]
+name = "studio-presets"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+ "sha2",
+ "studio-project",
+ "tempfile",
+ "thiserror 2.0.21",
+ "ttf-parser",
 ]
 
 [[package]]

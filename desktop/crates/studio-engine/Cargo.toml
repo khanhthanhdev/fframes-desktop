@@ -8,6 +8,7 @@ license = "MIT"
 uuid = { workspace = true }
 fframes-studio-protocol = { workspace = true }
 studio-project = { workspace = true }
+studio-presets = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 serde_json = { workspace = true }

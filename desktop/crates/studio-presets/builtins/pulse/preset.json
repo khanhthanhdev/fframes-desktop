@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "token_schema": 1,
+  "id": "pulse",
+  "name": "Pulse",
+  "version": "1.0.0",
+  "description": "High-contrast dark theme with neon accents, oversized tight type, hard offset shadows and springy, fast motion.",
+  "author": "fframes contributors",
+  "design": {
+    "width": 1920,
+    "height": 1080,
+    "base_font_px": 16.0
+  },
+  "tokens": {
+    "path": "tokens.json",
+    "sha256": "713be2b97f53df60e9c71312b68f481201241efc49a9c58cf2a387b2dfaa5520",
+    "bytes": 4322
+  },
+  "guide": {
+    "path": "guide.md",
+    "sha256": "87dab2bd4a8b7d7a0e1e1c2c5e3fce05dae47606c155549ba6a92a8c8fe9b210",
+    "bytes": 1319
+  },
+  "license": "LICENSE.txt",
+  "licenses": [
+    {
+      "spdx": "MIT",
+      "file": {
+        "path": "LICENSE.txt",
+        "sha256": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "bytes": 1079
+      }
+    },
+    {
+      "spdx": "OFL-1.1",
+      "file": {
+        "path": "licenses/DMSans-OFL.txt",
+        "sha256": "be5f632588774077cbb19a8d3fd788fbc7861af041f4e7165eae5822b11392b3",
+        "bytes": 4481
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "family": "DM Sans",
+      "file": {
+        "path": "fonts/DMSans-Medium.ttf",
+        "sha256": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033",
+        "bytes": 73300
+      },
+      "license": "licenses/DMSans-OFL.txt"
+    }
+  ],
+  "assets": [],
+  "examples": [
+    {
+      "file": {
+        "path": "examples/title-card.md",
+        "sha256": "1cdd17e628c4e89115ed5ebba8d95292eaf064fe0e52267634a98418e4ad1601",
+        "bytes": 731
+      },
+      "license": "LICENSE.txt"
+    }
+  ]
+}

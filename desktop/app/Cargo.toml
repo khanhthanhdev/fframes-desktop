@@ -26,6 +26,7 @@ thiserror = { workspace = true }
 gpui = { workspace = true }
 studio-project = { workspace = true }
 studio-engine = { workspace = true }
+studio-presets = { workspace = true }
 studio-bootstrap = { workspace = true }
 studio-sdk = { workspace = true }
 studio-agent-spike = { workspace = true }

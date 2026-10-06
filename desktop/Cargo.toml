@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "app",
     "crates/studio-project",
+    "crates/studio-presets",
     "crates/studio-engine",
     "crates/studio-bootstrap",
     "crates/studio-sdk",
@@ -12,6 +13,7 @@ members = [
 [workspace.dependencies]
 studio-project = { path = "crates/studio-project" }
 studio-engine = { path = "crates/studio-engine" }
+studio-presets = { path = "crates/studio-presets" }
 libc = "0.2"
 uuid = { version = "1", features = ["v4"] }
 studio-bootstrap = { path = "crates/studio-bootstrap" }

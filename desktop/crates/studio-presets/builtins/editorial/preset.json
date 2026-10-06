@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "token_schema": 1,
+  "id": "editorial",
+  "name": "Editorial",
+  "version": "1.0.0",
+  "description": "Warm paper, ink-black type and a single red accent. Large margins, hairline rules and slow, confident motion.",
+  "author": "fframes contributors",
+  "design": {
+    "width": 1920,
+    "height": 1080,
+    "base_font_px": 16.0
+  },
+  "tokens": {
+    "path": "tokens.json",
+    "sha256": "07cee5f55ea6f0ccc76d480fb2d7fa4330e973be7517918031ca5da7c0c6b9d0",
+    "bytes": 4223
+  },
+  "guide": {
+    "path": "guide.md",
+    "sha256": "50aff245f16005df47770672f5cda6c856ce5efac68a3f4e4d19213683d7ef05",
+    "bytes": 1290
+  },
+  "license": "LICENSE.txt",
+  "licenses": [
+    {
+      "spdx": "MIT",
+      "file": {
+        "path": "LICENSE.txt",
+        "sha256": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "bytes": 1079
+      }
+    },
+    {
+      "spdx": "OFL-1.1",
+      "file": {
+        "path": "licenses/DMSans-OFL.txt",
+        "sha256": "be5f632588774077cbb19a8d3fd788fbc7861af041f4e7165eae5822b11392b3",
+        "bytes": 4481
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "family": "DM Sans",
+      "file": {
+        "path": "fonts/DMSans-Medium.ttf",
+        "sha256": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033",
+        "bytes": 73300
+      },
+      "license": "licenses/DMSans-OFL.txt"
+    }
+  ],
+  "assets": [],
+  "examples": [
+    {
+      "file": {
+        "path": "examples/title-card.md",
+        "sha256": "d9d9d4f3b2eeb048b07ae2315feca4b81a9dcfc1c4a3d2d38f4adffa959f9276",
+        "bytes": 735
+      },
+      "license": "LICENSE.txt"
+    }
+  ]
+}
