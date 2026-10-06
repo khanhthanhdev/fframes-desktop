@@ -14,15 +14,18 @@ use super::{
     log::RowStore,
     model::*,
     present::{self, CliRoute, ToolRoute},
-    tools::{BuildSettings, ToolPlacement, ToolRuntime},
+    tools::{BuildSettings, ToolPlacement, ToolRuntime, render_scope_evidence},
 };
+use crate::agent_tools::backend::ProjectToolBackend;
 use crate::candidate_runner::RunScopes;
+use fframes_studio_protocol::PreviewIdentity;
 use parking_lot::Mutex;
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::{
         Arc,
+        atomic::{AtomicBool, Ordering},
         mpsc::{Receiver, Sender},
     },
     thread::JoinHandle,
@@ -33,13 +36,13 @@ use studio_agent_spike::{
     McpStdioServer, McpStdioSupport,
     driver::{
         AgentEvent, AgentEventKind, MessageRole, OptionValue, PermissionId, PermissionPrompt,
-        PermissionReply, PermissionResolution, PromptOutcome, ToolEvent,
+        PermissionReply, PermissionResolution, PromptImage, PromptOutcome, ToolEvent,
     },
 };
 use studio_bootstrap::ProcessTreeManager;
 use studio_engine::{
     AgentTaskContext, AgentTaskId, DraftState, EngineError, PromotionError, ReviewPolicy,
-    TaskState, WriterGeneration, WriterGoneEvidence,
+    TaskScope, TaskState, WriterGeneration, WriterGoneEvidence,
     candidate_validation::{CapturedCandidate, ChangeSet, FailureContext},
     edit_transaction::ConflictReport,
 };
@@ -47,6 +50,8 @@ use studio_project::revision::SourceInventory;
 
 const PUBLISH_INTERVAL: Duration = Duration::from_millis(25);
 const MAX_TOOL_INDEX: usize = 2048;
+const MAX_SCOPE_PROMPT_IMAGES: usize = 3;
+const MAX_SCOPE_PROMPT_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 /// Controller commands that may wait behind a running job.
 const MAX_DEFERRED: usize = 32;
 
@@ -59,7 +64,9 @@ pub(crate) enum Msg {
     Submit {
         id: u64,
         brief: String,
+        scope: Option<Box<TaskScope>>,
     },
+    SetDisplayedPreviewIdentity(Option<PreviewIdentity>),
     CancelQueued(u64),
     Reply {
         reference: PermissionRef,
@@ -108,12 +115,22 @@ pub(crate) enum Msg {
         published: String,
         kind: HandoffKind,
     },
+    /// Actual frames around the frozen scope, rendered from one immutable revision.
+    Evidence {
+        task: AgentTaskId,
+        kind: EvidenceKind,
+        view: EvidenceView,
+    },
     /// A job panicked (or was never admitted): its operation must settle.
     JobAborted {
         kind: JobKind,
         message: String,
     },
 }
+
+/// Bounds the background evidence render (build + a few frames) so a hung build can
+/// never hold the first prompt back indefinitely.
+const EVIDENCE_TIMEOUT: Duration = Duration::from_secs(150);
 
 /// What the agent was given to reach the project tools in one session.
 #[derive(Default)]
@@ -159,6 +176,12 @@ struct Active {
     retained: Option<Box<Retained>>,
     in_repair: bool,
     pending_prompt: Option<(String, PromptKind)>,
+    /// The before evidence is still rendering: the first prompt waits for it.
+    before_pending: bool,
+    /// The session is ready and the first prompt is waiting for `before_pending`.
+    prompt_held: bool,
+    /// Stops this task's evidence jobs (task end, close).
+    evidence_cancel: Arc<AtomicBool>,
     turn: Option<u64>,
     open_permissions: HashSet<u64>,
     engine_waiting: bool,
@@ -166,12 +189,15 @@ struct Active {
     stop_requested: bool,
     /// Publication is running and cannot be cancelled.
     promoting: bool,
+    /// AutoApply is waiting for the candidate's evidence render to settle.
+    promote_after_evidence: bool,
 }
 
 struct Queued {
     id: u64,
     brief: String,
     queued_unix: u64,
+    scope: Option<TaskScope>,
 }
 
 struct UndoRun {
@@ -206,6 +232,7 @@ pub(crate) struct Actor {
     active: Option<Active>,
     undo: Option<UndoRun>,
     queue: VecDeque<Queued>,
+    displayed_preview_identity: Option<PreviewIdentity>,
     tools: Option<ToolRuntime>,
     jobs: Vec<JoinHandle<()>>,
     stream: Option<Stream>,
@@ -251,6 +278,55 @@ fn split_at_boundary(text: &str, max: usize) -> (&str, &str) {
     text.split_at(end)
 }
 
+/// Reads only the bounded, task-owned PNGs selected for the review panel. This runs on
+/// the evidence job thread before publishing metadata so the artifacts cannot be
+/// released before their bytes are copied.
+fn read_evidence_preview_bytes(
+    shared: &super::Shared,
+    backend: &ProjectToolBackend,
+    task: &AgentTaskId,
+    artifacts: &[EvidenceArtifact],
+) -> Vec<(String, Vec<u8>, u32, u32)> {
+    let mut previews = Vec::new();
+    for artifact in artifacts {
+        let Some(max_bytes) =
+            shared
+                .evidence_images
+                .lock()
+                .reserve(task, &artifact.id, artifact.bytes)
+        else {
+            continue;
+        };
+        let Ok(bytes) = backend
+            .artifacts()
+            .read_png_for_task(task, &artifact.id, max_bytes)
+        else {
+            continue;
+        };
+        previews.push((artifact.id.clone(), bytes, artifact.width, artifact.height));
+    }
+    previews
+}
+
+fn decode_evidence_previews(
+    shared: &super::Shared,
+    task: &AgentTaskId,
+    previews: Vec<(String, Vec<u8>, u32, u32)>,
+) {
+    let mut changed = false;
+    for (id, bytes, width, height) in previews {
+        let Ok((image, _decoded_bytes)) =
+            crate::evidence_preview::decode_png(&bytes, (width, height))
+        else {
+            continue;
+        };
+        changed |= shared.evidence_images.lock().complete(task, &id, image);
+    }
+    if changed && let Some(notify) = &shared.notify {
+        notify();
+    }
+}
+
 fn engine_state_of(phase: TaskPhase) -> TaskState {
     match phase {
         TaskPhase::Queued | TaskPhase::Starting => TaskState::ContextReady,
@@ -259,6 +335,7 @@ fn engine_state_of(phase: TaskPhase) -> TaskState {
         TaskPhase::Quiescing | TaskPhase::Capturing => TaskState::Quiescing,
         TaskPhase::Validating => TaskState::Validating,
         TaskPhase::AwaitingReview => TaskState::CandidateReady,
+        TaskPhase::AwaitingEvidence => TaskState::CandidateReady,
         TaskPhase::Promoting => TaskState::Promoting,
         TaskPhase::Accepted => TaskState::Accepted,
         TaskPhase::Conflict => TaskState::Conflict,
@@ -296,6 +373,7 @@ impl Actor {
             active: None,
             undo: None,
             queue: VecDeque::new(),
+            displayed_preview_identity: None,
             tools: None,
             jobs: Vec::new(),
             stream: None,
@@ -657,6 +735,14 @@ impl Actor {
                     id: q.id,
                     summary: self.scrub_str(&present::brief_summary(&q.brief)),
                     queued_unix: q.queued_unix,
+                    scope: q.scope.as_ref().map(TaskScope::label),
+                    stale_scope: q.scope.as_ref().is_some_and(|scope| {
+                        scope.compiled.is_some()
+                            && !self
+                                .displayed_preview_identity
+                                .as_ref()
+                                .is_some_and(|identity| scope.is_current_preview(identity))
+                    }),
                 })
                 .collect(),
             older_rows: self.store.has_older(),
@@ -882,7 +968,11 @@ impl Actor {
             }
             Msg::CheckAdapter => self.check_adapter(),
             Msg::SettingsChanged => self.settings_changed(),
-            Msg::Submit { id, brief } => self.submit(id, brief),
+            Msg::Submit { id, brief, scope } => self.submit(id, brief, scope.map(|scope| *scope)),
+            Msg::SetDisplayedPreviewIdentity(identity) => {
+                self.displayed_preview_identity = identity;
+                self.touch();
+            }
             Msg::CancelQueued(id) => {
                 if let Some(at) = self.queue.iter().position(|q| q.id == id) {
                     self.queue.remove(at);
@@ -937,6 +1027,7 @@ impl Actor {
             Msg::Promote(end) => self.on_promote(end),
             Msg::Undone(end) => self.on_undone(end),
             Msg::Committed { published, kind } => self.on_committed(&published, kind),
+            Msg::Evidence { task, kind, view } => self.on_evidence(task, kind, view),
             Msg::JobAborted { kind, message } => self.on_job_aborted(kind, &message),
         }
         // Job results that arrive while closing still have to be settled.
@@ -1090,17 +1181,26 @@ impl Actor {
 
     // ---- starting tasks -------------------------------------------------------------------------------
 
-    fn submit(&mut self, id: u64, brief: String) {
+    fn submit(&mut self, id: u64, brief: String, scope: Option<TaskScope>) {
         if self.active.is_some() || self.undo.is_some() || !self.queue.is_empty() {
+            let scope_label = scope
+                .as_ref()
+                .map(TaskScope::label)
+                .map(|label| format!(" · {label}"))
+                .unwrap_or_default();
             self.queue.push_back(Queued {
                 id,
                 brief: brief.clone(),
                 queued_unix: now_unix(),
+                scope,
             });
-            self.notice(format!("Queued: {}", present::brief_summary(&brief)));
+            self.notice(format!(
+                "Queued: {}{scope_label}",
+                present::brief_summary(&brief)
+            ));
             return;
         }
-        self.begin_task(brief);
+        self.begin_task(brief, scope);
         self.sync_registry(1);
     }
 
@@ -1110,7 +1210,7 @@ impl Actor {
             let Some(next) = self.queue.pop_front() else {
                 break;
             };
-            let started = self.begin_task(next.brief);
+            let started = self.begin_task(next.brief, next.scope);
             self.sync_registry(1);
             if started {
                 break;
@@ -1118,7 +1218,34 @@ impl Actor {
         }
     }
 
-    fn begin_task(&mut self, brief: String) -> bool {
+    fn begin_task(&mut self, brief: String, scope: Option<TaskScope>) -> bool {
+        if let Some(scope) = &scope {
+            if let Err(error) = scope.validate() {
+                self.error_row(present::simple_error(
+                    "invalid_task_scope",
+                    "The selected scope is invalid",
+                    &error.to_string(),
+                    Some("Reselect the scene or frame range, then send the brief again."),
+                    false,
+                ));
+                return false;
+            }
+            if scope.compiled.is_some()
+                && !self
+                    .displayed_preview_identity
+                    .as_ref()
+                    .is_some_and(|identity| scope.is_current_preview(identity))
+            {
+                self.error_row(present::simple_error(
+                    "stale_task_scope",
+                    "The selected scope is stale",
+                    "The displayed preview changed after this brief was submitted. The saved scene/range was not remapped to the new timeline.",
+                    Some("Reselect the scene or frame range and send the brief again."),
+                    false,
+                ));
+                return false;
+            }
+        }
         let (adapter, build, tools_settings) = {
             let settings = self.shared.settings.lock();
             (
@@ -1168,7 +1295,14 @@ impl Actor {
                     return false;
                 }
             };
-        let begun = self.shared.controller.lock().begin_agent_task(&brief);
+        let begun = match scope {
+            Some(scope) => self
+                .shared
+                .controller
+                .lock()
+                .begin_agent_task_scoped(&brief, scope),
+            None => self.shared.controller.lock().begin_agent_task(&brief),
+        };
         let context = match begun {
             Ok(context) => context,
             Err(error) => {
@@ -1190,6 +1324,10 @@ impl Actor {
         self.secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
         self.secrets.dedup();
         let offer = self.offer_tools(&build, &adapter, tools_settings.as_ref(), &context);
+        self.shared
+            .evidence_images
+            .lock()
+            .begin_task(identity.task.clone());
         self.task = Some(TaskView {
             id: identity.task.clone(),
             generation: identity.generation,
@@ -1197,6 +1335,12 @@ impl Actor {
             engine_state: TaskState::ContextReady,
             brief: present::brief_summary(&context.brief),
             source_base: present::short(context.source_base.revision().as_str()),
+            scope: context.scope.clone(),
+            before: None,
+            after: None,
+            // Image delivery is not known until the adapter finishes negotiating ACP
+            // capabilities. Do not present the text-only fallback before then.
+            image_limitation: None,
             draft: context.draft.clone(),
             review_policy: policy,
             repair: RepairView {
@@ -1243,12 +1387,16 @@ impl Actor {
             retained: None,
             in_repair: false,
             pending_prompt: Some((prompt, PromptKind::Brief)),
+            before_pending: false,
+            prompt_held: false,
+            evidence_cancel: Arc::new(AtomicBool::new(false)),
             turn: None,
             open_permissions: HashSet::new(),
             engine_waiting: false,
             failed: false,
             stop_requested: false,
             promoting: false,
+            promote_after_evidence: false,
         });
         self.push_row(RowKind::User {
             text: present::bounded(&brief, MAX_ROW_TEXT_BYTES),
@@ -1257,6 +1405,7 @@ impl Actor {
         // The accepted-awaiting-preview state belongs to the accepted source, not to the
         // task that follows it: only a new durable promotion replaces it.
         self.options = Default::default();
+        self.start_before_evidence();
         if let Err(error) = self.spawn_writer() {
             self.fail_with(*error);
         }
@@ -1558,6 +1707,24 @@ impl Actor {
         {
             writer.provider_session = Some(session);
         }
+        if let Some(active) = &mut self.active
+            && active.before_pending
+            && matches!(active.pending_prompt, Some((_, PromptKind::Brief)))
+        {
+            // The first prompt carries the before evidence: wait for the render.
+            active.prompt_held = true;
+            self.touch();
+            return;
+        }
+        self.dispatch_pending_prompt();
+    }
+
+    /// Sends the waiting prompt (the Brief moves the engine to Editing first).
+    fn dispatch_pending_prompt(&mut self) {
+        let Some(active) = &self.active else {
+            return;
+        };
+        let identity = active.ctx.identity.clone();
         let Some((prompt, kind)) = self
             .active
             .as_mut()
@@ -1565,7 +1732,7 @@ impl Actor {
         else {
             return;
         };
-        if matches!(kind, PromptKind::Brief) {
+        if matches!(&kind, PromptKind::Brief) {
             let moved = self
                 .shared
                 .controller
@@ -1577,17 +1744,253 @@ impl Actor {
                 return;
             }
         }
-        self.send_prompt(&prompt);
+        let (images, image_limitation) = if matches!(&kind, PromptKind::Brief) {
+            self.before_prompt_images(&identity.task)
+        } else {
+            (Vec::new(), None)
+        };
+        if let Some(task) = &mut self.task
+            && task.scope.compiled.is_some()
+        {
+            task.image_limitation = image_limitation.clone();
+        }
+        let mut prompt = prompt;
+        if matches!(&kind, PromptKind::Brief)
+            && let Some(before) = self.task.as_ref().and_then(|task| task.before.as_ref())
+        {
+            prompt.push_str(&present::before_evidence_prompt(
+                before,
+                image_limitation.as_deref(),
+            ));
+        }
+        self.send_prompt(&prompt, images);
     }
 
-    fn send_prompt(&mut self, text: &str) {
+    // ---- scope evidence ------------------------------------------------------------------------
+
+    fn set_evidence(&mut self, kind: EvidenceKind, view: EvidenceView) {
+        if let Some(task) = &mut self.task {
+            match kind {
+                EvidenceKind::Before => task.before = Some(view),
+                EvidenceKind::After => task.after = Some(view),
+            }
+        }
+    }
+
+    /// Loads the bounded, task-owned before PNGs only when the negotiated adapter can
+    /// consume ACP image content. Any failure falls back to the text artifact references.
+    fn before_prompt_images(&self, task: &AgentTaskId) -> (Vec<PromptImage>, Option<String>) {
+        let Some(task_view) = self.task.as_ref().filter(|view| &view.id == task) else {
+            return (Vec::new(), None);
+        };
+        if task_view.scope.compiled.is_none() {
+            return (Vec::new(), None);
+        }
+        let Some(before) = task_view.before.as_ref() else {
+            return (
+                Vec::new(),
+                Some("Before image evidence was unavailable; the agent receives text only.".into()),
+            );
+        };
+        if before.state != EvidenceState::Ready {
+            return (
+                Vec::new(),
+                Some("Before image evidence was unavailable; the agent receives text only.".into()),
+            );
+        }
+        let supports_images = self
+            .capabilities
+            .as_ref()
+            .is_some_and(|capabilities| capabilities.prompt_image);
+        if !supports_images {
+            return (Vec::new(), Some(present::IMAGE_LIMITATION.to_owned()));
+        }
+        if before.artifacts.len() > MAX_SCOPE_PROMPT_IMAGES {
+            return (
+                Vec::new(),
+                Some(
+                    "Before image evidence exceeded the attachment limit; text references only."
+                        .into(),
+                ),
+            );
+        }
+        let Some(backend) = self.tools.as_ref().map(ToolRuntime::backend) else {
+            return (
+                Vec::new(),
+                Some("The app could not load before images; the agent receives text only.".into()),
+            );
+        };
+        let mut total_bytes = 0usize;
+        let mut images = Vec::with_capacity(before.artifacts.len());
+        for artifact in &before.artifacts {
+            let remaining = MAX_SCOPE_PROMPT_IMAGE_BYTES.saturating_sub(total_bytes);
+            let Ok(bytes) = backend
+                .artifacts()
+                .read_png_for_task(task, &artifact.id, remaining)
+            else {
+                return (
+                    Vec::new(),
+                    Some("Before images exceeded the prompt budget or expired; text references only.".into()),
+                );
+            };
+            total_bytes += bytes.len();
+            images.push(PromptImage::png(bytes));
+        }
+        if images.is_empty() {
+            return (
+                images,
+                Some(
+                    "Before image evidence contained no images; the agent receives text only."
+                        .into(),
+                ),
+            );
+        }
+        (images, None)
+    }
+
+    /// Starts the background render of the frozen base around the task's scope. The
+    /// first prompt waits for it; an unavailable render is shown and the prompt says so.
+    fn start_before_evidence(&mut self) {
+        let Some(active) = &self.active else {
+            return;
+        };
+        if active.ctx.scope.compiled.is_none() {
+            return;
+        }
+        let revision = active.ctx.source_base.revision().clone();
+        if let Some(active) = &mut self.active {
+            active.before_pending = true;
+        }
+        self.start_evidence(EvidenceKind::Before, revision);
+    }
+
+    fn start_evidence(&mut self, kind: EvidenceKind, revision: studio_project::SourceRevision) {
+        let Some(active) = &self.active else {
+            return;
+        };
+        let Some(compiled) = active.ctx.scope.compiled.clone() else {
+            return;
+        };
+        let identity = active.ctx.identity.clone();
+        let cancel = active.evidence_cancel.clone();
+        let short = present::short(revision.as_str());
+        let shared = self.shared.clone();
+        let unavailable = |note: String| EvidenceView {
+            state: EvidenceState::Unavailable,
+            revision: short.clone(),
+            artifacts: Vec::new(),
+            note: Some(present::message(&note)),
+        };
+        let backend = match (&self.tools, &active.capability) {
+            (Some(tools), Some(_)) => tools.backend(),
+            _ => {
+                let note = self
+                    .mcp_note
+                    .clone()
+                    .unwrap_or_else(|| "project tools are not available for this task".into());
+                self.on_evidence(identity.task.clone(), kind, unavailable(note));
+                return;
+            }
+        };
+        self.set_evidence(
+            kind,
+            EvidenceView {
+                state: EvidenceState::Pending,
+                revision: short.clone(),
+                artifacts: Vec::new(),
+                note: None,
+            },
+        );
+        let tx = self.shared.tx.clone();
+        let task = identity.task.clone();
+        let refused = self.admit(
+            JobKind::Evidence {
+                task: task.clone(),
+                kind,
+            },
+            (backend, identity, revision, compiled, cancel, tx),
+            move |(backend, identity, revision, compiled, cancel, tx)| {
+                let deadline = Instant::now() + EVIDENCE_TIMEOUT;
+                let view =
+                    render_scope_evidence(&backend, &identity, &revision, &compiled, &|| {
+                        cancel.load(Ordering::Acquire) || Instant::now() > deadline
+                    });
+                let artifacts =
+                    (view.state == EvidenceState::Ready).then(|| view.artifacts.clone());
+                let task = identity.task.clone();
+                let previews = artifacts.map_or_else(Vec::new, |artifacts| {
+                    read_evidence_preview_bytes(&shared, &backend, &task, &artifacts)
+                });
+                // AutoApply may promote and finalize as soon as the actor receives this
+                // message. Decode first so the terminal snapshot cannot outrun its images.
+                decode_evidence_previews(&shared, &task, previews);
+                let _ = tx.send(Msg::Evidence {
+                    task: identity.task.clone(),
+                    kind,
+                    view,
+                });
+            },
+        );
+        if let Err((message, _)) = refused {
+            self.on_evidence(task, kind, unavailable(message));
+        }
+    }
+
+    fn on_evidence(&mut self, task: AgentTaskId, kind: EvidenceKind, view: EvidenceView) {
+        let Some(active) = &mut self.active else {
+            return;
+        };
+        if active.ctx.identity.task != task {
+            return;
+        }
+        let settled = view.state != EvidenceState::Pending;
+        self.set_evidence(kind, view.clone());
+        if kind == EvidenceKind::Before && settled {
+            let Some(active) = &mut self.active else {
+                return;
+            };
+            active.before_pending = false;
+            if std::mem::take(&mut active.prompt_held) {
+                self.dispatch_pending_prompt();
+            }
+        }
+        self.touch();
+        let promote = kind == EvidenceKind::After
+            && settled
+            && self
+                .active
+                .as_ref()
+                .is_some_and(|active| active.promote_after_evidence);
+        if promote {
+            if let Some(active) = &mut self.active {
+                active.promote_after_evidence = false;
+            }
+            let stopped = self.closing
+                || self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.stop_requested || active.gate.is_cancelled());
+            if stopped {
+                self.cancel_or_interrupt();
+            } else {
+                self.start_promote();
+            }
+        }
+    }
+
+    fn send_prompt(&mut self, text: &str, images: Vec<PromptImage>) {
         let Some(active) = &mut self.active else {
             return;
         };
         let Some(driver) = &active.driver else {
             return;
         };
-        match driver.prompt(text) {
+        let prompt_result = if images.is_empty() {
+            driver.prompt(text)
+        } else {
+            driver.prompt_with_images(text, images)
+        };
+        match prompt_result {
             Ok(turn) => {
                 active.turn = Some(turn);
                 self.tool_rows.clear();
@@ -1846,7 +2249,7 @@ impl Actor {
             text: present::bounded(&text, MAX_ROW_TEXT_BYTES),
             source: UserSource::Clarification,
         });
-        self.send_prompt(&text);
+        self.send_prompt(&text, Vec::new());
     }
 
     // ---- provider failure and stop ----------------------------------------------------------------------
@@ -1919,6 +2322,18 @@ impl Actor {
                     worker.shutdown(Duration::ZERO);
                 }
                 self.notice("Stopping; the working copy is kept.");
+            }
+            TaskPhase::AwaitingEvidence => {
+                active.evidence_cancel.store(true, Ordering::Release);
+                self.finalize(
+                    Some((
+                        TaskState::Cancelled,
+                        "stopped while capturing candidate evidence".into(),
+                    )),
+                    TaskPhase::Cancelled,
+                    OutcomeKind::Cancelled,
+                    None,
+                );
             }
             TaskPhase::Promoting => {
                 if active.gate.cancel() {
@@ -2032,7 +2447,7 @@ impl Actor {
 
     fn show_validation(&mut self, changes: ChangeCard, card: ValidationCard) {
         self.push_row(RowKind::Changes(changes.clone()));
-        self.push_row(RowKind::Validation(card.clone()));
+        self.push_row(RowKind::Validation(Box::new(card.clone())));
         if let Some(task) = &mut self.task {
             task.changes = Some(changes);
             task.validation = Some(card);
@@ -2078,7 +2493,7 @@ impl Actor {
                 let policy = active.policy;
                 active.retained = Some(retained);
                 match policy {
-                    ReviewPolicy::AutoApply => self.start_promote(),
+                    ReviewPolicy::AutoApply => self.await_auto_apply_evidence(),
                     ReviewPolicy::ManualReview => self.await_review(None),
                 }
             }
@@ -2144,6 +2559,13 @@ impl Actor {
             .map(|r| present::short(r.captured.candidate().revision().as_str()))
             .unwrap_or_default();
         let first = blocked.is_none();
+        let candidate_revision = active
+            .retained
+            .as_ref()
+            .map(|r| r.captured.candidate().revision().clone());
+        if first && let Some(revision) = candidate_revision {
+            self.start_evidence(EvidenceKind::After, revision);
+        }
         if let Some(task) = &mut self.task {
             task.review = Some(ReviewView {
                 candidate: candidate.clone(),
@@ -2161,6 +2583,28 @@ impl Actor {
                 draft_retained: true,
             }));
         }
+    }
+
+    fn await_auto_apply_evidence(&mut self) {
+        let Some(active) = &self.active else {
+            return;
+        };
+        let revision = active
+            .retained
+            .as_ref()
+            .map(|retained| retained.captured.candidate().revision().clone());
+        let Some(revision) = revision else {
+            return;
+        };
+        if active.ctx.scope.compiled.is_none() {
+            self.start_promote();
+            return;
+        }
+        if let Some(active) = &mut self.active {
+            active.promote_after_evidence = true;
+        }
+        self.set_phase(TaskPhase::AwaitingEvidence);
+        self.start_evidence(EvidenceKind::After, revision);
     }
 
     fn begin_repair(&mut self, context: FailureContext) {
@@ -2393,7 +2837,11 @@ impl Actor {
     /// A job thread panicked: the operation it owned would otherwise wait for a result
     /// that never comes (a task stuck Quiescing, Promoting or an Undo in progress).
     fn on_job_aborted(&mut self, kind: JobKind, message: &str) {
-        self.set_inflight(None);
+        // Evidence jobs never own the task's cancellation gate. They may finish after a
+        // Stop has started the next task, so they must not clear that task's in-flight gate.
+        if !matches!(&kind, JobKind::Evidence { .. }) {
+            self.set_inflight(None);
+        }
         let error = present::simple_error(
             "worker_failed",
             "A background worker failed",
@@ -2431,6 +2879,33 @@ impl Actor {
                     self.finalize(None, TaskPhase::Accepted, OutcomeKind::Accepted, None);
                 } else {
                     self.fail_with(error);
+                }
+            }
+            JobKind::Evidence { task, kind } => {
+                if !self
+                    .active
+                    .as_ref()
+                    .is_some_and(|active| active.ctx.identity.task == task)
+                {
+                    return;
+                }
+                let Some(view) = self.task.as_ref().and_then(|task_view| match kind {
+                    EvidenceKind::Before => task_view.before.as_ref(),
+                    EvidenceKind::After => task_view.after.as_ref(),
+                }) else {
+                    return;
+                };
+                if view.state == EvidenceState::Pending {
+                    self.on_evidence(
+                        task,
+                        kind,
+                        EvidenceView {
+                            state: EvidenceState::Unavailable,
+                            revision: view.revision.clone(),
+                            artifacts: Vec::new(),
+                            note: Some(present::message(message)),
+                        },
+                    );
                 }
             }
             JobKind::Undo => {
@@ -2733,7 +3208,7 @@ impl Actor {
             UndoEnd::Cancelled => self.notice("Undo was stopped; nothing was changed."),
             UndoEnd::ValidationFailed(card) => {
                 let summary = card.summary.clone();
-                self.push_row(RowKind::Validation(*card));
+                self.push_row(RowKind::Validation(card));
                 self.error_row(present::simple_error(
                     "undo_validation_failed",
                     "The Undo did not validate",
@@ -2871,8 +3346,18 @@ impl Actor {
                 }
             }
         }
+        active.evidence_cancel.store(true, Ordering::Release);
         if let Some(tools) = &self.tools {
             tools.end_task(&identity);
+        }
+        // The task's own app-owned artifacts are gone with it; the view keeps their
+        // ids and hashes as a record, marked released.
+        if let Some(task) = &mut self.task {
+            for view in [&mut task.before, &mut task.after].into_iter().flatten() {
+                if matches!(view.state, EvidenceState::Ready | EvidenceState::Pending) {
+                    view.state = EvidenceState::Released;
+                }
+            }
         }
         self.shared.live.set(None);
         // Every card still open is stale now.
@@ -2975,6 +3460,7 @@ impl Actor {
         }
         if let Some(active) = &mut self.active {
             active.gate.cancel();
+            active.evidence_cancel.store(true, Ordering::Release);
             if let Some((compiler, worker)) = &active.pipeline_scopes {
                 compiler.shutdown(Duration::ZERO);
                 worker.shutdown(Duration::ZERO);
@@ -2990,6 +3476,7 @@ impl Actor {
                 Msg::Undone(end) => self.on_undone(end),
                 Msg::Committed { published, kind } => self.on_committed(&published, kind),
                 Msg::JobAborted { kind, message } => self.on_job_aborted(kind, &message),
+                Msg::Evidence { task, kind, view } => self.on_evidence(task, kind, view),
                 Msg::Probe(_) => self.probing = false,
                 Msg::Close(other) => {
                     let _ = other.send(());

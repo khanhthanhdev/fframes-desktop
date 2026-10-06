@@ -2,6 +2,7 @@ use crate::{
     EngineError,
     edit_transaction::{
         ConflictReport, Progress, TASK_FORMAT, TaskEvent, TaskRevisionRecord, TransactionIntent,
+        TransactionKind,
     },
     store::Record,
 };
@@ -271,12 +272,28 @@ pub struct TaskReplay {
 }
 
 impl TaskReplay {
-    /// Committed task revisions in commit order: the source of the history projection.
+    /// Committed *task* revisions in commit order: the source of the history projection.
+    /// Studio preset mutations are committed transactions too, but never task history.
     pub fn committed(&self) -> Vec<TaskRevisionRecord> {
         self.transactions
             .iter()
             .filter_map(|t| match &t.status {
-                TxStatus::Committed(record) => Some((**record).clone()),
+                TxStatus::Committed(record) if record.kind != TransactionKind::Preset => {
+                    Some((**record).clone())
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Committed Studio preset mutations in commit order.
+    pub fn committed_presets(&self) -> Vec<TaskRevisionRecord> {
+        self.transactions
+            .iter()
+            .filter_map(|t| match &t.status {
+                TxStatus::Committed(record) if record.kind == TransactionKind::Preset => {
+                    Some((**record).clone())
+                }
                 _ => None,
             })
             .collect()
@@ -575,6 +592,7 @@ mod tests {
                 build: None,
                 validation_report_sha256: "0".repeat(64),
                 committed_unix: 0,
+                preset: None,
             },
         }
     }

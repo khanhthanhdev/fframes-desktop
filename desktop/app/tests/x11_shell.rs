@@ -34,8 +34,10 @@ mod preview_fixture;
 
 const WAIT: Duration = Duration::from_secs(240);
 
-/// Window-relative positions in the 1280x800 layout.
-const PROMPT: (u32, u32) = (1078, 715);
+/// Both native tests build with the same SDK and cache directories: one at a time.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+const CHAT_TAB: (u32, u32) = (906, 162);
 const PROJECT_TAB: (u32, u32) = (969, 162);
 const UNDO_BUTTON: (u32, u32) = (1000, 470);
 
@@ -172,6 +174,37 @@ impl Telemetry {
         serde_json::from_slice(&fs::read(&self.0).ok()?).ok()
     }
 
+    /// Waits until `key(telemetry)` is present and unchanged for 1.5 s. Measured bounds
+    /// move while the layout settles (status lines appear above the controls); clicking a
+    /// bound read once, mid-layout, lands on whatever is there by then.
+    fn settled(&self, what: &str, key: impl Fn(&Value) -> Value) -> Value {
+        let deadline = Instant::now() + WAIT;
+        let mut stable: Option<(Value, Instant)> = None;
+        loop {
+            if let Some(value) = self.read() {
+                let now = key(&value);
+                if !now.is_null() {
+                    match &stable {
+                        Some((seen, since)) if *seen == now => {
+                            if since.elapsed() >= Duration::from_millis(1500) {
+                                return value;
+                            }
+                        }
+                        _ => stable = Some((now, Instant::now())),
+                    }
+                } else {
+                    stable = None;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {what} to settle; last telemetry: {:?}",
+                self.read()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    }
+
     fn wait(&self, what: &str, predicate: impl Fn(&Value) -> bool) -> Value {
         let deadline = Instant::now() + WAIT;
         loop {
@@ -222,6 +255,23 @@ fn button_centre(value: &Value, name: &str) -> (u32, u32) {
     )
 }
 
+fn click_prompt(screen: &Screen, window: &str, telemetry: &Telemetry) {
+    let measured = telemetry.settled("the prompt input bounds", |v| {
+        v["panel"]["prompt_bounds"].clone()
+    });
+    let bounds = measured["panel"]["prompt_bounds"]
+        .as_array()
+        .expect("measured prompt bounds");
+    let at = |i: usize| bounds[i].as_f64().expect("finite prompt bounds");
+    screen.click(
+        window,
+        (
+            (at(0) + at(2) / 2.).round() as u32,
+            (at(1) + at(3) / 2.).round() as u32,
+        ),
+    );
+}
+
 fn displayed(value: &Value) -> &Value {
     &value["preview"]["displayed"]
 }
@@ -233,6 +283,7 @@ fn phase(value: &Value) -> &str {
 #[test]
 #[ignore = "requires SDK_ACTIVE, Xvfb and xdotool; real Cargo compile and preview worker; scripted agent"]
 fn the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it() {
+    let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
     let sdk = PathBuf::from(std::env::var_os("SDK_ACTIVE").expect("SDK_ACTIVE"));
     assert!(
         tool_available("Xvfb") && tool_available("xdotool"),
@@ -341,8 +392,8 @@ fn the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it() {
     // to carry (serial > 0, position 3) and a known video/audio identity to replace.
     let window = screen.window();
     let original_audio = fs::read(project.join("media/cue.wav")).unwrap();
-    let ready = telemetry.wait("the build button to be measured", |v| {
-        v["buttons"]["build-preview"].is_array()
+    let ready = telemetry.settled("the build button", |v| {
+        v["buttons"]["build-preview"].clone()
     });
     screen.click(&window, button_centre(&ready, "build-preview"));
     telemetry.wait("the baseline preview to display", |v| {
@@ -364,7 +415,7 @@ fn the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it() {
     assert!(base_serial >= 3, "{before}");
 
     // Type a brief into the native prompt and send it with Enter.
-    screen.click(&window, PROMPT);
+    click_prompt(&screen, &window, &telemetry);
     screen.xdotool(&[
         "type",
         "--window",
@@ -476,11 +527,475 @@ fn the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it() {
     assert_eq!(reverted["frame_index"], 3, "{undone}");
     assert_eq!(undone["preview"]["painted_frame"], 3, "{undone}");
     // Only the worker of the displayed preview is still owned: no adapter, no tool worker.
-    assert!(
-        undone["panel"]["owned_processes"].as_u64().unwrap_or(0) <= 1,
-        "{undone}"
-    );
+    // The task's evidence workers are released when it ends; their teardown is
+    // asynchronous, so wait for it instead of sampling one instant.
+    telemetry.wait("only the displayed worker to remain owned", |v| {
+        v["panel"]["owned_processes"].as_u64().unwrap_or(0) <= 1
+    });
     // The scripted peer was started for the one task (Undo launches no agent).
     let starts = fs::read_to_string(evidence.join("starts")).unwrap_or_default();
     assert_eq!(starts.lines().count(), 1, "{starts:?}");
+}
+
+impl Screen {
+    /// A PNG of the whole X screen (xwd, converted by ffmpeg) into `$M4_NATIVE_EVIDENCE`
+    /// when that directory is set; otherwise nothing is captured.
+    fn screenshot(&self, name: &str) {
+        let Some(dir) = std::env::var_os("M4_NATIVE_EVIDENCE").map(PathBuf::from) else {
+            return;
+        };
+        fs::create_dir_all(&dir).unwrap();
+        let raw = dir.join(format!("{name}.xwd"));
+        let capture = Command::new("xwd")
+            .env("DISPLAY", &self.display)
+            .args(["-root", "-silent", "-out"])
+            .arg(&raw)
+            .status()
+            .expect("xwd");
+        assert!(capture.success(), "xwd -root");
+        let convert = Command::new("ffmpeg")
+            .args(["-y", "-loglevel", "error", "-i"])
+            .arg(&raw)
+            .arg(dir.join(format!("{name}.png")))
+            .status()
+            .expect("ffmpeg");
+        assert!(convert.success(), "ffmpeg xwd -> png");
+        let _ = fs::remove_file(raw);
+    }
+}
+
+fn scope_of(value: &Value) -> Option<&str> {
+    value["panel"]["task_scope"].as_str()
+}
+
+/// Scene scope and range scope through the real shell: the timeline's own keys select the
+/// scope, the conversation panel names it before submit, the submitted task freezes it,
+/// and the before evidence is rendered from the frozen base before the candidate's after
+/// evidence is rendered from the validated candidate. The agent is the scripted peer.
+#[test]
+#[ignore = "requires SDK_ACTIVE, Xvfb and xdotool; real Cargo compile and preview worker; scripted agent"]
+fn the_native_shell_freezes_scene_and_range_scope_and_shows_before_and_after_evidence() {
+    let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    let sdk = PathBuf::from(std::env::var_os("SDK_ACTIVE").expect("SDK_ACTIVE"));
+    assert!(
+        tool_available("Xvfb") && tool_available("xdotool"),
+        "Xvfb and xdotool are required"
+    );
+    let home = sdk
+        .ancestors()
+        .nth(3)
+        .expect("SDK_ACTIVE ends in .fframes/sdk/active")
+        .to_path_buf();
+    let manifest = studio_sdk::CompatibilityManifest::from_json_str(
+        &fs::read_to_string(sdk.join("compatibility.json")).unwrap(),
+    )
+    .unwrap();
+    let temp = tempfile::Builder::new()
+        .prefix("fft-x11s")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let project = temp.path().join("video");
+    preview_fixture::create(&project, &manifest);
+    let data = temp.path().join("data");
+    let runtime = temp.path().join("run");
+    let evidence = temp.path().join("agent");
+    for dir in [
+        data.join("fframes-studio"),
+        runtime.clone(),
+        evidence.clone(),
+    ] {
+        fs::create_dir_all(dir).unwrap();
+    }
+    // ACP children use a deliberately restricted environment; negotiate image support
+    // through the fixture root rather than inheriting this test process's environment.
+    fs::write(evidence.join("prompt-image"), "enabled\n").unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    fs::write(
+        data.join("fframes-studio/agent-adapter.json"),
+        serde_json::json!({
+            "provider": "scripted-peer",
+            "executable": python3(),
+            "args": [
+                format!("{}/tests/support/acp-agent.py", env!("CARGO_MANIFEST_DIR")),
+                evidence.to_string_lossy()
+            ],
+            "auth_env_names": [],
+            "mcp": "unsupported"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    // Two tasks; the second edit changes nothing the first one did not.
+    fs::write(
+        evidence.join("plan.json"),
+        serde_json::json!({"turns": [
+            {"text": "Adding a note.", "tool": 1, "write": {"notes.txt": "scene note\n"}},
+            {"text": "Adding another note.", "tool": 1, "write": {"notes2.txt": "range note\n"}},
+            {"text": "Holding.", "wait_file": "go", "tool": 1, "write": {"notes3.txt": "held note\n"}}
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+
+    let screen = Screen::start();
+    let telemetry = Telemetry(temp.path().join("telemetry.json"));
+    let log = fs::File::create(temp.path().join("studio.log")).unwrap();
+    let _app = spawn(
+        Command::new(env!("CARGO_BIN_EXE_fframes-studio"))
+            .args(["qualify-m3", "--project"])
+            .arg(&project)
+            .arg("--telemetry")
+            .arg(&telemetry.0)
+            .args(["--test-writer-containment", "x11-scripted-peer"])
+            .env("DISPLAY", &screen.display)
+            .env("HOME", &home)
+            .env("XDG_DATA_HOME", &data)
+            .env("XDG_RUNTIME_DIR", &runtime)
+            .env("LIBGL_ALWAYS_SOFTWARE", "1")
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    );
+    telemetry.wait("the workflow to open", |v| {
+        v["agent_workflow_open"] == true && v["sdk_ready_for_agent"] == true
+    });
+    let window = screen.window();
+    let ready = telemetry.settled("the build button", |v| {
+        v["buttons"]["build-preview"].clone()
+    });
+    screen.click(&window, button_centre(&ready, "build-preview"));
+    let built = telemetry.wait("the baseline preview to display", |v| {
+        displayed(v).is_object() && v["preview"]["status"] == "displayed"
+    });
+    let base_revision = built["displayed_revision"].as_str().unwrap().to_owned();
+
+    // Whole project is the default scope, named before any task exists.
+    let whole = telemetry.wait("the submit scope to be named", |v| {
+        v["panel"]["submit_scope"].is_string()
+    });
+    assert!(
+        whole["panel"]["submit_scope"]
+            .as_str()
+            .unwrap()
+            .starts_with("Whole project"),
+        "{whole}"
+    );
+
+    // Focus the timeline by seeking on its ruler, then `s` selects the scene at the
+    // playhead through the timeline's own key handler.
+    let laid_out = telemetry.settled("the timeline ruler", |v| v["ruler_bounds"].clone());
+    let ruler = laid_out["ruler_bounds"].as_array().unwrap();
+    let x = ruler[0].as_f64().unwrap() + ruler[2].as_f64().unwrap() * 0.1;
+    let y = ruler[1].as_f64().unwrap() + 10.;
+    screen.click(&window, (x.round() as u32, y.round() as u32));
+    screen.xdotool(&["key", "--window", &window, "s"]);
+    let scene = telemetry.wait("the scene scope to be named", |v| {
+        v["panel"]["submit_scope"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("Scene "))
+    });
+    let scene_label = scene["panel"]["submit_scope"].as_str().unwrap().to_owned();
+    screen.screenshot("scene-selected-before-submit");
+    // Validated changes wait for the user: the review shows before and after evidence.
+    screen.click(&window, PROJECT_TAB);
+    let policy = telemetry.settled("the review-policy button", |v| {
+        v["panel"]["buttons"]["agent-policy"].clone()
+    });
+    screen.click(&window, button_centre(&policy["panel"], "agent-policy"));
+    telemetry.wait("manual review to be selected", |v| {
+        v["panel"]["review_policy"] == "ManualReview"
+    });
+    screen.click(&window, CHAT_TAB);
+
+    click_prompt(&screen, &window, &telemetry);
+    screen.xdotool(&[
+        "type",
+        "--window",
+        &window,
+        "--clearmodifiers",
+        "tighten this scene",
+    ]);
+    screen.xdotool(&["key", "Return"]);
+
+    // The submitted task froze exactly the scene the panel named, and its before
+    // evidence is rendered from the displayed (frozen base) revision.
+    let frozen = telemetry.wait("the frozen scene scope with before evidence", |v| {
+        scope_of(v) == Some(scene_label.as_str())
+            && v["panel"]["before_evidence"]["state"] == "Ready"
+    });
+    let before = &frozen["panel"]["before_evidence"];
+    assert!(
+        base_revision.starts_with(before["revision"].as_str().unwrap()),
+        "before evidence must be rendered from the displayed revision: {frozen}"
+    );
+    assert!(
+        before["artifacts"]
+            .as_array()
+            .is_some_and(|a| !a.is_empty()),
+        "{frozen}"
+    );
+    screen.screenshot("scene-task-frozen-before-evidence");
+    let review = telemetry.wait("the candidate to await review with after evidence", |v| {
+        phase(v) == "Waiting for your review" && v["panel"]["after_evidence"]["state"] == "Ready"
+    });
+    let after = &review["panel"]["after_evidence"];
+    assert_ne!(
+        after["revision"], before["revision"],
+        "the candidate is a different revision than the frozen base: {review}"
+    );
+    let frames_of = |view: &Value| -> Vec<(Value, Value)> {
+        view["artifacts"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| (a["label"].clone(), a["frames"].clone()))
+            .collect()
+    };
+    assert_eq!(
+        frames_of(after),
+        frames_of(before),
+        "after evidence covers the same frames as before: {review}"
+    );
+    let expected_thumbnails = before["artifacts"].as_array().unwrap().len()
+        + after["artifacts"].as_array().unwrap().len();
+    telemetry.wait("before/after evidence thumbnails to load", |v| {
+        v["panel"]["evidence_preview_count"]
+            .as_u64()
+            .is_some_and(|count| count as usize >= expected_thumbnails)
+    });
+    assert!(
+        !project.join("notes.txt").exists(),
+        "nothing is applied before review"
+    );
+    screen.screenshot("scene-task-review-before-and-after");
+    let review = telemetry.settled("the Apply button", |v| {
+        v["panel"]["buttons"]["agent-apply"].clone()
+    });
+    screen.click(&window, button_centre(&review["panel"], "agent-apply"));
+    telemetry.wait("the scene task acceptance", |v| phase(v) == "Accepted");
+    assert!(project.join("notes.txt").is_file());
+    telemetry.wait("the accepted preview to display", |v| {
+        v["awaiting_preview"] == false
+            && v["panel"]["handoff"] == "Displayed"
+            && v["displayed_revision"].as_str() != Some(base_revision.as_str())
+    });
+
+    // The range task uses the default AutoApply policy. Its terminal task snapshot must
+    // already have both evidence images, not merely artifact references that were just
+    // released during finalization.
+    screen.click(&window, PROJECT_TAB);
+    let policy = telemetry.settled("the review-policy button", |v| {
+        v["panel"]["buttons"]["agent-policy"].clone()
+    });
+    screen.click(&window, button_centre(&policy["panel"], "agent-policy"));
+    telemetry.wait("AutoApply to be selected", |v| {
+        v["panel"]["review_policy"] == "AutoApply"
+    });
+    screen.click(&window, CHAT_TAB);
+
+    // A frame range from the playhead with the timeline's own bracket keys. The layout
+    // moved with the hand-off: measure the ruler again.
+    let laid_out = telemetry.settled("the timeline ruler", |v| v["ruler_bounds"].clone());
+    let ruler = laid_out["ruler_bounds"].as_array().unwrap();
+    let x = ruler[0].as_f64().unwrap() + ruler[2].as_f64().unwrap() * 0.1;
+    let y = ruler[1].as_f64().unwrap() + 10.;
+    screen.click(&window, (x.round() as u32, y.round() as u32));
+    screen.xdotool(&["key", "--window", &window, "bracketleft"]);
+    let end_x = ruler[0].as_f64().unwrap() + ruler[2].as_f64().unwrap() * 0.2;
+    screen.click(&window, (end_x.round() as u32, y.round() as u32));
+    screen.xdotool(&["key", "--window", &window, "bracketright"]);
+    let range = telemetry.wait("the non-empty range scope to be named", |v| {
+        let selected = &v["timeline_selection"]["range"];
+        selected[0].as_u64() < selected[1].as_u64()
+            && v["panel"]["submit_scope"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("Frames ["))
+    });
+    let range_label = range["panel"]["submit_scope"].as_str().unwrap().to_owned();
+    screen.screenshot("range-selected-before-submit");
+    click_prompt(&screen, &window, &telemetry);
+    screen.xdotool(&[
+        "type",
+        "--window",
+        &window,
+        "--clearmodifiers",
+        "retime this range",
+    ]);
+    screen.xdotool(&["key", "Return"]);
+    let frozen = telemetry.wait("the frozen range scope with before evidence", |v| {
+        scope_of(v) == Some(range_label.as_str())
+            && v["panel"]["before_evidence"]["state"] == "Ready"
+    });
+    assert_eq!(frozen["panel"]["task_scope"], range_label, "{frozen}");
+    screen.screenshot("range-task-frozen-before-evidence");
+    telemetry.wait("the AutoApply range candidate evidence", |v| {
+        scope_of(v) == Some(range_label.as_str())
+            && v["panel"]["after_evidence"]["state"] == "Ready"
+    });
+    let range_evidence = telemetry.read().expect("range evidence telemetry");
+    let range_before = &range_evidence["panel"]["before_evidence"];
+    let range_after = &range_evidence["panel"]["after_evidence"];
+    assert_ne!(
+        range_before["revision"], range_after["revision"],
+        "AutoApply evidence names the frozen base and candidate revisions"
+    );
+    assert_eq!(
+        frames_of(range_before),
+        frames_of(range_after),
+        "AutoApply evidence covers the same selected scope frames"
+    );
+    let expected_thumbnails = range_before["artifacts"].as_array().unwrap().len()
+        + range_after["artifacts"].as_array().unwrap().len();
+    let accepted = telemetry.wait("AutoApply terminal evidence thumbnails", |v| {
+        phase(v) == "Accepted"
+            && v["panel"]["after_evidence"]["state"] == "Released"
+            && v["panel"]["evidence_preview_count"]
+                .as_u64()
+                .is_some_and(|count| count as usize >= expected_thumbnails)
+    });
+    assert!(
+        accepted["panel"]["before_evidence"]["artifacts"].is_array()
+            && accepted["panel"]["after_evidence"]["artifacts"].is_array(),
+        "the terminal AutoApply task retains both evidence references: {accepted}"
+    );
+    screen.screenshot("range-task-review-before-and-after");
+    assert!(project.join("notes2.txt").is_file());
+
+    // The stale-scope case needs a candidate that waits for an explicit review action.
+    screen.click(&window, PROJECT_TAB);
+    let policy = telemetry.settled("the review-policy button", |v| {
+        v["panel"]["buttons"]["agent-policy"].clone()
+    });
+    screen.click(&window, button_centre(&policy["panel"], "agent-policy"));
+    telemetry.wait("ManualReview to be selected", |v| {
+        v["panel"]["review_policy"] == "ManualReview"
+    });
+    screen.click(&window, CHAT_TAB);
+
+    // Stale queued scope: a held task runs, a scoped brief queues behind it, the displayed
+    // preview is rebuilt (a new identity), and the queued scope is marked stale and then
+    // refused when its turn comes. It is never retargeted and never starts an agent.
+    telemetry.wait("the accepted range preview to display", |v| {
+        v["awaiting_preview"] == false && v["panel"]["handoff"] == "Displayed"
+    });
+    let laid_out = telemetry.settled("the timeline ruler", |v| v["ruler_bounds"].clone());
+    let ruler = laid_out["ruler_bounds"].as_array().unwrap();
+    let x = ruler[0].as_f64().unwrap() + ruler[2].as_f64().unwrap() * 0.1;
+    let y = ruler[1].as_f64().unwrap() + 10.;
+    screen.click(&window, (x.round() as u32, y.round() as u32));
+    screen.xdotool(&["key", "--window", &window, "s"]);
+    telemetry.wait("a scene scope for the held task", |v| {
+        v["panel"]["submit_scope"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("Scene "))
+    });
+    click_prompt(&screen, &window, &telemetry);
+    screen.xdotool(&[
+        "type",
+        "--window",
+        &window,
+        "--clearmodifiers",
+        "hold this scene",
+    ]);
+    screen.xdotool(&["key", "Return"]);
+    telemetry.wait("the held task to start", |v| {
+        v["panel"]["task_scope"]
+            .as_str()
+            .is_some_and(|s| s.starts_with("Scene "))
+            && phase(v) != "Accepted"
+            && phase(v) != "Waiting for your review"
+    });
+    click_prompt(&screen, &window, &telemetry);
+    screen.xdotool(&[
+        "type",
+        "--window",
+        &window,
+        "--clearmodifiers",
+        "queued scoped brief",
+    ]);
+    screen.xdotool(&["key", "Return"]);
+    telemetry.wait("the scoped brief to queue", |v| v["panel"]["queue"] == 1);
+    let build = telemetry.settled("the build button", |v| {
+        v["buttons"]["build-preview"].clone()
+    });
+    screen.click(&window, button_centre(&build, "build-preview"));
+    let stale = telemetry.wait("the queued scope to be marked stale", |v| {
+        v["panel"]["queue_stale"] == 1
+    });
+    screen.screenshot("stale-queued-scope");
+    assert_eq!(stale["panel"]["queue"], 1, "{stale}");
+    fs::write(evidence.join("go"), "go").unwrap();
+    telemetry.wait("the held task to await review", |v| {
+        phase(v) == "Waiting for your review"
+    });
+    let review = telemetry.settled("the Apply button", |v| {
+        v["panel"]["buttons"]["agent-apply"].clone()
+    });
+    screen.click(&window, button_centre(&review["panel"], "agent-apply"));
+    telemetry.wait("the stale scope to be refused", |v| {
+        v["panel"]["queue"] == 0
+            && v["panel"]["error_codes"]
+                .as_array()
+                .is_some_and(|c| c.iter().any(|c| c == "stale_task_scope"))
+    });
+    let refused = telemetry.settled("the stale-scope refusal panel", |v| {
+        serde_json::json!({
+            "queue": v["panel"]["queue"],
+            "error_codes": v["panel"]["error_codes"],
+        })
+    });
+    assert_eq!(refused["panel"]["queue"], 0, "{refused}");
+    assert!(
+        refused["panel"]["error_codes"]
+            .as_array()
+            .is_some_and(|codes| codes.iter().any(|code| code == "stale_task_scope")),
+        "{refused}"
+    );
+    screen.screenshot("stale-queued-scope-refused");
+    let prompts = fs::read_to_string(evidence.join("prompts.jsonl")).unwrap();
+    assert_eq!(
+        prompts.lines().count(),
+        3,
+        "no agent prompt for the stale brief: {refused}"
+    );
+    assert!(!prompts.contains("queued scoped brief"), "{prompts}");
+    for prompt in prompts
+        .lines()
+        .map(|line| serde_json::from_str::<Value>(line).unwrap())
+    {
+        let text = prompt["text"].as_str().expect("recorded text prompt");
+        assert!(
+            text.contains("sha256"),
+            "the text identifies the evidence: {prompt}"
+        );
+        assert!(
+            !text.contains("base64") && !text.contains("data:image"),
+            "image data is never embedded in prompt text: {prompt}"
+        );
+        let images = prompt["image_blocks"].as_array().expect("image metadata");
+        assert_eq!(
+            images.len(),
+            text.matches("(app artifact art-").count(),
+            "before selected/boundary images are attached: {prompt}"
+        );
+        assert!(
+            images.iter().all(|image| {
+                image["mime_type"] == "image/png"
+                    && image["data_length"].as_u64().is_some_and(|n| n > 0)
+                    && image["decoded_bytes"].as_u64().is_some_and(|n| n > 0)
+            }),
+            "only bounded PNG image blocks are sent: {prompt}"
+        );
+        let total_bytes: u64 = images
+            .iter()
+            .map(|image| image["decoded_bytes"].as_u64().unwrap())
+            .sum();
+        assert!(
+            total_bytes <= 4 * 1024 * 1024,
+            "image prompt budget: {prompt}"
+        );
+    }
 }

@@ -25,16 +25,18 @@ use agent_client_protocol::{
         ProtocolVersion,
         v1::{
             AuthenticateRequest, CancelNotification, ClientCapabilities, ContentBlock, EnvVariable,
-            Implementation, InitializeRequest, InitializeResponse, LoadSessionRequest, McpServer,
-            McpServerStdio, NewSessionRequest, PromptRequest, PromptResponse,
-            RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
-            ResumeSessionRequest, SelectedPermissionOutcome, SessionConfigKind,
-            SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOptions,
-            SessionModeState, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
-            SetSessionModeRequest, StopReason, TextContent, ToolCallStatus,
+            ImageContent, Implementation, InitializeRequest, InitializeResponse,
+            LoadSessionRequest, McpServer, McpServerStdio, NewSessionRequest, PromptRequest,
+            PromptResponse, RequestPermissionOutcome, RequestPermissionRequest,
+            RequestPermissionResponse, ResumeSessionRequest, SelectedPermissionOutcome,
+            SessionConfigKind, SessionConfigOption, SessionConfigOptionValue,
+            SessionConfigSelectOptions, SessionModeState, SessionNotification, SessionUpdate,
+            SetSessionConfigOptionRequest, SetSessionModeRequest, StopReason, TextContent,
+            ToolCallStatus,
         },
     },
 };
+use base64::{Engine as _, engine::general_purpose::STANDARD};
 use futures::{StreamExt, channel::mpsc, future::Either};
 use parking_lot::{Condvar, Mutex};
 use std::{
@@ -53,6 +55,8 @@ use studio_bootstrap::{
 
 const CLIENT_NAME: &str = "fframes-studio";
 const MAX_PROMPT_BYTES: usize = 256 * 1024;
+const MAX_PROMPT_IMAGE_COUNT: usize = 3;
+const MAX_PROMPT_IMAGE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_PENDING_PERMISSIONS: usize = 16;
 const FAILURE_DETAIL_BYTES: usize = 2048;
 /// Host commands accepted but not yet executed by the connection task.
@@ -196,7 +200,7 @@ pub enum DriverError {
 enum Command {
     Prompt {
         turn: u64,
-        text: String,
+        content: Vec<ContentBlock>,
     },
     /// Nudges the loop to look at latched state such as a pending cancel.
     Wake,
@@ -212,6 +216,18 @@ enum Command {
         key: u64,
     },
     Shutdown,
+}
+
+/// A bounded PNG attachment for an ACP prompt. The image is never added to the driver's
+/// text transcript or persisted conversation log.
+pub struct PromptImage {
+    data: Vec<u8>,
+}
+
+impl PromptImage {
+    pub fn png(data: Vec<u8>) -> Self {
+        Self { data }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1735,21 +1751,18 @@ async fn command_loop(
             }
             Either::Left((Some(command), _)) => match command {
                 Command::Wake => {}
-                Command::Prompt { turn, text } => {
+                Command::Prompt { turn, content } => {
                     let session = shared.core.lock().session.clone().ok_or_else(|| {
                         AgentFailure::new(FailureKind::Internal, Phase::Idle, "no session")
                     })?;
                     let sh = shared.clone();
-                    cx.send_request(PromptRequest::new(
-                        session,
-                        vec![ContentBlock::Text(TextContent::new(text))],
-                    ))
-                    // Runs in dispatch order, so updates after the response are late.
-                    .on_receiving_result(move |result| {
-                        sh.on_prompt_result(turn, result);
-                        async { Ok(()) }
-                    })
-                    .map_err(|e| internal(shared, e))?;
+                    cx.send_request(PromptRequest::new(session, content))
+                        // Runs in dispatch order, so updates after the response are late.
+                        .on_receiving_result(move |result| {
+                            sh.on_prompt_result(turn, result);
+                            async { Ok(()) }
+                        })
+                        .map_err(|e| internal(shared, e))?;
                 }
                 Command::SetMode { raw, label, key } => {
                     let session = shared.core.lock().session.clone().unwrap_or_default();
@@ -2288,15 +2301,59 @@ impl AcpDriver {
         }
     }
 
-    /// Starts one prompt turn; returns its turn id. Text only: images, resources and
-    /// MCP servers are never sent, so adapters see no capability beyond text.
+    /// Starts one text prompt turn; returns its turn id.
     pub fn prompt(&self, text: &str) -> Result<u64, DriverError> {
+        self.prompt_with_images(text, Vec::new())
+    }
+
+    /// Starts a text prompt with bounded PNG evidence. Image content is rejected unless
+    /// the adapter negotiated ACP's image prompt capability.
+    pub fn prompt_with_images(
+        &self,
+        text: &str,
+        images: Vec<PromptImage>,
+    ) -> Result<u64, DriverError> {
         if text.trim().is_empty() {
             return Err(DriverError::InvalidPrompt("prompt is empty"));
         }
         if text.len() > MAX_PROMPT_BYTES {
             return Err(DriverError::InvalidPrompt("prompt exceeds the size limit"));
         }
+        if images.len() > MAX_PROMPT_IMAGE_COUNT {
+            return Err(DriverError::InvalidPrompt("too many prompt images"));
+        }
+        let image_bytes = images
+            .iter()
+            .try_fold(0usize, |total, image| total.checked_add(image.data.len()));
+        let Some(image_bytes) = image_bytes.filter(|bytes| *bytes <= MAX_PROMPT_IMAGE_BYTES) else {
+            return Err(DriverError::InvalidPrompt(
+                "prompt images exceed the size limit",
+            ));
+        };
+        if images.iter().any(|image| image.data.is_empty()) {
+            return Err(DriverError::InvalidPrompt("prompt image is empty"));
+        }
+        if images
+            .iter()
+            .any(|image| !image.data.starts_with(b"\x89PNG\r\n\x1a\n"))
+        {
+            return Err(DriverError::InvalidPrompt("prompt image is not a PNG"));
+        }
+        if !images.is_empty()
+            && !self
+                .initialized()
+                .is_some_and(|info| info.capabilities.prompt_image)
+        {
+            return Err(DriverError::InvalidPrompt(
+                "the adapter did not negotiate image prompts",
+            ));
+        }
+        let mut content = Vec::with_capacity(images.len() + 1);
+        content.push(ContentBlock::Text(TextContent::new(text)));
+        content.extend(images.into_iter().map(|image| {
+            ContentBlock::Image(ImageContent::new(STANDARD.encode(image.data), "image/png"))
+        }));
+        debug_assert!(image_bytes <= MAX_PROMPT_IMAGE_BYTES);
         let turn = {
             let mut core = self.shared.core.lock();
             if let Some(failure) = &core.failure {
@@ -2327,10 +2384,7 @@ impl AcpDriver {
         self.shared
             .watchdog
             .arm(Phase::Prompt, self.shared.limits.prompt_timeout);
-        if let Err(error) = self.send(Command::Prompt {
-            turn,
-            text: text.to_owned(),
-        }) {
+        if let Err(error) = self.send(Command::Prompt { turn, content }) {
             // Never leave a phantom turn that nothing will ever answer.
             let mut core = self.shared.core.lock();
             if core.turn.as_ref().map(|t| t.id) == Some(turn) {

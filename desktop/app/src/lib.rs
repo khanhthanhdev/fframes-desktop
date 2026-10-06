@@ -5,6 +5,7 @@ pub mod audio_service;
 pub mod build_service;
 pub mod candidate_runner;
 pub mod conversation_panel;
+mod evidence_preview;
 pub mod frame_image;
 pub mod selection_spike;
 pub mod setup_view;
@@ -22,6 +23,7 @@ pub use text_input::TextInput;
 pub use worker_client::WorkerClient;
 
 pub mod presentation_stress;
+pub mod preset_panel;
 pub mod preview_coordinator;
 pub mod preview_element;
 pub mod preview_worker_client;

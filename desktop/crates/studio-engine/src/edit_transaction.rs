@@ -272,6 +272,10 @@ pub fn mode_conflicts(_root: &Path, _deltas: &[FileDelta]) -> Vec<PathConflict> 
 pub enum TransactionKind {
     Apply,
     Undo,
+    /// A Studio-originated preset snapshot mutation (see [`crate::preset_state`]). It
+    /// shares the durable file-set protocol but is never accepted task history: replay
+    /// keeps it out of [`crate::journal::TaskReplay::committed`].
+    Preset,
 }
 
 /// A validated task revision: what one accepted agent edit (or Undo) did to the source.
@@ -310,6 +314,10 @@ pub struct TaskRevisionRecord {
     pub build: Option<BuildIdentity>,
     pub validation_report_sha256: String,
     pub committed_unix: u64,
+    /// Present exactly on [`TransactionKind::Preset`] records: what the preset mutation
+    /// was. Older records never carry it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preset: Option<crate::preset_state::PresetProvenance>,
 }
 
 impl TaskRevisionRecord {
@@ -559,6 +567,11 @@ pub enum Boundary {
     Projection {
         after: bool,
     },
+    /// Controller-side: the manifest's preset reference is replaced after a preset
+    /// file set committed.
+    Manifest {
+        after: bool,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -728,6 +741,8 @@ pub struct RecordSeed {
     /// bits the edit saw and left: the plan refuses when a touched file's bits are no
     /// longer the ones the edit left, and restores the original's exact bits.
     pub reverses: Vec<FileDelta>,
+    /// Provenance of a Studio preset mutation.
+    pub preset: Option<crate::preset_state::PresetProvenance>,
 }
 
 fn split_path(path: &str) -> (&str, &str) {
@@ -1061,6 +1076,7 @@ pub fn plan(
         build: seed.build,
         validation_report_sha256: seed.validation_report_sha256,
         committed_unix: 0,
+        preset: seed.preset,
     };
     Ok(TransactionIntent {
         format: TASK_FORMAT,

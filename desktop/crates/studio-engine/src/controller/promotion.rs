@@ -316,6 +316,7 @@ impl Controller {
             validation_report_sha256: String::new(),
             remove_dirs: Vec::new(),
             reverses: Vec::new(),
+            preset: None,
         };
         let publication = Publication {
             captured,
@@ -592,6 +593,7 @@ impl Controller {
             validation_report_sha256: String::new(),
             remove_dirs: preparation.remove_dirs.clone(),
             reverses: preparation.reverses.clone(),
+            preset: None,
         };
         let publication = Publication {
             captured,
@@ -669,6 +671,17 @@ impl Controller {
         intent: &TransactionIntent,
         generation: u64,
     ) -> Result<Promotion, EngineError> {
+        let record = self.run_intent(intent)?;
+        self.after_commit(&record, generation)
+    }
+
+    /// Runs one planned file-set transaction through the durable executor and maps its
+    /// terminal outcome. Returns the committed record; the caller decides what the
+    /// commit means (task history for Apply/Undo, nothing for a Studio preset change).
+    pub(super) fn run_intent(
+        &mut self,
+        intent: &TransactionIntent,
+    ) -> Result<TaskRevisionRecord, EngineError> {
         let hooks = self.hooks.clone();
         let outcome = {
             let mut executor = Executor::new(
@@ -689,7 +702,7 @@ impl Controller {
                     self.recovery_notice =
                         Some(format!("{message}. Source changes are suspended."));
                 }
-                self.after_commit(&record, generation)
+                Ok(*record)
             }
             Ok(Outcome::RolledBack(reason)) => Err(PromotionError::RolledBack(reason).into()),
             Ok(Outcome::Conflicted(report)) => {
@@ -712,7 +725,10 @@ impl Controller {
 
     /// A controller-side boundary. An injected crash suspends the controller like a
     /// process death; an injected I/O fault is returned for the caller to handle.
-    fn controller_boundary(&mut self, boundary: Boundary) -> Result<Option<String>, EngineError> {
+    pub(super) fn controller_boundary(
+        &mut self,
+        boundary: Boundary,
+    ) -> Result<Option<String>, EngineError> {
         match self.hooks.at(&boundary) {
             Ok(()) => Ok(None),
             Err(Fault::Crash) => {

@@ -16,7 +16,7 @@ use studio_agent_spike::{
     driver::{AgentCapabilityInfo, AgentOptions, PermissionChoice, ToolStatus},
 };
 use studio_engine::{
-    AgentTaskId, DraftState, ReviewPolicy, TaskState,
+    AgentTaskId, DraftState, ReviewPolicy, TaskScope, TaskState,
     candidate_validation::{ChangedPath, FailureKind, ReportDiagnostic, ValidationStage},
     edit_transaction::RetainedVariant,
 };
@@ -103,7 +103,7 @@ pub enum RowKind {
         text: String,
     },
     Error(StructuredError),
-    Validation(ValidationCard),
+    Validation(Box<ValidationCard>),
     Changes(ChangeCard),
     Outcome(OutcomeCard),
 }
@@ -207,6 +207,12 @@ pub struct StructuredError {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CoverageView {
     pub total_frames: usize,
+    /// The scope requested at submit (its label) and its half-open interval, kept apart
+    /// from what validation actually rendered and inspected below.
+    pub requested_scope: String,
+    pub requested_interval: Option<[usize; 2]>,
+    pub requested_frames: Vec<usize>,
+    pub rendered_frame_indexes: Vec<usize>,
     pub rendered_frames: usize,
     pub inspected_frames: usize,
     pub boundary_frames: usize,
@@ -250,6 +256,54 @@ pub struct ValidationCard {
     /// Short digest of the compile that validated the candidate.
     pub build_key: Option<String>,
     pub candidate: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvidenceState {
+    /// Being rendered on a background worker.
+    Pending,
+    Ready,
+    /// Could not be produced; `EvidenceView::note` says why. Never a placeholder image.
+    Unavailable,
+    /// The owning task ended; its app-owned artifacts were removed.
+    Released,
+}
+
+/// Which evidence render a background-worker failure belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EvidenceKind {
+    /// The frozen task base: part of the first prompt's context.
+    Before,
+    /// The validated candidate, rendered at the same frame indexes while it awaits review.
+    After,
+}
+
+/// One app-owned PNG artifact (no path: the file lives in the app's artifact store and
+/// dies with its task).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceArtifact {
+    /// `selected`, `before-boundary` or `after-boundary`.
+    pub label: String,
+    /// The compiled frames rendered into the artifact (a strip lists several).
+    pub frames: Vec<usize>,
+    pub id: String,
+    pub bytes: u64,
+    pub sha256: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Actual frames rendered from one immutable revision (the frozen task base for the
+/// before evidence, the validated candidate for the after evidence). Never predicted
+/// pixels.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceView {
+    pub state: EvidenceState,
+    /// Short source revision the artifacts were rendered from.
+    pub revision: String,
+    pub artifacts: Vec<EvidenceArtifact>,
+    pub note: Option<String>,
 }
 
 /// Changed-file summary of a candidate against its task base.
@@ -304,6 +358,8 @@ pub enum TaskPhase {
     Repairing,
     /// Manual review: the validated candidate is retained for Apply/discard/export.
     AwaitingReview,
+    /// Automatic Apply waits for truthful candidate evidence to settle.
+    AwaitingEvidence,
     /// The short uncancellable publication boundary.
     Promoting,
     Accepted,
@@ -338,6 +394,7 @@ impl TaskPhase {
             Self::Validating => "Validating",
             Self::Repairing => "Repairing",
             Self::AwaitingReview => "Waiting for your review",
+            Self::AwaitingEvidence => "Capturing candidate evidence",
             Self::Promoting => "Applying",
             Self::Accepted => "Accepted",
             Self::Conflict => "Conflict",
@@ -397,6 +454,16 @@ pub struct TaskView {
     pub brief: String,
     /// Short source-base revision the task was frozen against.
     pub source_base: String,
+    /// Requested whole-project/scene/range scope frozen at submit.
+    pub scope: TaskScope,
+    /// Actual frames of the frozen source base around the scope; `None` for whole-project
+    /// tasks submitted without a displayed compiled timeline.
+    pub before: Option<EvidenceView>,
+    /// Actual frames of the validated candidate at the same frame indexes.
+    pub after: Option<EvidenceView>,
+    /// Visible when the evidence reaches the agent only as references: this build never
+    /// sends image blocks, whatever the adapter advertises.
+    pub image_limitation: Option<String>,
     pub draft: PathBuf,
     /// Review policy frozen when this task started; later changes affect later tasks only.
     pub review_policy: ReviewPolicy,
@@ -421,6 +488,8 @@ pub struct QueuedBrief {
     pub id: u64,
     pub summary: String,
     pub queued_unix: u64,
+    pub scope: Option<String>,
+    pub stale_scope: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

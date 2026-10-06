@@ -6,7 +6,8 @@ use crate::{
     agent_task::{ScopeFacts, validate_brief},
     app_paths::AppPaths,
     candidate_validation::{
-        CapturedCandidate, FailureKind, NextStep, ValidationReport, capture_candidate, next_step,
+        CapturedCandidate, FailureKind, NextStep, ValidationReport,
+        capture_candidate_scoped_observed, next_step,
     },
     edit_transaction::{
         ApplyGate, ConflictReport, Executor, Interrupt, NoHooks, RecoveryReport, TransactionHooks,
@@ -26,7 +27,9 @@ use std::{
 };
 use studio_project::{OpenProject, checkpoint::Checkpoints, revision::FileKind};
 
+mod preset;
 mod promotion;
+pub use preset::{PresetMutation, PresetOutcome};
 pub use promotion::{CompletionOutcome, Promotion, UndoPreparation};
 
 /// What replaying the task journal found and did on open, and what still blocks
@@ -304,7 +307,7 @@ impl Controller {
             ));
         }
         let recovery_notice = (!notices.is_empty()).then(|| notices.join(" "));
-        Ok(Self {
+        let mut controller = Self {
             project,
             record,
             store,
@@ -332,7 +335,9 @@ impl Controller {
             agent_scope: None,
             agent,
             drafts,
-        })
+        };
+        controller.heal_manifest_reference();
+        Ok(controller)
     }
     /// Read-only look at everything app-local that decides whether this project can be
     /// opened: the database (version), the lifecycle journal and the task journal
@@ -721,6 +726,16 @@ impl Controller {
         self.begin_agent_task_observed(brief, |_| {})
     }
 
+    /// Starts a task with the exact compiled scope captured by the native UI at submit.
+    /// The scope is checked against the current project/source before refreshing the draft.
+    pub fn begin_agent_task_scoped(
+        &mut self,
+        brief: &str,
+        scope: crate::TaskScope,
+    ) -> Result<AgentTaskContext, EngineError> {
+        self.begin_agent_task_scoped_observed(brief, Some(scope), |_| {})
+    }
+
     /// [`Self::begin_agent_task`] reporting its internal steps: `agent_scope_checked`
     /// fires after the previous scope was sealed and observed empty, immediately before
     /// the draft is refreshed.
@@ -729,15 +744,48 @@ impl Controller {
         brief: &str,
         observe: impl Fn(&str),
     ) -> Result<AgentTaskContext, EngineError> {
+        self.begin_agent_task_scoped_observed(brief, None, observe)
+    }
+
+    /// Shared implementation for legacy whole-project and revision-bound scoped starts.
+    pub fn begin_agent_task_scoped_observed(
+        &mut self,
+        brief: &str,
+        submitted_scope: Option<crate::TaskScope>,
+        observe: impl Fn(&str),
+    ) -> Result<AgentTaskContext, EngineError> {
         let brief = validate_brief(brief)?;
         self.reconcile()?;
-        let reservation = self.agent.reserve()?;
         let base = self.checkpoints.capture(&self.project.root)?;
         if base != self.project.inventory.revision {
             // The source moved between the scan and the capture; retry.
             return Err(crate::StateError::StaleResult.into());
         }
         let source_base = TaskSourceBase::new(base);
+        let mut scope = match submitted_scope {
+            Some(scope) => {
+                scope.validate()?;
+                if scope.project_id != String::from(self.project.manifest.project_id.clone())
+                    || scope.source_revision != source_base.revision().as_str()
+                {
+                    return Err(crate::TaskScopeError::Identity.into());
+                }
+                scope
+            }
+            None => crate::TaskScope::whole_project(
+                String::from(self.project.manifest.project_id.clone()),
+                source_base.revision().as_str(),
+            ),
+        };
+        if scope.style_snapshot.is_none() {
+            scope.style_snapshot =
+                crate::preset_state::style_identity(&self.project.root, &self.project.inventory);
+        }
+        if scope.compiled.is_some() {
+            scope.resolve_scene_sources(&self.project.root, &self.project.inventory.files)?;
+            scope.validate()?;
+        }
+        let reservation = self.agent.reserve()?;
         // The previous task's scope must not be able to spawn while the draft is checked
         // and refreshed: seal it (serialized with every spawn, including clones held by
         // background threads) before looking at it. A new scope is only handed out after
@@ -760,6 +808,7 @@ impl Controller {
         let context = AgentTaskContext {
             identity: reservation.identity,
             source_base,
+            scope,
             prior_checkpoint: self.state().accepted().clone(),
             assets: files
                 .iter()
@@ -879,7 +928,14 @@ impl Controller {
         ticket: CaptureTicket,
     ) -> Result<CapturedCandidate, EngineError> {
         self.agent.check_ticket(&ticket)?;
-        let captured = capture_candidate(&ticket, &self.checkpoints)?;
+        let scope = self
+            .agent
+            .validate(ticket.identity())?
+            .context()
+            .scope
+            .clone();
+        let captured =
+            capture_candidate_scoped_observed(&ticket, &self.checkpoints, scope, &mut |_| {})?;
         self.agent.record_candidate(
             ticket,
             captured.candidate().clone(),

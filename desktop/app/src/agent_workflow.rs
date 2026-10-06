@@ -37,6 +37,8 @@ pub use model::*;
 pub use tools::BuildSettings;
 
 use actor::{Actor, Msg};
+use fframes_studio_protocol::PreviewIdentity;
+use gpui::RenderImage;
 use jobs::Gate;
 use log::{LogError, RowLimits, RowStore};
 use parking_lot::{Condvar, Mutex};
@@ -56,7 +58,8 @@ use studio_agent_spike::{
 };
 use studio_bootstrap::{ProcessTreeManager, WriterOwnership};
 use studio_engine::{
-    AgentTaskId, Controller, ReviewPolicy, agent_task::validate_brief, app_paths::AppPaths,
+    AgentTaskId, Controller, ReviewPolicy, TaskScope, agent_task::validate_brief,
+    app_paths::AppPaths,
 };
 use studio_project::ProjectId;
 
@@ -179,6 +182,8 @@ pub enum WorkflowError {
     SdkUnavailable,
     #[error("{0}")]
     InvalidBrief(String),
+    #[error("invalid task scope: {0}")]
+    InvalidScope(String),
     #[error("{} briefs are already queued", MAX_QUEUED_BRIEFS)]
     QueueFull,
     #[error("that permission request is not current (stale or from another agent session)")]
@@ -223,6 +228,59 @@ pub(crate) struct Settings {
     pub tools: Option<ToolSettings>,
 }
 
+/// Presentation-only thumbnails for the single task currently shown in the workflow.
+/// They intentionally stay outside `WorkflowSnapshot`, which is serialized and logged.
+#[derive(Default)]
+struct EvidenceImageCache {
+    task: Option<AgentTaskId>,
+    encoded_bytes: usize,
+    images: HashMap<String, Option<Arc<RenderImage>>>,
+}
+
+impl EvidenceImageCache {
+    fn begin_task(&mut self, task: AgentTaskId) {
+        self.task = Some(task);
+        self.encoded_bytes = 0;
+        self.images.clear();
+    }
+
+    /// Reserves an entry and returns its read budget. Failed/expired artifacts remain
+    /// reserved so repeated snapshots cannot retry them without bound.
+    fn reserve(&mut self, task: &AgentTaskId, id: &str, bytes: u64) -> Option<usize> {
+        const MAX_IMAGES: usize = 6;
+        const MAX_ENCODED_BYTES: usize = crate::evidence_preview::MAX_ENCODED_BYTES;
+        let bytes = usize::try_from(bytes).ok()?;
+        if self.task.as_ref() != Some(task)
+            || self.images.contains_key(id)
+            || self.images.len() >= MAX_IMAGES
+            || bytes == 0
+            || bytes > MAX_ENCODED_BYTES.saturating_sub(self.encoded_bytes)
+        {
+            return None;
+        }
+        self.encoded_bytes += bytes;
+        self.images.insert(id.to_owned(), None);
+        Some(bytes)
+    }
+
+    fn complete(&mut self, task: &AgentTaskId, id: &str, image: Arc<RenderImage>) -> bool {
+        if self.task.as_ref() != Some(task) {
+            return false;
+        }
+        let Some(slot) = self.images.get_mut(id) else {
+            return false;
+        };
+        *slot = Some(image);
+        true
+    }
+
+    fn image(&self, task: &AgentTaskId, id: &str) -> Option<Arc<RenderImage>> {
+        (self.task.as_ref() == Some(task))
+            .then(|| self.images.get(id).and_then(Clone::clone))
+            .flatten()
+    }
+}
+
 pub(crate) struct Shared {
     pub project: ProjectId,
     pub controller: Arc<Mutex<Controller>>,
@@ -239,6 +297,8 @@ pub(crate) struct Shared {
     pub job_faults: Option<JobFaults>,
     pub settings: Mutex<Settings>,
     pub snapshot: Mutex<Arc<WorkflowSnapshot>>,
+    /// Bounded UI-only image handles; never serialized or added to snapshots.
+    evidence_images: Mutex<EvidenceImageCache>,
     pub changed: Condvar,
     pub registry: Mutex<Registry>,
     /// The cancellation gate of the job the actor is running (pipeline, publication or
@@ -330,6 +390,7 @@ impl AgentWorkflow {
                 tools: config.tools,
             }),
             snapshot: Mutex::new(empty),
+            evidence_images: Mutex::new(EvidenceImageCache::default()),
             changed: Condvar::new(),
             registry: Mutex::new(Registry::default()),
             inflight: Mutex::new(None),
@@ -355,6 +416,16 @@ impl AgentWorkflow {
     /// The newest immutable snapshot.
     pub fn snapshot(&self) -> Arc<WorkflowSnapshot> {
         self.shared.snapshot.lock().clone()
+    }
+
+    /// A presentation image for a task-owned evidence artifact, if its bounded decode
+    /// has completed. PNG bytes and app-private paths never leave the workflow worker.
+    pub(crate) fn evidence_image(
+        &self,
+        task: &AgentTaskId,
+        artifact_id: &str,
+    ) -> Option<Arc<RenderImage>> {
+        self.shared.evidence_images.lock().image(task, artifact_id)
     }
 
     /// Blocks until a snapshot newer than `since` exists (or `timeout`), returning the
@@ -469,6 +540,15 @@ impl AgentWorkflow {
         self.shared.playhead.store(frame, Ordering::Relaxed);
     }
 
+    /// Updates the exact preview currently displayed by the shell. Queued scoped
+    /// submissions are refused if this identity changes before they start.
+    pub fn set_displayed_preview_identity(
+        &self,
+        identity: Option<PreviewIdentity>,
+    ) -> Result<(), WorkflowError> {
+        self.send(Msg::SetDisplayedPreviewIdentity(identity))
+    }
+
     // ---- commands ---------------------------------------------------------------------------------------
 
     fn send(&self, message: Msg) -> Result<(), WorkflowError> {
@@ -500,6 +580,27 @@ impl AgentWorkflow {
     /// running task otherwise (the stable draft is refreshed when it starts). Returns the
     /// submission id shown in the queue.
     pub fn submit(&self, brief: &str) -> Result<u64, WorkflowError> {
+        self.submit_with_scope(brief, None)
+    }
+
+    /// Submits a brief bound to the timeline/source identity selected in the UI.
+    pub fn submit_scoped(&self, brief: &str, scope: TaskScope) -> Result<u64, WorkflowError> {
+        scope
+            .validate()
+            .map_err(|error| WorkflowError::InvalidScope(error.to_string()))?;
+        if scope.project_id != String::from(self.shared.project.clone()) {
+            return Err(WorkflowError::InvalidScope(
+                "scope belongs to another project".into(),
+            ));
+        }
+        self.submit_with_scope(brief, Some(scope))
+    }
+
+    fn submit_with_scope(
+        &self,
+        brief: &str,
+        scope: Option<TaskScope>,
+    ) -> Result<u64, WorkflowError> {
         self.open_check()?;
         let brief =
             validate_brief(brief).map_err(|e| WorkflowError::InvalidBrief(e.to_string()))?;
@@ -520,7 +621,11 @@ impl AgentWorkflow {
             registry.pending += 1;
         }
         let id = self.shared.next_submission.fetch_add(1, Ordering::Relaxed);
-        if let Err(error) = self.send(Msg::Submit { id, brief }) {
+        if let Err(error) = self.send(Msg::Submit {
+            id,
+            brief,
+            scope: scope.map(Box::new),
+        }) {
             self.shared.registry.lock().pending -= 1;
             return Err(error);
         }
@@ -745,5 +850,47 @@ impl AgentWorkflow {
 impl Drop for AgentWorkflow {
     fn drop(&mut self) {
         self.close();
+    }
+}
+
+#[cfg(test)]
+mod evidence_image_cache_tests {
+    use super::*;
+
+    #[test]
+    fn reservations_are_task_owned_and_bounded_by_count_and_encoded_bytes() {
+        let first = AgentTaskId("first-task".into());
+        let second = AgentTaskId("second-task".into());
+        let mut cache = EvidenceImageCache::default();
+        cache.begin_task(first.clone());
+
+        assert_eq!(
+            cache.reserve(&first, "selected", 4 * 1024 * 1024),
+            Some(4 * 1024 * 1024)
+        );
+        assert_eq!(
+            cache.reserve(&first, "boundary", 4 * 1024 * 1024),
+            Some(4 * 1024 * 1024)
+        );
+        assert_eq!(cache.reserve(&first, "overflow", 1), None);
+        assert_eq!(cache.reserve(&first, "selected", 1), None);
+
+        cache.begin_task(second.clone());
+        assert_eq!(cache.reserve(&first, "stale", 1), None);
+        assert_eq!(cache.reserve(&second, "selected", 1), Some(1));
+    }
+
+    #[test]
+    fn reservations_are_limited_to_six_artifacts_per_task() {
+        let task = AgentTaskId("bounded-task".into());
+        let mut cache = EvidenceImageCache::default();
+        cache.begin_task(task.clone());
+        for index in 0..6 {
+            assert_eq!(
+                cache.reserve(&task, &format!("artifact-{index}"), 1),
+                Some(1)
+            );
+        }
+        assert_eq!(cache.reserve(&task, "seventh", 1), None);
     }
 }

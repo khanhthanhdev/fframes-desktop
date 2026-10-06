@@ -16,7 +16,7 @@ pub use events::{
 pub use redact::{REDACTION_MARK, Redactor, StreamRedactor};
 pub use runtime::{
     AcpDriver, DriverConfig, DriverError, DriverLimits, DriverMode, DriverOutcome, DriverStatus,
-    McpStdioSupport, SessionInfo,
+    McpStdioSupport, PromptImage, SessionInfo,
 };
 pub use transcript::{Transcript, TranscriptEntry, TranscriptPage};
 

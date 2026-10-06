@@ -363,6 +363,9 @@ pub fn stop_note(phase: TaskPhase) -> String {
         TaskPhase::Quiescing | TaskPhase::Capturing | TaskPhase::Validating | TaskPhase::Repairing => {
             "Cancels validation or repair; the working copy and candidate are kept."
         }
+        TaskPhase::AwaitingEvidence => {
+            "Cancels the candidate evidence render before automatic Apply."
+        }
         TaskPhase::AwaitingReview => {
             "Stop does not discard the candidate. Use Discard, or Apply to publish it."
         }
@@ -586,7 +589,7 @@ mod tests {
     };
     use std::{path::PathBuf, sync::Arc};
     use studio_agent_spike::{DiscoveryReport, driver::PermissionChoice};
-    use studio_engine::{ReviewPolicy, TaskState};
+    use studio_engine::{ReviewPolicy, TaskScope, TaskState};
     use studio_project::ProjectId;
 
     fn base_snapshot() -> WorkflowSnapshot {
@@ -633,6 +636,10 @@ mod tests {
             engine_state: TaskState::Editing,
             brief: "make it blue".into(),
             source_base: "abcdef012345".into(),
+            scope: TaskScope::whole_project("p1", "a".repeat(64)),
+            before: None,
+            after: None,
+            image_limitation: None,
             draft: PathBuf::from("/data/projects/p/agent/draft"),
             review_policy: ReviewPolicy::AutoApply,
             repair: RepairView {
@@ -714,6 +721,7 @@ mod tests {
             TaskPhase::Validating,
             TaskPhase::Repairing,
             TaskPhase::AwaitingReview,
+            TaskPhase::AwaitingEvidence,
             TaskPhase::Promoting,
         ] {
             let controls = derive_controls(&with_task(phase), false, true);
@@ -764,6 +772,8 @@ mod tests {
                 id,
                 summary: "x".into(),
                 queued_unix: 0,
+                scope: None,
+                stale_scope: false,
             })
             .collect();
         let controls = derive_controls(&snapshot, false, true);

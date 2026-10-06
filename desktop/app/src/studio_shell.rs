@@ -11,6 +11,9 @@ use crate::{
 use crate::{
     audio_service::{AudioEvent, AudioService, OutputDevice, OutputHandle},
     frame_image::{ImagePresentationManager, create_render_image},
+    preset_panel::{
+        Catalog, PresetCommand, PresetEvent, PresetPanel, PresetPick, PresetReport, PresetView,
+    },
     preview_coordinator::{BuildSpec, PreviewCoordinator, SeekIntent},
     timeline_view::{TimelineEvent, TimelineView},
 };
@@ -61,6 +64,8 @@ struct Presentation {
     /// The installed SDK agent tasks compile and preview against (set only while it
     /// verifies and supports the preview contract). Separate from agent readiness.
     agent_sdk: Option<AgentSdk>,
+    /// Style-preset controls state of the open project (`None` when none is open).
+    preset: Option<PresetView>,
 }
 
 #[derive(Clone)]
@@ -86,6 +91,8 @@ enum Command {
     InstallSdk,
     Restore(PathBuf, studio_project::SourceRevision),
     Independent(PathBuf),
+    /// A style-preset operation, fenced by the source revision the UI last showed.
+    Preset(PresetCommand, Option<studio_project::SourceRevision>),
 }
 enum Picker {
     Create,
@@ -95,6 +102,9 @@ enum Picker {
     Asset,
     Sdk,
     Locate(ProjectId),
+    PresetImport,
+    PresetCss,
+    PresetExport(String),
 }
 struct Backend {
     paths: Option<AppPaths>,
@@ -108,6 +118,10 @@ struct Backend {
     closed: Arc<AtomicBool>,
     processes: studio_bootstrap::ProcessTreeManager,
     build_spec: Option<BuildSpec>,
+    /// Bundled presets plus the verified packages imported into the app's store.
+    catalog: Catalog,
+    /// The outcome of the last preset command, taken by the dispatch that ran it.
+    preset_report: Option<PresetReport>,
 }
 impl Backend {
     fn command(&mut self, command: Command) -> Result<(), String> {
@@ -116,6 +130,7 @@ impl Backend {
             let (compatibility, sdk_home) = SetupView::defaults()?;
             self.compatibility = Some(compatibility);
             self.sdk_home = Some(sdk_home);
+            self.catalog = Catalog::load(self.paths.as_ref().expect("just set"));
             self.check_sdk();
             return Ok(());
         }
@@ -325,6 +340,21 @@ impl Backend {
                     .map_err(|e| e.to_string())?;
                 self.open(&path, &paths)?;
             }
+            Command::Preset(command, expected) => {
+                let controller = self.current()?;
+                let report = crate::preset_panel::execute(
+                    command,
+                    &controller,
+                    &mut self.catalog,
+                    &paths,
+                    expected.as_ref(),
+                );
+                let refusal = report.refused().then(|| report.status_lines().join(" "));
+                self.preset_report = Some(report);
+                if let Some(refusal) = refusal {
+                    return Err(refusal);
+                }
+            }
         }
         Ok(())
     }
@@ -439,19 +469,21 @@ impl Backend {
         };
         // One short look at the controller; the workflow's job threads may hold it too.
         let open = self.controller.as_ref().map(|c| {
-            let controller = c.lock();
+            let mut controller = c.lock();
             (
                 ProjectPresentation::from_controller(&controller),
                 controller.state().clone(),
                 controller.processes.clone(),
+                PresetView::capture(&mut controller, &self.catalog),
             )
         });
         Ok(Presentation {
-            project: open.as_ref().map(|(project, _, _)| project.clone()),
+            project: open.as_ref().map(|(project, _, _, _)| project.clone()),
             recents,
             sdk: self.sdk.clone(),
-            state: open.as_ref().map(|(_, state, _)| state.clone()),
-            owner: open.map(|(_, _, owner)| owner),
+            state: open.as_ref().map(|(_, state, _, _)| state.clone()),
+            preset: open.as_ref().map(|(_, _, _, preset)| preset.clone()),
+            owner: open.map(|(_, _, owner, _)| owner),
             controller: self.controller.clone(),
             paths: self.paths.clone(),
             agent_sdk: self.agent_sdk.clone(),
@@ -508,6 +540,8 @@ pub struct StudioShell {
     awaiting_preview: Option<String>,
     panel: gpui::Entity<ConversationPanel>,
     _panel_subscription: gpui::Subscription,
+    preset_panel: gpui::Entity<PresetPanel>,
+    _preset_subscription: gpui::Subscription,
     agent: AgentHost,
     /// A promotion changed the source: take a fresh presentation (without cancelling the
     /// staged preview that was just adopted for exactly that source).
@@ -702,33 +736,45 @@ impl StudioShell {
         let focus = cx.focus_handle().tab_stop(false);
         window.focus(&focus, cx);
         let timeline = cx.new(TimelineView::new);
-        let timeline_subscription = cx.subscribe(&timeline, |shell, _, event, cx| match *event {
-            TimelineEvent::Seek(frame) => shell.seek_preview(frame, cx),
-            TimelineEvent::Step(delta) => shell.step_preview(delta, cx),
-            TimelineEvent::TogglePlayback => shell.toggle_playback(cx),
-            TimelineEvent::ToggleMute => shell.toggle_mute(cx),
-            TimelineEvent::BeginScrub => {
-                shell.resume_scrub = shell.transport.playing() || shell.resume_install;
-                shell.resume_install = false;
-                shell.pause_playback(cx);
-            }
-            TimelineEvent::EndScrub => {
-                if shell.resume_scrub
-                    && !shell.transport.playing()
-                    && shell
-                        .displayed
-                        .as_ref()
-                        .is_some_and(|d| shell.transport.position() < d.timeline.total_frames)
-                {
-                    shell.toggle_playback(cx);
+        let timeline_subscription =
+            cx.subscribe(&timeline, |shell, _, event, cx| match event.clone() {
+                TimelineEvent::Seek(frame) => shell.seek_preview(frame, cx),
+                TimelineEvent::Step(delta) => shell.step_preview(delta, cx),
+                TimelineEvent::TogglePlayback => shell.toggle_playback(cx),
+                TimelineEvent::ToggleMute => shell.toggle_mute(cx),
+                TimelineEvent::BeginScrub => {
+                    shell.resume_scrub = shell.transport.playing() || shell.resume_install;
+                    shell.resume_install = false;
+                    shell.pause_playback(cx);
                 }
-                shell.resume_scrub = false;
-            }
-        });
+                TimelineEvent::EndScrub => {
+                    if shell.resume_scrub
+                        && !shell.transport.playing()
+                        && shell
+                            .displayed
+                            .as_ref()
+                            .is_some_and(|d| shell.transport.position() < d.timeline.total_frames)
+                    {
+                        shell.toggle_playback(cx);
+                    }
+                    shell.resume_scrub = false;
+                }
+                TimelineEvent::ScopeChanged(scope) => {
+                    let scope = scope.map(|scope| scope.map(|scope| *scope));
+                    shell
+                        .panel
+                        .update(cx, |panel, cx| panel.set_task_scope(scope, cx));
+                }
+            });
         let panel = cx.new(ConversationPanel::new);
         let panel_subscription =
             cx.subscribe_in(&panel, window, |shell, _, event, window, cx| match event {
                 PanelEvent::Leave => window.focus(&shell.focus, cx),
+            });
+        let preset_panel = cx.new(PresetPanel::new);
+        let preset_subscription =
+            cx.subscribe_in(&preset_panel, window, |shell, _, event, window, cx| {
+                shell.preset_event(event.clone(), window, cx)
             });
         let closed = Arc::new(AtomicBool::new(false));
         let processes = studio_bootstrap::ProcessTreeManager::new();
@@ -742,6 +788,8 @@ impl StudioShell {
             closed: closed.clone(),
             processes: processes.clone(),
             build_spec: None,
+            catalog: Catalog::default(),
+            preset_report: None,
         }));
         let owner = backend.clone();
         let shutdown = closed.clone();
@@ -816,6 +864,8 @@ impl StudioShell {
             awaiting_preview: None,
             panel,
             _panel_subscription: panel_subscription,
+            preset_panel,
+            _preset_subscription: preset_subscription,
             agent: AgentHost::new(),
             refresh_wanted: false,
             presentation_refresh_pending: false,
@@ -984,10 +1034,18 @@ impl StudioShell {
                             .displayed
                             .as_ref()
                             .map(|d| d.identity().source_revision.chars().take(12).collect::<String>()),
+                        "displayed_identity": shell.displayed.as_ref().map(|d| serde_json::json!({
+                            "open_session_len": d.identity().open_session.len(),
+                            "worker_generation": d.identity().worker_generation,
+                            "timeline_open_session_len": d.timeline.envelope.identity.open_session.len(),
+                            "timeline_worker_generation": d.timeline.envelope.identity.worker_generation,
+                        })),
                         "panel": shell.panel.read(cx).telemetry(),
                         "preview": shell.preview_telemetry(),
                         "buttons": serde_json::to_value(&shell.button_bounds)
                             .unwrap_or(serde_json::Value::Null),
+                        "ruler_bounds": shell.timeline.read(cx).qualification_metrics()["ruler_bounds"].clone(),
+                        "timeline_selection": shell.timeline.read(cx).qualification_metrics()["selection"].clone(),
                     })
                 }) else {
                     break;
@@ -1028,6 +1086,10 @@ impl StudioShell {
                 studio_engine::PreviewStatus::Displayed => "displayed",
                 studio_engine::PreviewStatus::Error(_) => "error",
                 studio_engine::PreviewStatus::Closed => "closed",
+            },
+            "error": match &self.preview_state.status {
+                studio_engine::PreviewStatus::Error(e) => Some(format!("{e:?}").chars().take(4000).collect::<String>()),
+                _ => None,
             },
             "transport_epoch": self.transport.epoch(),
             "playing": self.transport.playing(),
@@ -1124,18 +1186,19 @@ impl StudioShell {
             }
             let mut backend = backend.lock();
             if closed.load(Ordering::Acquire) {
-                return (Err("Window closed".into()), None, None);
+                return (Err("Window closed".into()), None, None, None);
             }
             let result = backend.command(command);
             let presentation = backend.presentation();
             let spec = backend.build_spec.take();
+            let report = backend.preset_report.take();
             match presentation {
-                Ok(p) => (result, Some(p), spec),
-                Err(e) => (Err(e), None, None),
+                Ok(p) => (result, Some(p), spec, report),
+                Err(e) => (Err(e), None, None, report),
             }
         });
         cx.spawn(async move |this, cx| {
-            let (result, presentation, spec) = task.await;
+            let (result, presentation, spec, report) = task.await;
             let _ = this.update(cx, |shell, cx| {
                 if shell.epoch != epoch || shell.closed.load(Ordering::Acquire) {
                     return;
@@ -1180,6 +1243,7 @@ impl StudioShell {
                             }
                             shell.presentation = presentation;
                             shell.sync_agent(cx);
+                            shell.push_preset_view(cx);
                         }
                     }
                 }
@@ -1198,11 +1262,61 @@ impl StudioShell {
                     }
                     Err(error) => shell.error = Some(error),
                 }
+                if let Some(report) = report {
+                    shell.adopt_preset_report(report, cx);
+                }
                 cx.notify();
             });
         })
         .detach();
         cx.notify();
+    }
+
+    /// Shows a preset command's outcome. Only a committed revision asks for a matching
+    /// preview: the previous playable preview stays displayed under the awaiting label
+    /// until it is ready (or for good if its build fails), and the source is never
+    /// rolled back implicitly.
+    fn adopt_preset_report(&mut self, report: PresetReport, cx: &mut Context<Self>) {
+        let request = report.preview_request();
+        let catalog_changed = report.catalog_changed;
+        self.preset_panel
+            .update(cx, |panel, cx| panel.report(report, cx));
+        if catalog_changed {
+            self.refresh_wanted = true;
+        }
+        if let Some(request) = request {
+            self.awaiting_preview = Some(request.label);
+            self.refresh_wanted = true;
+            self.dispatch(Command::Build, cx);
+        }
+    }
+
+    fn push_preset_view(&mut self, cx: &mut Context<Self>) {
+        let view = self.presentation.preset.clone();
+        self.preset_panel
+            .update(cx, |panel, cx| panel.set_view(view, cx));
+    }
+
+    fn run_preset(&mut self, command: PresetCommand, cx: &mut Context<Self>) {
+        // The fence is the revision this window last showed.
+        let expected = self
+            .presentation
+            .state
+            .as_ref()
+            .map(|state| state.source().clone());
+        self.dispatch(Command::Preset(command, expected), cx);
+    }
+
+    fn preset_event(&mut self, event: PresetEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            PresetEvent::Leave => window.focus(&self.focus, cx),
+            PresetEvent::Run(command) => self.run_preset(command, cx),
+            PresetEvent::Pick(PresetPick::ImportFolder) => self.pick(Picker::PresetImport, cx),
+            PresetEvent::Pick(PresetPick::ImportCss) => self.pick(Picker::PresetCss, cx),
+            PresetEvent::Pick(PresetPick::Export { key }) => {
+                self.pick(Picker::PresetExport(key), cx)
+            }
+        }
     }
     /// The workflow a command must close before it may run: every command that closes or
     /// replaces the open project. Re-selecting the same folder keeps the workflow.
@@ -1407,6 +1521,7 @@ impl StudioShell {
                 }
                 if let Some(presentation) = presentation {
                     shell.presentation = presentation;
+                    shell.push_preset_view(cx);
                 }
                 cx.notify();
             });
@@ -1467,10 +1582,16 @@ impl StudioShell {
         }
         self.agent.opening = None;
         let workflow = Arc::new(workflow);
+        let preview_identity = self
+            .displayed
+            .as_ref()
+            .map(|preview| preview.identity().clone());
+        let _ = workflow.set_displayed_preview_identity(preview_identity);
         self.agent.workflow = Some(workflow.clone());
         self.agent.attached = Some(opened.serial);
         self.agent.playhead = usize::MAX;
         if let Some(paths) = self.presentation.paths.clone() {
+            let scope = self.timeline.read(cx).selected_scope();
             self.panel.update(cx, |panel, cx| {
                 panel.attach(
                     Attachment {
@@ -1483,7 +1604,8 @@ impl StudioShell {
                         policy: opened.policy,
                     },
                     cx,
-                )
+                );
+                panel.set_task_scope(scope, cx);
             });
         }
         self.sync_agent_build();
@@ -1491,6 +1613,9 @@ impl StudioShell {
     }
 
     fn detach_preview(&mut self, cx: &mut Context<Self>) {
+        if let Some(workflow) = &self.agent.workflow {
+            let _ = workflow.set_displayed_preview_identity(None);
+        }
         if let Some(preview) = self.preview.take() {
             // Teardown stays off the UI thread; the root token rejects any late spawn.
             std::thread::spawn(move || preview.close());
@@ -1586,6 +1711,7 @@ impl StudioShell {
                 }
                 if let Some(p) = presentation {
                     shell.presentation = p;
+                    shell.push_preset_view(cx);
                 }
                 if let Some((tag, e)) = error {
                     shell.preview_state.fail(&tag, e.clone());
@@ -1880,17 +2006,20 @@ impl StudioShell {
         self.busy = true;
         cx.notify();
         let epoch = self.epoch;
-        if matches!(kind, Picker::Create | Picker::Restore) {
+        if matches!(
+            kind,
+            Picker::Create | Picker::Restore | Picker::PresetExport(_)
+        ) {
             let home = std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from)
                 .unwrap_or_else(std::env::temp_dir);
             let picker = cx.prompt_for_new_path(
                 &home,
-                Some(if matches!(kind, Picker::Create) {
-                    "New video"
-                } else {
-                    "Recovered video"
+                Some(match kind {
+                    Picker::Create => "New video",
+                    Picker::PresetExport(_) => "Exported preset",
+                    _ => "Recovered video",
                 }),
             );
             // Export the checkpoint selected before the picker opened, even if
@@ -1909,7 +2038,9 @@ impl StudioShell {
                     shell.busy = false;
                     match result {
                         Ok(Ok(Some(path))) => {
-                            if matches!(kind, Picker::Create) {
+                            if let Picker::PresetExport(key) = kind {
+                                shell.run_preset(PresetCommand::Export { key, dest: path }, cx);
+                            } else if matches!(kind, Picker::Create) {
                                 shell.dispatch(Command::Create(path), cx);
                             } else if let Some(accepted) = accepted {
                                 shell.dispatch(Command::Restore(path, accepted), cx);
@@ -1927,11 +2058,13 @@ impl StudioShell {
                 Picker::Import => "Import",
                 Picker::Sdk => "SDK",
                 Picker::Locate(_) => "Locate",
+                Picker::PresetImport => "Import preset folder",
+                Picker::PresetCss => "CSS report",
                 _ => "Open",
             };
             let picker = cx.prompt_for_paths(gpui::PathPromptOptions {
-                files: matches!(kind, Picker::Asset | Picker::Import),
-                directories: !matches!(kind, Picker::Asset | Picker::Import),
+                files: matches!(kind, Picker::Asset | Picker::Import | Picker::PresetCss),
+                directories: !matches!(kind, Picker::Asset | Picker::Import | Picker::PresetCss),
                 multiple: false,
                 prompt: Some(format!("{label}…").into()),
             });
@@ -1949,6 +2082,13 @@ impl StudioShell {
                                 Picker::Import => Command::Import(path),
                                 Picker::Sdk => Command::SelectSdk(path),
                                 Picker::Locate(id) => Command::Locate(path, id),
+                                Picker::PresetImport => {
+                                    return shell
+                                        .run_preset(PresetCommand::ImportFolder(path), cx);
+                                }
+                                Picker::PresetCss => {
+                                    return shell.run_preset(PresetCommand::ImportCss(path), cx);
+                                }
                                 _ => Command::Open(path),
                             };
                             shell.dispatch(command, cx);
@@ -2118,6 +2258,10 @@ impl Render for StudioShell {
                             self.timeline
                                 .update(cx, |v, cx| v.install(model.unwrap(), ready.position, cx));
                             self.displayed = Some(ready.clone());
+                            if let Some(workflow) = &self.agent.workflow {
+                                let _ = workflow
+                                    .set_displayed_preview_identity(Some(ready.identity().clone()));
+                            }
                             if ready.tag().base_source == *source.source() {
                                 self.awaiting_preview = None;
                             }
@@ -2571,6 +2715,9 @@ impl Render for StudioShell {
             center = center.child(history);
         }
         center = center.child(self.timeline.clone());
+        if self.navigation == "Style" {
+            center = center.child(self.preset_panel.clone());
+        }
         // SDK readiness and recent projects live under the navigation; the agent has its
         // own panel (and its own readiness) on the right.
         let mut library = div()
@@ -2769,6 +2916,8 @@ mod tests {
             closed: Arc::new(AtomicBool::new(false)),
             processes: studio_bootstrap::ProcessTreeManager::new(),
             build_spec: None,
+            catalog: Catalog::default(),
+            preset_report: None,
         };
         let destination = temp.path().join("restored");
         backend

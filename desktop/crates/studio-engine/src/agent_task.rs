@@ -6,6 +6,7 @@
 //! the artifact it produces is a differently typed [`CandidateRevision`].
 
 use crate::OpenSession;
+use crate::TaskScope;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -86,6 +87,8 @@ impl CandidateRevision {
 pub struct AgentTaskContext {
     pub identity: TaskIdentity,
     pub source_base: TaskSourceBase,
+    /// Immutable whole-project/scene/range scope frozen at submission.
+    pub scope: TaskScope,
     /// The M1 saved checkpoint at task start; informational, never the draft base.
     pub prior_checkpoint: SourceRevision,
     pub assets: Vec<SourceFile>,
@@ -1284,6 +1287,7 @@ mod tests {
         AgentTaskContext {
             identity: reservation.identity,
             source_base: TaskSourceBase::new(revision('a')),
+            scope: TaskScope::whole_project("project-1", revision('a').as_str()),
             prior_checkpoint: revision('b'),
             assets: vec![],
             instructions: vec![],

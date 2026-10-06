@@ -11,6 +11,8 @@ Usage: python3 acp-agent.py ROOT
 Environment:
   SCRIPTED_AGENT_INIT=exit   exit(3) on `initialize` (start failure)
   SCRIPTED_AGENT_INIT=auth   answer `session/new` with -32000 "Authentication required"
+  SCRIPTED_PROMPT_IMAGE=1    advertise ACP image-prompt support and record metadata only
+  ROOT/prompt-image          same capability switch, usable with the isolated child environment
 
 Turn script selection (`session/prompt`): when the first line of the prompt text
 starts with `SCRIPT `, the rest of that line is the JSON script. Otherwise
@@ -54,6 +56,7 @@ root = pathlib.Path(sys.argv[1])
 PID = os.getpid()
 SESSION_ID = f"sess-{PID}"
 INIT_MODE = os.environ.get("SCRIPTED_AGENT_INIT", "")
+PROMPT_IMAGE = os.environ.get("SCRIPTED_PROMPT_IMAGE") == "1" or (root / "prompt-image").is_file()
 HARD_CAP_SECONDS = 120
 DEFAULT_SCRIPT = {"text": "done", "write": {"edit.txt": "edited"}}
 
@@ -183,7 +186,7 @@ def handle(line):
         send({"id": rid, "result": {
             "protocolVersion": 1,
             "agentInfo": {"name": "scripted-agent", "version": "test"},
-            "agentCapabilities": {"loadSession": False, "promptCapabilities": {"image": False}},
+            "agentCapabilities": {"loadSession": False, "promptCapabilities": {"image": PROMPT_IMAGE}},
             "authMethods": [],
         }})
     elif method == "session/new":
@@ -453,7 +456,23 @@ def run_prompt(message):
         rid, active = active, None
         send({"id": rid, "error": {"code": -32602, "message": f"bad script: {error}"}})
         return
-    append_jsonl("prompts.jsonl", {"pid": PID, "session": params.get("sessionId"), "text": text[:8000], "cwd": os.getcwd(), "script_index": index})
+    image_blocks = [
+        {
+            "mime_type": block.get("mimeType"),
+            "data_length": len(block.get("data", "")),
+            "decoded_bytes": len(base64.b64decode(block.get("data", ""), validate=True)),
+        }
+        for block in params.get("prompt", [])
+        if isinstance(block, dict) and block.get("type") == "image"
+    ]
+    append_jsonl("prompts.jsonl", {
+        "pid": PID,
+        "session": params.get("sessionId"),
+        "text": text[:8000],
+        "cwd": os.getcwd(),
+        "script_index": index,
+        "image_blocks": image_blocks,
+    })
     try:
         run_script(script)
     except Cancelled:

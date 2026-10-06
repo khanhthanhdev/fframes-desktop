@@ -40,6 +40,10 @@ impl AppPaths {
     pub fn project(&self, id: &studio_project::ProjectId) -> PathBuf {
         self.data.join("projects").join(String::from(id.clone()))
     }
+    /// Imported (verified) preset packages, one directory per package.
+    pub fn presets(&self) -> PathBuf {
+        self.data.join("presets")
+    }
     pub fn builds(&self) -> PathBuf {
         self.data.join("builds")
     }

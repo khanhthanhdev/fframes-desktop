@@ -18,8 +18,8 @@
 //! Failure routing is deterministic ([`next_step`]): a source-attributable failure may
 //! spend the single automatic repair of [`RepairBudget`]; environment failures never do.
 use crate::{
-    CandidateRevision, CaptureTicket, PreviewFrame, RepairBudget, TaskIdentity, TaskSourceBase,
-    validate_preview_timeline,
+    CandidateRevision, CaptureTicket, PreviewFrame, RepairBudget, TaskIdentity, TaskScope,
+    TaskSourceBase, validate_preview_timeline,
 };
 use fframes_studio_protocol::{
     DiagnosticSeverity, InspectResponse, MAX_INSPECT_FRAMES, PreparedAudioDescriptor,
@@ -170,6 +170,7 @@ pub struct ObjectRecord {
 pub struct CapturedCandidate {
     identity: TaskIdentity,
     source_base: TaskSourceBase,
+    scope: TaskScope,
     candidate: CandidateRevision,
     manifest_sha256: String,
     objects: Vec<ObjectRecord>,
@@ -182,6 +183,9 @@ impl CapturedCandidate {
     }
     pub fn source_base(&self) -> &TaskSourceBase {
         &self.source_base
+    }
+    pub fn scope(&self) -> &TaskScope {
+        &self.scope
     }
     pub fn candidate(&self) -> &CandidateRevision {
         &self.candidate
@@ -283,11 +287,29 @@ pub fn capture_candidate_observed(
     checkpoints: &Checkpoints,
     observe: &mut dyn FnMut(CapturePhase),
 ) -> Result<CapturedCandidate, CandidateError> {
+    capture_candidate_scoped_observed(
+        ticket,
+        checkpoints,
+        TaskScope::whole_project(
+            String::from(ticket.identity().project.clone()),
+            ticket.source_base().revision().as_str(),
+        ),
+        observe,
+    )
+}
+
+pub fn capture_candidate_scoped_observed(
+    ticket: &CaptureTicket,
+    checkpoints: &Checkpoints,
+    scope: TaskScope,
+    observe: &mut dyn FnMut(CapturePhase),
+) -> Result<CapturedCandidate, CandidateError> {
     capture_tree(
         ticket.identity(),
         ticket.source_base(),
         ticket.draft(),
         checkpoints,
+        scope,
         observe,
     )
 }
@@ -303,7 +325,17 @@ pub fn capture_undo_candidate(
     tree: &Path,
     checkpoints: &Checkpoints,
 ) -> Result<CapturedCandidate, CandidateError> {
-    capture_tree(identity, source_base, tree, checkpoints, &mut |_| {})
+    capture_tree(
+        identity,
+        source_base,
+        tree,
+        checkpoints,
+        TaskScope::whole_project(
+            String::from(identity.project.clone()),
+            source_base.revision().as_str(),
+        ),
+        &mut |_| {},
+    )
 }
 
 fn capture_tree(
@@ -311,8 +343,19 @@ fn capture_tree(
     source_base: &TaskSourceBase,
     tree: &Path,
     checkpoints: &Checkpoints,
+    scope: TaskScope,
     observe: &mut dyn FnMut(CapturePhase),
 ) -> Result<CapturedCandidate, CandidateError> {
+    scope
+        .validate()
+        .map_err(|error| CandidateError::InvalidDraft(error.to_string()))?;
+    if scope.project_id != String::from(identity.project.clone())
+        || scope.source_revision != source_base.revision().as_str()
+    {
+        return Err(CandidateError::InvalidDraft(
+            "task scope does not match the captured project/source base".into(),
+        ));
+    }
     let (revision, inventory) = capture_verified(tree, checkpoints, observe)?;
     let manifest_file = checkpoints.manifest_path(&revision);
     let manifest_sha256 =
@@ -343,6 +386,7 @@ fn capture_tree(
     Ok(CapturedCandidate {
         identity: identity.clone(),
         source_base: source_base.clone(),
+        scope,
         candidate: CandidateRevision::new(revision),
         manifest_sha256,
         objects: inventory
@@ -467,11 +511,18 @@ pub enum BroadenReason {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Coverage {
     pub total_frames: usize,
+    /// Requested scope and its original half-open interval, if a compiled selection was
+    /// attached to the task.
+    pub requested_scope: String,
+    pub requested_interval: Option<[usize; 2]>,
+    /// Scope-specific samples and adjacent boundaries required by validation.
+    pub requested_frames: Vec<usize>,
     pub boundary_frames: Vec<usize>,
     pub playhead: usize,
     pub sample_frames: Vec<usize>,
     pub rendered_frames: Vec<usize>,
     pub inspected_frames: usize,
+    pub inspected_frame_indexes: Vec<usize>,
     pub inspection_batches: usize,
     pub broadened: Option<BroadenReason>,
     /// False when the video was longer than the broadened bound or rendering was capped.
@@ -954,6 +1005,9 @@ pub fn scan_pcm(
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoveragePlan {
+    pub requested_scope: String,
+    pub requested_interval: Option<[usize; 2]>,
+    pub requested_frames: Vec<usize>,
     pub boundary_frames: Vec<usize>,
     pub sample_frames: Vec<usize>,
     pub rendered_frames: Vec<usize>,
@@ -1032,9 +1086,24 @@ pub fn plan_coverage(
     playhead: usize,
     changes: &ChangeSet,
 ) -> CoveragePlan {
+    plan_coverage_scoped(timeline, playhead, changes, None)
+}
+
+/// Plan candidate checks using the frozen submission scope as additional required
+/// samples. The compiled identity belongs to the baseline; its absolute frame indexes
+/// remain the request, while candidate timing is always taken from `timeline`.
+pub fn plan_coverage_scoped(
+    timeline: &PreviewTimelineResponse,
+    playhead: usize,
+    changes: &ChangeSet,
+    scope: Option<&TaskScope>,
+) -> CoveragePlan {
     let total = timeline.total_frames;
     if total == 0 {
         return CoveragePlan {
+            requested_scope: scope.map_or_else(|| "Whole project".into(), TaskScope::label),
+            requested_interval: None,
+            requested_frames: vec![],
             boundary_frames: vec![],
             sample_frames: vec![],
             rendered_frames: vec![],
@@ -1056,9 +1125,12 @@ pub fn plan_coverage(
     boundaries.sort_unstable();
     boundaries.dedup();
     let sample = evenly_spaced(total, MAX_SAMPLE_FRAMES);
+    let (requested_scope, requested_interval, requested_frames, scope_complete) =
+        scoped_samples(scope, total);
     // Render priority: start/end/playhead, scene boundaries, then the sample.
     let mut priority: Vec<usize> = vec![0, total - 1, playhead];
     priority.extend(boundaries.iter().copied());
+    priority.extend(requested_frames.iter().copied());
     priority.extend(sample.iter().copied());
     let mut seen = std::collections::BTreeSet::new();
     let mut rendered: Vec<usize> = priority.into_iter().filter(|f| seen.insert(*f)).collect();
@@ -1066,9 +1138,10 @@ pub fn plan_coverage(
     // best-effort and is what the render cap trims first.
     let required = std::iter::once(playhead)
         .chain(boundaries.iter().copied())
+        .chain(requested_frames.iter().copied())
         .collect::<std::collections::BTreeSet<_>>()
         .len();
-    let mut complete = required <= MAX_RENDERED_FRAMES;
+    let mut complete = scope_complete && required <= MAX_RENDERED_FRAMES;
     rendered.truncate(MAX_RENDERED_FRAMES);
     rendered.sort_unstable();
     let broadened = broadening(changes).or_else(|| {
@@ -1089,6 +1162,7 @@ pub fn plan_coverage(
         }
     } else {
         let mut frames: Vec<usize> = boundaries.clone();
+        frames.extend(requested_frames.iter().copied());
         frames.extend(sample.iter().copied());
         frames.push(playhead);
         frames.sort_unstable();
@@ -1096,6 +1170,9 @@ pub fn plan_coverage(
         frames
     };
     CoveragePlan {
+        requested_scope,
+        requested_interval,
+        requested_frames,
         boundary_frames: boundaries,
         sample_frames: sample,
         rendered_frames: rendered,
@@ -1103,6 +1180,50 @@ pub fn plan_coverage(
         broadened,
         complete,
     }
+}
+
+fn scoped_samples(
+    scope: Option<&TaskScope>,
+    candidate_total: usize,
+) -> (String, Option<[usize; 2]>, Vec<usize>, bool) {
+    let Some(scope) = scope else {
+        return ("Whole project".into(), None, vec![], true);
+    };
+    let Some(compiled) = &scope.compiled else {
+        return (scope.label(), None, vec![], true);
+    };
+    if matches!(scope.selection, crate::ScopeSelection::WholeProject) {
+        return (
+            scope.label(),
+            Some([compiled.start_frame, compiled.end_frame]),
+            vec![],
+            true,
+        );
+    }
+
+    let mut requested = std::collections::BTreeSet::new();
+    requested.extend(compiled.boundary_frames.iter().copied());
+    if compiled.start_frame < compiled.end_frame {
+        let span = compiled.end_frame - compiled.start_frame;
+        requested.extend(
+            evenly_spaced(span, MAX_SAMPLE_FRAMES)
+                .into_iter()
+                .map(|frame| compiled.start_frame + frame),
+        );
+        requested.insert(compiled.start_frame);
+        requested.insert(compiled.end_frame - 1);
+    }
+    let scope_complete = requested.iter().all(|frame| *frame < candidate_total);
+    let requested = requested
+        .into_iter()
+        .filter(|frame| *frame < candidate_total)
+        .collect();
+    (
+        scope.label(),
+        Some([compiled.start_frame, compiled.end_frame]),
+        requested,
+        scope_complete,
+    )
 }
 
 // ---- validation ------------------------------------------------------------------------
@@ -1460,7 +1581,12 @@ fn run_probe(
         );
         collector.gaps.push(gap);
     }
-    let plan = plan_coverage(&timeline, playhead, &captured.changes);
+    let plan = plan_coverage_scoped(
+        &timeline,
+        playhead,
+        &captured.changes,
+        Some(captured.scope()),
+    );
     let playhead = playhead.min(timeline.total_frames - 1);
     // Inspection in bounded batches.
     let mut batches = 0;
@@ -1500,11 +1626,15 @@ fn run_probe(
     }
     *coverage_out = Some(Coverage {
         total_frames: timeline.total_frames,
+        requested_scope: plan.requested_scope.clone(),
+        requested_interval: plan.requested_interval,
+        requested_frames: plan.requested_frames.clone(),
         boundary_frames: plan.boundary_frames.clone(),
         playhead,
         sample_frames: plan.sample_frames.clone(),
         rendered_frames: plan.rendered_frames.clone(),
         inspected_frames: plan.inspect_frames.len(),
+        inspected_frame_indexes: plan.inspect_frames.clone(),
         inspection_batches: batches,
         broadened: plan.broadened,
         complete: plan.complete,

@@ -8,7 +8,7 @@ use gpui::{
     ParentElement, Pixels, Render, StatefulInteractiveElement, Styled, Window, canvas, div, px,
     rgb,
 };
-use studio_engine::{PreviewFrame, TimelineModel, TimelineSelection, TimelineViewport};
+use studio_engine::{PreviewFrame, TaskScope, TimelineModel, TimelineSelection, TimelineViewport};
 
 #[derive(Debug, Clone)]
 pub enum TimelineEvent {
@@ -18,6 +18,7 @@ pub enum TimelineEvent {
     ToggleMute,
     BeginScrub,
     EndScrub,
+    ScopeChanged(Result<Option<Box<TaskScope>>, String>),
 }
 
 pub struct TimelineView {
@@ -55,7 +56,14 @@ impl TimelineView {
     }
     pub fn install(&mut self, model: TimelineModel, position: usize, cx: &mut Context<Self>) {
         let first = self.model.is_none();
-        self.selection.clamp(&model);
+        let same_preview = self.model.as_ref().is_some_and(|current| {
+            current.report().envelope.identity == model.report().envelope.identity
+        });
+        if same_preview {
+            self.selection.clamp(&model);
+        } else {
+            self.selection = TimelineSelection::default();
+        }
         self.viewport.resize(self.viewport.width, &model);
         if first {
             self.viewport.fit(&model);
@@ -65,6 +73,7 @@ impl TimelineView {
         self.drag = None;
         self.clear_cache = true;
         self.pending_thumbnail = None;
+        self.emit_scope_changed(cx);
         cx.notify();
     }
     pub fn clear(&mut self, cx: &mut Context<Self>) {
@@ -74,7 +83,19 @@ impl TimelineView {
         self.position = 0;
         self.clear_cache = true;
         self.pending_thumbnail = None;
+        self.emit_scope_changed(cx);
         cx.notify();
+    }
+    pub fn selected_scope(&self) -> Result<Option<TaskScope>, String> {
+        self.model
+            .as_ref()
+            .map(|model| TaskScope::from_timeline(model.report(), &self.selection).map(Some))
+            .unwrap_or(Ok(None))
+            .map_err(|error| error.to_string())
+    }
+    fn emit_scope_changed(&self, cx: &mut Context<Self>) {
+        let scope = self.selected_scope().map(|scope| scope.map(Box::new));
+        cx.emit(TimelineEvent::ScopeChanged(scope));
     }
     pub fn set_position(&mut self, frame: usize, cx: &mut Context<Self>) {
         if self.position != frame {
@@ -108,6 +129,12 @@ impl TimelineView {
             "high_water_entries": self.cache.high_water_entries(), "high_water_bytes": self.cache.high_water_bytes(),
             "release_failures": self.release_failures,
             "pixels_per_second": self.viewport.pixels_per_second, "scroll_x": self.viewport.scroll_x,
+            "selection": {
+                "scene": self.selection.scene_id,
+                "range": self.selection.range.as_ref().map(|r| [r.start, r.end]),
+                "position": self.position,
+                "total_frames": self.model.as_ref().map(|m| m.report().total_frames),
+            },
             "ruler_bounds": self.bounds.map(|b| rect(b, 20.)),
             "fit_bounds": self.fit_bounds.map(|b| rect(b, f32::from(b.size.height))),
         })
@@ -161,6 +188,7 @@ impl TimelineView {
         if range {
             self.selection
                 .select_range(frame, frame, self.model.as_ref().unwrap());
+            self.emit_scope_changed(cx);
         } else {
             cx.emit(TimelineEvent::BeginScrub);
             self.seek(frame, cx);
@@ -178,6 +206,7 @@ impl TimelineView {
         if range {
             self.selection
                 .select_range(start, frame, self.model.as_ref().unwrap());
+            self.emit_scope_changed(cx);
             cx.notify();
         } else {
             self.seek(frame, cx);
@@ -221,6 +250,7 @@ impl TimelineView {
             }
             "s" => {
                 self.selection.cycle_scene_at(self.position, model);
+                self.emit_scope_changed(cx);
                 cx.notify();
             }
             "[" => {
@@ -232,6 +262,7 @@ impl TimelineView {
                         .map_or(self.position, |r| r.end),
                     model,
                 );
+                self.emit_scope_changed(cx);
                 cx.notify();
             }
             "]" => {
@@ -243,6 +274,7 @@ impl TimelineView {
                     self.position,
                     model,
                 );
+                self.emit_scope_changed(cx);
                 cx.notify();
             }
             _ => return,
@@ -345,6 +377,7 @@ impl Render for TimelineView {
                 self.button("timeline-cycle", "Cycle scene (S)", cx, |v, cx| {
                     if let Some(m) = &v.model {
                         v.selection.cycle_scene_at(v.position, m);
+                        v.emit_scope_changed(cx);
                         cx.notify();
                     }
                 }),
@@ -506,6 +539,7 @@ impl Render for TimelineView {
                             if let Some(m) = &v.model {
                                 v.selection.select_scene(index, m);
                             }
+                            v.emit_scope_changed(cx);
                             w.focus(&v.focus, cx);
                             cx.notify();
                             cx.stop_propagation();
@@ -516,6 +550,7 @@ impl Render for TimelineView {
                             if let Some(m) = &v.model {
                                 v.selection.select_scene(index, m);
                             }
+                            v.emit_scope_changed(cx);
                             cx.notify();
                             cx.stop_propagation();
                         }

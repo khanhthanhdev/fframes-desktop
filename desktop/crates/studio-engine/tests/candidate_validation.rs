@@ -2,9 +2,10 @@ use fframes_studio_protocol::*;
 use std::{fs, path::Path};
 use studio_bootstrap::WriterOwnership;
 use studio_engine::{
-    AgentTaskContext, CaptureTicket, Controller, PreviewFrame, QuiescenceEvidence, RepairDecision,
-    TaskState, TurnCompletion, WriterObservation, app_paths::AppPaths,
-    build_materialization::sdk_pin, candidate_validation::*,
+    AgentTaskContext, CaptureTicket, CompiledScope, Controller, PreviewFrame, QuiescenceEvidence,
+    RepairDecision, ScopeSelection, ScopedScene, TaskScope, TaskState, TurnCompletion,
+    WriterObservation, app_paths::AppPaths, build_materialization::sdk_pin,
+    candidate_validation::*,
 };
 use studio_project::checkpoint::Checkpoints;
 use studio_sdk::CompatibilityManifest;
@@ -540,6 +541,65 @@ fn coverage_has_boundaries_playhead_and_at_most_24_evenly_spaced_frames() {
     assert!(plan.rendered_frames.iter().all(|f| *f < 5));
     assert_eq!(evenly_spaced(5, 24), vec![0, 1, 2, 3, 4]);
     assert_eq!(evenly_spaced(0, 24), Vec::<usize>::new());
+}
+
+#[test]
+fn scoped_coverage_requires_selected_samples_and_refuses_shrunken_candidates() {
+    let scope = TaskScope {
+        project_id: "p".into(),
+        source_revision: "a".repeat(64),
+        selection: ScopeSelection::FrameRange,
+        compiled: Some(CompiledScope {
+            preview: PreviewIdentity {
+                project_id: "p".into(),
+                open_session: "s".into(),
+                source_revision: "a".repeat(64),
+                worker_generation: 1,
+            },
+            fps: 30,
+            total_frames: 1000,
+            start_frame: 300,
+            end_frame: 400,
+            scenes: vec![ScopedScene {
+                instance_id: "scene-1".into(),
+                name: "Selected".into(),
+                full_name: "Video::Selected".into(),
+                start_frame: 250,
+                end_frame: 450,
+            }],
+            boundary_frames: vec![249, 250, 299, 300, 399, 400, 449, 450],
+            scene_context_truncated: false,
+        }),
+        scene_sources: vec![],
+        scene_source_search_truncated: false,
+        style_snapshot: None,
+    };
+    scope.validate().unwrap();
+
+    let candidate = timeline("x", 1000, &[(0, 1000)], &[]);
+    let plan = plan_coverage_scoped(&candidate, 10, &ChangeSet::default(), Some(&scope));
+    assert_eq!(plan.requested_scope, "Frames [300..400)");
+    assert_eq!(plan.requested_interval, Some([300, 400]));
+    assert!(plan.complete);
+    for frame in &plan.requested_frames {
+        assert!(
+            plan.inspect_frames.contains(frame),
+            "not inspected: {frame}"
+        );
+        assert!(
+            plan.rendered_frames.contains(frame),
+            "not rendered: {frame}"
+        );
+    }
+    assert!(plan.requested_frames.contains(&300));
+    assert!(plan.requested_frames.contains(&399));
+    assert!(plan.requested_frames.contains(&249));
+    assert!(plan.requested_frames.contains(&450));
+
+    let shortened = timeline("x", 350, &[(0, 350)], &[]);
+    let plan = plan_coverage_scoped(&shortened, 10, &ChangeSet::default(), Some(&scope));
+    assert!(!plan.complete);
+    assert!(plan.requested_frames.iter().all(|frame| *frame < 350));
 }
 
 fn change(path: &str, change: ChangeKind, kind: studio_project::revision::FileKind) -> ChangedPath {
@@ -1562,6 +1622,33 @@ fn the_controller_captures_only_with_a_current_ticket_and_routes_validation_repo
         controller.agent_task().unwrap().state(),
         TaskState::RepairNeeded
     );
+}
+
+#[test]
+fn captured_candidate_retains_the_scope_frozen_on_the_task_context() {
+    let f = fixture();
+    let mut controller = Controller::open(&f.root, &f.paths).unwrap();
+    let project = studio_project::open(&f.root).unwrap();
+    let inventory = studio_project::revision::SourceInventory::scan(&f.root).unwrap();
+    let scope = TaskScope::whole_project(
+        String::from(project.manifest.project_id.clone()),
+        inventory.revision.as_str(),
+    );
+    let context = controller
+        .begin_agent_task_scoped("edit", scope.clone())
+        .unwrap();
+    controller
+        .agent_writer_started(&context.identity, qualified())
+        .unwrap();
+    controller
+        .agent_task_transition(&context.identity, TaskState::Editing)
+        .unwrap();
+    controller
+        .agent_task_transition(&context.identity, TaskState::Quiescing)
+        .unwrap();
+    let ticket = ticket(&mut controller, &context);
+    let captured = controller.agent_capture_candidate(ticket).unwrap();
+    assert_eq!(captured.scope(), &scope);
 }
 
 #[test]

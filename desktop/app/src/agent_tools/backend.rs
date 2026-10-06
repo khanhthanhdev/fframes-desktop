@@ -267,6 +267,61 @@ impl ArtifactStore {
         Ok(canonical)
     }
 
+    /// Reads a bounded PNG only when it belongs to `task`. This is used to attach
+    /// revision-bound evidence to an ACP prompt without exposing its app-private path.
+    pub fn read_png_for_task(
+        &self,
+        task: &AgentTaskId,
+        id: &str,
+        max_bytes: usize,
+    ) -> Result<Vec<u8>, ToolError> {
+        let well_formed = id
+            .strip_prefix("art-")
+            .is_some_and(|hex| hex.len() == 32 && hex.bytes().all(|b| b.is_ascii_hexdigit()));
+        if !well_formed {
+            return Err(ToolError::new(
+                ToolErrorCode::InvalidParams,
+                "malformed artifact id",
+            ));
+        }
+        let mut entries = self.entries.lock();
+        self.sweep(&mut entries);
+        let entry = entries.get(id).ok_or_else(|| {
+            ToolError::new(ToolErrorCode::NotFound, "unknown or expired artifact")
+        })?;
+        if &entry.task != task {
+            return Err(ToolError::new(
+                ToolErrorCode::Unauthorized,
+                "artifact belongs to another task",
+            ));
+        }
+        if entry.bytes > max_bytes as u64 {
+            return Err(ToolError::new(
+                ToolErrorCode::TooLarge,
+                "artifact exceeds the prompt image limit",
+            ));
+        }
+        let meta = std::fs::symlink_metadata(&entry.path)
+            .map_err(|_| ToolError::new(ToolErrorCode::NotFound, "artifact file is gone"))?;
+        let canonical = std::fs::canonicalize(&entry.path)
+            .map_err(|_| ToolError::new(ToolErrorCode::NotFound, "artifact file is gone"))?;
+        if meta.is_symlink() || !meta.is_file() || !canonical.starts_with(&self.root) {
+            return Err(ToolError::new(
+                ToolErrorCode::Unauthorized,
+                "artifact path escapes the app store",
+            ));
+        }
+        let bytes = std::fs::read(canonical)
+            .map_err(|_| ToolError::new(ToolErrorCode::NotFound, "artifact file is gone"))?;
+        if bytes.len() as u64 != entry.bytes || bytes.len() > max_bytes {
+            return Err(ToolError::new(
+                ToolErrorCode::TooLarge,
+                "artifact size changed or exceeds the prompt image limit",
+            ));
+        }
+        Ok(bytes)
+    }
+
     pub fn remove_task(&self, task: &AgentTaskId) {
         let mut entries = self.entries.lock();
         entries.retain(|_, a| {
@@ -404,7 +459,6 @@ struct TaskResources {
 struct Opened {
     restored: Arc<RestoredRevision>,
     revision: String,
-    label: RevisionLabel,
 }
 
 struct ToolWorker {
@@ -552,9 +606,14 @@ impl ProjectToolBackend {
         binding: &ToolBinding,
         request: &ToolRequest,
         draft: &Path,
-    ) -> Result<Arc<Opened>, ToolError> {
+        base: &SourceRevision,
+    ) -> Result<(Arc<Opened>, RevisionLabel), ToolError> {
         let task = &binding.task.task;
         let (revision, label) = match &binding.revision {
+            // The frozen task base is evidence of the *before* state, never a candidate.
+            BoundRevision::Fixed(revision) if revision == base => {
+                (revision.clone(), RevisionLabel::TaskBase)
+            }
             BoundRevision::Fixed(revision) => (revision.clone(), RevisionLabel::Candidate),
             BoundRevision::Draft => {
                 if let Some(asserted) = &request.assertions.revision {
@@ -596,7 +655,7 @@ impl ProjectToolBackend {
             .find(|(t, o)| t == task && o.revision == id)
         {
             self.remember(task, &id);
-            return Ok(opened.clone());
+            return Ok((opened.clone(), label));
         }
         let restored = restore_revision(&self.checkpoints, &revision)
             .map_err(|e| tool_error(ToolErrorCode::Unavailable, e.to_string()))?;
@@ -610,7 +669,6 @@ impl ProjectToolBackend {
         let opened = Arc::new(Opened {
             restored: Arc::new(restored),
             revision: id.clone(),
-            label,
         });
         let mut cache = self.opened.lock();
         cache.push((task.clone(), opened.clone()));
@@ -619,7 +677,7 @@ impl ProjectToolBackend {
         }
         drop(cache);
         self.remember(task, &id);
-        Ok(opened)
+        Ok((opened, label))
     }
 
     fn worker(
@@ -751,10 +809,10 @@ impl ProjectToolBackend {
         Ok(artifact)
     }
 
-    fn info(&self, opened: &Opened) -> RevisionInfo {
+    fn info(&self, opened: &Opened, label: RevisionLabel) -> RevisionInfo {
         RevisionInfo {
             id: opened.revision.clone(),
-            label: opened.label,
+            label,
             validated: false,
         }
     }
@@ -764,6 +822,7 @@ impl ProjectToolBackend {
         task: &TaskIdentity,
         base: &SourceRevision,
         opened: &Opened,
+        label: RevisionLabel,
     ) -> ToolReply {
         let project = &opened.restored.project;
         let files: Vec<Value> = project
@@ -792,7 +851,7 @@ impl ProjectToolBackend {
                 .collect()
         };
         ToolReply {
-            revision: self.info(opened),
+            revision: self.info(opened, label),
             result: json!({
                 "project": {
                     "id": String::from(project.manifest.project_id.clone()),
@@ -906,9 +965,9 @@ impl ToolBackend for ProjectToolBackend {
         if matches!(request.call, ToolCall::BuildStatus) {
             return Ok(self.build_status(binding, &base));
         }
-        let opened = self.resolve(binding, request, &draft)?;
+        let (opened, label) = self.resolve(binding, request, &draft, &base)?;
         if let ToolCall::ProjectContext = request.call {
-            return Ok(self.project_context(&binding.task, &base, &opened));
+            return Ok(self.project_context(&binding.task, &base, &opened, label));
         }
         let worker = self.worker(&binding.task, &opened, cancelled)?;
         if cancelled() {
@@ -916,7 +975,7 @@ impl ToolBackend for ProjectToolBackend {
         }
         let mut worker = worker.lock();
         let timeline = worker.timeline.clone();
-        let info = self.info(&opened);
+        let info = self.info(&opened, label);
         match &request.call {
             ToolCall::Timeline => Ok(ToolReply {
                 revision: info,

@@ -14,6 +14,56 @@ pub mod host;
 pub mod qualification;
 pub mod rows;
 
+/// Redacted observation of an evidence set: state, revision and frame labels only.
+fn evidence_telemetry(view: &crate::agent_workflow::EvidenceView) -> serde_json::Value {
+    serde_json::json!({
+        "state": format!("{:?}", view.state),
+        "revision": view.revision,
+        "artifacts": view.artifacts.iter().map(|a| serde_json::json!({
+            "label": a.label, "frames": a.frames, "bytes": a.bytes, "sha256": a.sha256[..12.min(a.sha256.len())],
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// One line per evidence set: its state, the immutable revision it was rendered from and
+/// the actual frames rendered. Never predicted pixels.
+fn evidence_summary(name: &str, view: &crate::agent_workflow::EvidenceView) -> String {
+    use crate::agent_workflow::EvidenceState;
+    let state = match view.state {
+        EvidenceState::Pending => "rendering…".to_owned(),
+        EvidenceState::Ready => {
+            let frames: Vec<String> = view
+                .artifacts
+                .iter()
+                .map(|a| format!("{} {:?}", a.label, a.frames))
+                .collect();
+            format!("{} · rendered {}", view.artifacts.len(), frames.join("; "))
+        }
+        EvidenceState::Unavailable => format!(
+            "unavailable: {}",
+            view.note.as_deref().unwrap_or("not rendered")
+        ),
+        EvidenceState::Released if !view.artifacts.is_empty() => {
+            let frames: Vec<String> = view
+                .artifacts
+                .iter()
+                .map(|a| format!("{} {:?}", a.label, a.frames))
+                .collect();
+            format!(
+                "{} · rendered {} · artifact files released with task",
+                view.artifacts.len(),
+                frames.join("; ")
+            )
+        }
+        EvidenceState::Released => "released with its task".to_owned(),
+    };
+    format!("{name} evidence (revision {}): {state}", view.revision)
+}
+
+fn evidence_image_key(task: &studio_engine::AgentTaskId, artifact_id: &str) -> String {
+    format!("{}:{artifact_id}", task.0)
+}
+
 use crate::{
     agent_workflow::{
         AdapterReadiness, AgentWorkflow, ChangeCard, ConflictView, HandoffState, HistoryEntry,
@@ -26,12 +76,12 @@ use crate::{
 };
 use controls::{
     Controls, InputKey, KeyMods, ReplyTracker, ReviewControls, SaveTracker, SubmitKind,
-    UndoControl, derive_controls, guidance, identity_lines, route_input_key,
+    UndoControl, derive_controls, guidance, route_input_key,
 };
 use gpui::{
     AnyElement, AppContext, Context, ElementId, Entity, EventEmitter, FollowMode,
     InteractiveElement, IntoElement, ListAlignment, ListState, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, list, px, rgb,
+    StatefulInteractiveElement, Styled, Window, canvas, div, list, px, rgb,
 };
 use host::{AdapterFields, AdapterFile, McpChoice};
 use parking_lot::Mutex;
@@ -39,6 +89,7 @@ use qualification::{OwnershipPolicy, Resolution};
 use rows::{ListOp, OVERDRAW_PX, ResidentLimits, RowKey, Viewport};
 use std::{
     cell::Cell,
+    collections::HashMap,
     rc::Rc,
     sync::{
         Arc,
@@ -46,7 +97,7 @@ use std::{
     },
 };
 use studio_agent_spike::driver::{ConfigKind, OptionValue, ToolStatus};
-use studio_engine::{DraftState, ReviewPolicy, app_paths::AppPaths};
+use studio_engine::{DraftState, ReviewPolicy, TaskScope, app_paths::AppPaths};
 
 const DANGER: u32 = 0x442c27;
 const WARNING: u32 = 0x3a3420;
@@ -145,6 +196,16 @@ pub struct ConversationPanel {
     replies: ReplyTracker,
     notice: Option<String>,
     sdk_ready: bool,
+    task_scope: Option<TaskScope>,
+    scope_error: Option<String>,
+    /// Measured bounds of the buttons a native driver must click (qualification only).
+    button_bounds: std::collections::HashMap<String, [f32; 4]>,
+    /// Current prompt input bounds, used by the native shell qualification harness.
+    prompt_bounds: Option<[f32; 4]>,
+    /// Current-task thumbnails are local presentation state, never workflow snapshot data.
+    evidence_images: HashMap<String, Arc<gpui::RenderImage>>,
+    /// Images removed from the current task; released from GPUI on the next render.
+    retired_evidence_images: Vec<Arc<gpui::RenderImage>>,
 }
 
 fn input(placeholder: &str, cx: &mut Context<ConversationPanel>) -> Entity<TextInput> {
@@ -193,6 +254,12 @@ impl ConversationPanel {
             replies: ReplyTracker::default(),
             notice: None,
             sdk_ready: false,
+            task_scope: None,
+            scope_error: None,
+            button_bounds: std::collections::HashMap::new(),
+            prompt_bounds: None,
+            evidence_images: HashMap::new(),
+            retired_evidence_images: Vec::new(),
         }
     }
 
@@ -230,6 +297,8 @@ impl ConversationPanel {
     pub fn detach(&mut self, cx: &mut Context<Self>) {
         self.attached = None;
         self.snapshot = None;
+        self.task_scope = None;
+        self.scope_error = None;
         self.older.clear();
         self.older_exhausted = false;
         self.hidden_newer = 0;
@@ -261,6 +330,25 @@ impl ConversationPanel {
         }
     }
 
+    /// Receives the latest immutable selection snapshot from the compiled timeline.
+    pub fn set_task_scope(
+        &mut self,
+        scope: Result<Option<TaskScope>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        match scope {
+            Ok(scope) => {
+                self.task_scope = scope;
+                self.scope_error = None;
+            }
+            Err(error) => {
+                self.task_scope = None;
+                self.scope_error = Some(error);
+            }
+        }
+        cx.notify();
+    }
+
     /// True while the prompt (or a setup field) holds keyboard focus.
     pub fn has_text_focus(&self, window: &Window, cx: &gpui::App) -> bool {
         use gpui::Focusable;
@@ -290,6 +378,11 @@ impl ConversationPanel {
             "phase": snapshot.task.as_ref().map(|t| t.phase.label()),
             "repair_used": snapshot.task.as_ref().map(|t| t.repair.used),
             "queue": snapshot.queue.len(),
+            "queue_stale": snapshot.queue.iter().filter(|q| q.stale_scope).count(),
+            "error_codes": snapshot.rows.iter().filter_map(|r| match &r.kind {
+                RowKind::Error(e) => Some(e.code.clone()),
+                _ => None,
+            }).take(20).collect::<Vec<_>>(),
             "review_policy": format!("{:?}", snapshot.review_policy),
             "list_items": self.list.item_count(),
             "view_rows": self.view_rows.len(),
@@ -303,6 +396,15 @@ impl ConversationPanel {
             "owned_processes": snapshot.resources.owned_processes,
             "broker_grants": snapshot.resources.broker_grants,
             "handoff": snapshot.handoff.as_ref().map(|h| format!("{:?}", h.state)),
+            "buttons": self.button_bounds,
+            "prompt_bounds": self.prompt_bounds,
+            "scope_error": self.scope_error,
+            "submit_scope": self.task_scope.as_ref().map(|scope| scope.label()),
+            "task_scope": snapshot.task.as_ref().map(|t| t.scope.label()),
+            "image_limitation": snapshot.task.as_ref().and_then(|t| t.image_limitation.clone()),
+            "evidence_preview_count": self.evidence_images.len(),
+            "before_evidence": snapshot.task.as_ref().and_then(|t| t.before.as_ref()).map(evidence_telemetry),
+            "after_evidence": snapshot.task.as_ref().and_then(|t| t.after.as_ref()).map(evidence_telemetry),
             "undo": match &snapshot.undo {
                 UndoView::Available { .. } => "available",
                 UndoView::Unavailable { .. } => "unavailable",
@@ -329,6 +431,7 @@ impl ConversationPanel {
             self.after_snapshot(cx);
             changed = true;
         }
+        changed |= self.sync_evidence_images();
         let finished = self.page.done.lock().take();
         if let Some((page_serial, result)) = finished {
             self.page.loading.store(false, Ordering::Release);
@@ -375,6 +478,51 @@ impl ConversationPanel {
             });
             self.prompt_kind = Some(controls.submit.kind);
         }
+    }
+
+    /// Copies only decoded UI handles for the current task out of the workflow's bounded
+    /// presentation cache, and retires no-longer-visible images for GPUI cleanup.
+    fn sync_evidence_images(&mut self) -> bool {
+        let mut desired = HashMap::new();
+        if let (Some(attached), Some(snapshot)) = (&self.attached, &self.snapshot)
+            && let Some(task) = &snapshot.task
+        {
+            for view in [task.before.as_ref(), task.after.as_ref()]
+                .into_iter()
+                .flatten()
+            {
+                for artifact in &view.artifacts {
+                    if let Some(image) = attached.workflow.evidence_image(&task.id, &artifact.id) {
+                        desired.insert(evidence_image_key(&task.id, &artifact.id), image);
+                    }
+                }
+            }
+        }
+
+        let retired: Vec<String> = self
+            .evidence_images
+            .keys()
+            .filter(|key| !desired.contains_key(*key))
+            .cloned()
+            .collect();
+        let mut changed = false;
+        for key in retired {
+            if let Some(image) = self.evidence_images.remove(&key) {
+                self.retired_evidence_images.push(image);
+                changed = true;
+            }
+        }
+        for (key, image) in desired {
+            if self
+                .evidence_images
+                .get(&key)
+                .is_none_or(|current| !Arc::ptr_eq(current, &image))
+            {
+                self.evidence_images.insert(key, image);
+                changed = true;
+            }
+        }
+        changed
     }
 
     fn recompose(&mut self, _cx: &mut Context<Self>) {
@@ -503,11 +651,22 @@ impl ConversationPanel {
             self.say(reason, cx);
             return;
         }
+        if let Some(error) = &self.scope_error {
+            self.say(
+                format!("The selected timeline scope is unavailable: {error}"),
+                cx,
+            );
+            return;
+        }
         let text = self.prompt.read(cx).content().to_owned();
         let workflow = attached.workflow.clone();
+        let scope = self.task_scope.clone();
         let sent = match &controls.submit.kind {
             SubmitKind::Clarify(task) => workflow.reply_clarification(task, &text),
-            SubmitKind::Brief | SubmitKind::Queue => workflow.submit(&text).map(|_| ()),
+            SubmitKind::Brief | SubmitKind::Queue => match scope {
+                Some(scope) => workflow.submit_scoped(&text, scope).map(|_| ()),
+                None => workflow.submit(&text).map(|_| ()),
+            },
         };
         if self.command(sent, cx).is_some() {
             self.notice = None;
@@ -755,6 +914,14 @@ impl ConversationPanel {
         let label: SharedString = label.into();
         let action = Rc::new(action);
         let on_click = action.clone();
+        let id: ElementId = id.into();
+        let measured = match &id {
+            ElementId::Name(name) if matches!(name.as_ref(), "agent-policy" | "agent-apply") => {
+                Some(name.to_string())
+            }
+            _ => None,
+        };
+        let entity = cx.entity();
         let (background, border) = match tone {
             Tone::Normal => (PANEL, BORDER),
             Tone::Primary => (0x24476f, ACCENT),
@@ -762,6 +929,7 @@ impl ConversationPanel {
         };
         div()
             .id(id)
+            .relative()
             .role(gpui::Role::Button)
             .aria_label(label.clone())
             .tab_index(0)
@@ -790,6 +958,28 @@ impl ConversationPanel {
                 }),
             )
             .child(label)
+            .children(measured.map(|name| {
+                canvas(
+                    move |bounds, _, cx| {
+                        entity.update(cx, |panel, _| {
+                            panel.button_bounds.insert(
+                                name,
+                                [
+                                    f32::from(bounds.left()),
+                                    f32::from(bounds.top()),
+                                    f32::from(bounds.size.width),
+                                    f32::from(bounds.size.height),
+                                ],
+                            );
+                        });
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+            }))
     }
 
     fn tab_button(
@@ -1185,6 +1375,7 @@ impl ConversationPanel {
             TaskPhase::Accepted => SUCCESS,
             TaskPhase::Failed | TaskPhase::Conflict => DANGER,
             TaskPhase::AwaitingReview
+            | TaskPhase::AwaitingEvidence
             | TaskPhase::WaitingPermission
             | TaskPhase::WaitingClarification
             | TaskPhase::Interrupted => WARNING,
@@ -1208,8 +1399,26 @@ impl ConversationPanel {
                     ""
                 }
             )));
-        for (name, value) in identity_lines(task) {
-            banner = banner.child(Self::line(format!("{name}: {value}")));
+        let id = task.id.0.as_str();
+        banner = banner.child(Self::line(format!(
+            "Task {} · generation {} · base {}",
+            &id[..id.len().min(8)],
+            task.generation,
+            task.source_base
+        )));
+        if !matches!(
+            task.phase,
+            TaskPhase::AwaitingReview | TaskPhase::AwaitingEvidence
+        ) {
+            banner = banner.child(Self::line(format!(
+                "{} · {} of {} automatic repairs",
+                match task.review_policy {
+                    ReviewPolicy::AutoApply => "Apply automatically",
+                    ReviewPolicy::ManualReview => "Manual review",
+                },
+                task.repair.used,
+                task.repair.max
+            )));
         }
         if let Some(reason) = &task.reason {
             banner = banner.child(Self::line(reason.clone()));
@@ -1424,6 +1633,95 @@ impl ConversationPanel {
         if let Some(bar) = self.options_bar(&snapshot, controls, cx) {
             column = column.child(bar);
         }
+        if let Some(error) = &self.scope_error {
+            column = column.child(Self::line(format!("Timeline scope unavailable: {error}")));
+        } else if let Some(scope) = &self.task_scope {
+            let same_as_task = snapshot
+                .task
+                .as_ref()
+                .filter(|task| !task.phase.is_terminal())
+                .is_some_and(|task| task.scope.label() == scope.label());
+            if !same_as_task {
+                column = column.child(Self::line(format!("Submit scope: {}", scope.label())));
+            }
+        }
+        if let Some(task) = &snapshot.task {
+            let label = if task.phase.is_terminal() {
+                "Last task scope"
+            } else {
+                "Frozen task scope"
+            };
+            column = column.child(Self::line(format!("{label}: {}", task.scope.label())));
+        }
+        if let Some(task) = &snapshot.task {
+            let mut evidence_cards = div().flex().gap_1();
+            let mut has_evidence_card = false;
+            for (name, view) in [("Before", &task.before), ("After", &task.after)] {
+                if let Some(view) = view {
+                    let selected = view
+                        .artifacts
+                        .iter()
+                        .find(|artifact| artifact.label == "selected")
+                        .or_else(|| view.artifacts.first());
+                    let image = selected.and_then(|artifact| {
+                        self.evidence_images
+                            .get(&evidence_image_key(&task.id, &artifact.id))
+                    });
+                    if let (Some(artifact), Some(image)) = (selected, image) {
+                        has_evidence_card = true;
+                        let boundaries = view
+                            .artifacts
+                            .iter()
+                            .filter(|other| other.id != artifact.id)
+                            .flat_map(|other| other.frames.iter().copied())
+                            .map(|frame| frame.to_string())
+                            .collect::<Vec<_>>()
+                            .join(",");
+                        evidence_cards = evidence_cards.child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .flex()
+                                .flex_col()
+                                .gap_1()
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .child(format!("{name} · revision {}", view.revision)),
+                                )
+                                .child(gpui::img(image.clone()).w(px(128.)).h(px(72.)))
+                                .child(div().text_xs().text_color(rgb(MUTED)).child(format!(
+                                    "{} · {} frames{}",
+                                    artifact.label,
+                                    artifact.frames.len(),
+                                    if boundaries.is_empty() {
+                                        String::new()
+                                    } else {
+                                        format!(" · edge {boundaries}")
+                                    }
+                                ))),
+                        );
+                    } else {
+                        column = column.child(Self::line(evidence_summary(name, view)));
+                    }
+                }
+            }
+            if has_evidence_card {
+                column = column.child(evidence_cards);
+            }
+            if let Some(limit) = task
+                .image_limitation
+                .as_ref()
+                .filter(|_| task.before.is_some())
+            {
+                let summary = if limit.contains("Text-only") {
+                    "Image context is text-only; the agent receives artifact references."
+                } else {
+                    limit
+                };
+                column = column.child(Self::line(summary.to_owned()));
+            }
+        }
         if self.log_has_older() {
             let loading = self.page.loading.load(Ordering::Acquire);
             column = column.child(self.button(
@@ -1490,7 +1788,22 @@ impl ConversationPanel {
                         .flex()
                         .justify_between()
                         .items_center()
-                        .child(div().text_xs().child(item.summary.clone()))
+                        .child(
+                            div()
+                                .flex()
+                                .flex_col()
+                                .child(div().text_xs().child(item.summary.clone()))
+                                .children(item.scope.as_ref().map(|scope| {
+                                    Self::line(format!(
+                                        "{scope}{}",
+                                        if item.stale_scope {
+                                            " · stale — will be refused"
+                                        } else {
+                                            ""
+                                        }
+                                    ))
+                                })),
+                        )
                         .child(self.button(
                             format!("queue-remove-{id}"),
                             "Remove",
@@ -1517,6 +1830,7 @@ impl ConversationPanel {
         let enabled = controls.submit.blocked.is_none();
         let label = controls.submit.label();
         let hint = controls.submit.blocked.clone();
+        let entity = cx.entity();
         let mut buttons = div().flex().gap_1().items_center();
         buttons = buttons.child(self.button(
             "agent-send",
@@ -1540,6 +1854,25 @@ impl ConversationPanel {
                         let prompt = this.prompt.clone();
                         this.key_in_field(&prompt, event, true, window, cx);
                     }))
+                    .child(
+                        canvas(
+                            move |bounds, _, cx| {
+                                entity.update(cx, |panel, _| {
+                                    panel.prompt_bounds = Some([
+                                        f32::from(bounds.left()),
+                                        f32::from(bounds.top()),
+                                        f32::from(bounds.size.width),
+                                        f32::from(bounds.size.height),
+                                    ]);
+                                });
+                            },
+                            |_, _, _, _| {},
+                        )
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full(),
+                    )
                     .child(self.prompt.clone()),
             )
             .children(hint.map(Self::line))
@@ -2006,7 +2339,11 @@ fn history_line(entry: &HistoryEntry) -> gpui::Div {
 }
 
 impl Render for ConversationPanel {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.sync_evidence_images();
+        for image in self.retired_evidence_images.drain(..) {
+            let _ = window.drop_image(image);
+        }
         let mut root = div()
             .id("agent-panel")
             .role(gpui::Role::Group)

@@ -631,6 +631,7 @@ mod tests {
             build: None,
             validation_report_sha256: "0".repeat(64),
             committed_unix: 0,
+            preset: None,
         }
     }
 

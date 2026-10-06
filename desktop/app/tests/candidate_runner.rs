@@ -933,6 +933,46 @@ fn six_tools_answer_for_labelled_immutable_draft_revisions() {
     assert!(t.backend.worker_count() <= 2);
 }
 
+#[test]
+fn cached_revision_labels_follow_the_binding_not_the_open_order() {
+    for draft_first in [false, true] {
+        let mut w = world();
+        let context = w.start();
+        let t = tools(&w);
+        let draft = draft_binding(&t, &context);
+        let base_revision = context.source_base.revision().clone();
+        let base = ToolBinding {
+            task: context.identity.clone(),
+            revision: BoundRevision::Fixed(base_revision.clone()),
+        };
+
+        if draft_first {
+            let draft_reply = call(&t, &draft, "project_context", json!({})).unwrap();
+            assert_eq!(draft_reply["revision"]["id"], base_revision.as_str());
+            assert_eq!(draft_reply["revision"]["label"], "draft_snapshot");
+
+            let base_reply = call(&t, &base, "project_context", json!({})).unwrap();
+            assert_eq!(base_reply["revision"]["id"], base_revision.as_str());
+            assert_eq!(base_reply["revision"]["label"], "task_base");
+        } else {
+            let base_reply = call(&t, &base, "project_context", json!({})).unwrap();
+            assert_eq!(base_reply["revision"]["label"], "task_base");
+
+            let draft_reply = call(
+                &t,
+                &draft,
+                "project_context",
+                json!({"revision": base_revision.as_str()}),
+            )
+            .unwrap();
+            assert_eq!(draft_reply["revision"]["id"], base_revision.as_str());
+            assert_eq!(draft_reply["revision"]["label"], "draft_snapshot");
+        }
+
+        t.backend.close();
+    }
+}
+
 fn sha2_hex(bytes: &[u8]) -> impl std::fmt::LowerHex {
     use sha2::Digest;
     sha2::Sha256::digest(bytes)
@@ -1158,6 +1198,24 @@ fn artifact_store_enforces_ids_expiry_size_and_symlink_containment() {
     let png = vec![0u8; 100];
     let artifact = store.put_png(&task, &png, 1, 1).unwrap();
     assert!(artifact.id.starts_with("art-") && artifact.id.len() == 36);
+    assert_eq!(
+        store.read_png_for_task(&task, &artifact.id, 100).unwrap(),
+        png
+    );
+    assert_eq!(
+        store
+            .read_png_for_task(&studio_engine::AgentTaskId::new(), &artifact.id, 100)
+            .err()
+            .map(|error| error.code),
+        Some(ToolErrorCode::Unauthorized)
+    );
+    assert_eq!(
+        store
+            .read_png_for_task(&task, &artifact.id, 99)
+            .err()
+            .map(|error| error.code),
+        Some(ToolErrorCode::TooLarge)
+    );
     assert_eq!(
         store.resolve(&artifact.id).unwrap(),
         PathBuf::from(&artifact.path)

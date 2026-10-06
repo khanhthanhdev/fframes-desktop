@@ -3,6 +3,7 @@
 //! owned thread and reports back with one message; none ever waits on the actor.
 use super::{
     actor::Msg,
+    model::EvidenceKind,
     model::{ChangeCard, HandoffKind, TaskPhase, ValidationCard},
     present,
     tools::BuildSettings,
@@ -399,21 +400,26 @@ fn acquire(gate: &WriterGate) -> Option<WriterGuard> {
 // ---- job admission ---------------------------------------------------------------------------
 
 /// Which background operation a job thread belongs to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum JobKind {
     Probe,
     Pipeline,
     Promote,
     Undo,
+    Evidence {
+        task: studio_engine::AgentTaskId,
+        kind: EvidenceKind,
+    },
 }
 
 impl JobKind {
-    pub(crate) fn name(self) -> &'static str {
+    pub(crate) fn name(&self) -> &'static str {
         match self {
             Self::Probe => "probe",
             Self::Pipeline => "pipeline",
             Self::Promote => "promote",
             Self::Undo => "undo",
+            Self::Evidence { .. } => "evidence",
         }
     }
 }
@@ -451,14 +457,15 @@ pub(crate) fn spawn_job<T: Send + 'static>(
     payload: T,
     run: impl FnOnce(T) + Send + 'static,
 ) -> Result<std::thread::JoinHandle<()>, (String, T)> {
-    let fault = faults.map_or(JobFault::None, |f| f(kind.name()));
+    let name = kind.name();
+    let fault = faults.map_or(JobFault::None, |f| f(name));
     if fault == JobFault::Refuse {
         return Err(("injected thread creation failure".to_owned(), payload));
     }
     let slot = Arc::new(Mutex::new(Some(payload)));
     let inner = slot.clone();
     let spawned = std::thread::Builder::new()
-        .name(format!("studio-workflow-{}", kind.name()))
+        .name(format!("studio-workflow-{name}"))
         .spawn(move || {
             let Some(payload) = inner.lock().take() else {
                 return;

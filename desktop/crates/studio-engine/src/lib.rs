@@ -8,9 +8,11 @@ pub mod diagnostics;
 pub mod edit_transaction;
 pub mod journal;
 pub mod playback_clock;
+pub mod preset_state;
 pub mod preview_state;
 pub mod state;
 pub mod store;
+pub mod task_scope;
 pub mod timeline;
 pub use agent_task::{
     AgentTask, AgentTaskContext, AgentTaskId, AgentTaskManager, CandidateRevision, CaptureTicket,
@@ -19,14 +21,25 @@ pub use agent_task::{
     TaskSourceBase, TaskState, TurnCompletion, WriterGeneration, WriterGoneEvidence,
     WriterObservation, evaluate_quiescence,
 };
-pub use controller::{CompletionOutcome, Controller, Promotion, RecoveryStatus, UndoPreparation};
+pub use controller::{
+    CompletionOutcome, Controller, PresetMutation, PresetOutcome, Promotion, RecoveryStatus,
+    UndoPreparation,
+};
 pub use edit_transaction::{
     ApplyGate, Boundary, ConflictReport, Fault, FileDelta, FileState, NoHooks, PlanError,
     PromotionError, TaskRevisionRecord, TransactionHooks, TransactionKind,
 };
 pub use playback_clock::*;
+pub use preset_state::{
+    PresetAction, PresetPlan, PresetProvenance, PresetRequest, PresetStateError, ProjectStyle,
+};
 pub use preview_state::*;
 pub use state::*;
+pub use task_scope::{
+    CompiledScope, SceneSourceCandidate, SceneSourceReference, SceneSourceResolution,
+    ScopeSelection, ScopedScene, SourceMatchConfidence, StyleSnapshotIdentity, TaskScope,
+    TaskScopeError,
+};
 pub use timeline::*;
 
 #[derive(Debug, thiserror::Error)]
@@ -48,7 +61,11 @@ pub enum EngineError {
     #[error("{0}")]
     Candidate(#[from] crate::candidate_validation::CandidateError),
     #[error("{0}")]
+    TaskScope(#[from] TaskScopeError),
+    #[error("{0}")]
     Promotion(#[from] PromotionError),
+    #[error("{0}")]
+    Preset(#[from] PresetStateError),
     #[error(
         "{what} was written by a newer Studio (format {found}, this version supports {supported}); update Studio. Source and history were not changed"
     )]

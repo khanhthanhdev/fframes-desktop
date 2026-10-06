@@ -2,9 +2,11 @@
 //! `WriterGate`. Created lazily on the first task that can use it and shut down with the
 //! workflow; every task registers, is granted a capability and is revoked/unregistered on
 //! every exit path.
+use super::model::{EvidenceArtifact, EvidenceState, EvidenceView};
 use crate::{
     agent_tools::{
-        BoundRevision, TaskLiveness, ToolBinding, ToolDispatcher,
+        Assertions, BoundRevision, TaskLiveness, ToolBackend, ToolBinding, ToolCall,
+        ToolDispatcher, ToolRequest,
         backend::{ProjectToolBackend, ToolBackendConfig, WriterGate},
         broker::{BrokerConfig, MAX_GRANT_TTL, ToolBroker, ToolGrant},
         mcp_server_for,
@@ -15,8 +17,8 @@ use parking_lot::Mutex;
 use std::{path::PathBuf, sync::Arc};
 use studio_agent_spike::McpStdioServer;
 use studio_bootstrap::ProcessTreeManager;
-use studio_engine::{AgentTaskContext, TaskIdentity};
-use studio_project::ProjectId;
+use studio_engine::{AgentTaskContext, CompiledScope, TaskIdentity};
+use studio_project::{ProjectId, SourceRevision};
 use studio_sdk::CompatibilityManifest;
 
 /// What the tool backend compiles against.
@@ -101,6 +103,12 @@ impl ToolRuntime {
         })
     }
 
+    /// A handle for a background evidence job. The job only ever executes read-only
+    /// calls bound to one immutable revision of one registered task.
+    pub(crate) fn backend(&self) -> Arc<ProjectToolBackend> {
+        self.backend.clone()
+    }
+
     pub(crate) fn gate(&self) -> &WriterGate {
         &self.gate
     }
@@ -158,5 +166,116 @@ impl ToolRuntime {
     pub(crate) fn shutdown(self) {
         self.broker.shutdown();
         self.backend.close();
+    }
+}
+
+/// Most selected frames tiled into the one selected strip artifact.
+const MAX_EVIDENCE_STRIP_FRAMES: usize = 6;
+/// Tile scale of evidence renders: small, so a strip stays far below the artifact bound.
+const EVIDENCE_SCALE: f64 = 0.25;
+
+/// Renders the actual frames around a frozen scope from ONE immutable `revision` of the
+/// registered task: a strip of up to [`MAX_EVIDENCE_STRIP_FRAMES`] evenly spaced selected
+/// frames plus the frames just outside the selection on either side (the adjacent
+/// boundaries). Blocking: run it on a job thread. Any refusal makes the whole set
+/// `Unavailable` with the tool's own message; nothing is ever substituted.
+pub(crate) fn render_scope_evidence(
+    backend: &ProjectToolBackend,
+    identity: &TaskIdentity,
+    revision: &SourceRevision,
+    scope: &CompiledScope,
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> EvidenceView {
+    let short = super::present::short(revision.as_str());
+    let binding = ToolBinding {
+        task: identity.clone(),
+        revision: BoundRevision::Fixed(revision.clone()),
+    };
+    let mut plan: Vec<(&str, ToolCall)> = Vec::new();
+    if scope.start_frame < scope.end_frame {
+        let count = (scope.end_frame - scope.start_frame).min(MAX_EVIDENCE_STRIP_FRAMES);
+        plan.push((
+            "selected",
+            ToolCall::RenderStrip {
+                start: scope.start_frame,
+                end: scope.end_frame - 1,
+                count,
+                scale: EVIDENCE_SCALE,
+            },
+        ));
+    }
+    if scope.start_frame > 0 && scope.start_frame <= scope.total_frames {
+        plan.push((
+            "before-boundary",
+            ToolCall::RenderFrame {
+                frame: scope.start_frame - 1,
+                scale: EVIDENCE_SCALE,
+            },
+        ));
+    }
+    if scope.end_frame < scope.total_frames {
+        plan.push((
+            "after-boundary",
+            ToolCall::RenderFrame {
+                frame: scope.end_frame,
+                scale: EVIDENCE_SCALE,
+            },
+        ));
+    }
+    let unavailable = |note: String| EvidenceView {
+        state: EvidenceState::Unavailable,
+        revision: short.clone(),
+        artifacts: Vec::new(),
+        note: Some(super::present::message(&note)),
+    };
+    if plan.is_empty() {
+        return unavailable("the scope selects no frame and has no neighbouring frame".into());
+    }
+    let mut artifacts = Vec::new();
+    for (label, call) in plan {
+        let frames: Vec<usize> = match &call {
+            ToolCall::RenderStrip {
+                start, end, count, ..
+            } => (0..*count)
+                .map(|i| {
+                    if *count == 1 {
+                        *start
+                    } else {
+                        start + (end - start) * i / (count - 1)
+                    }
+                })
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
+            ToolCall::RenderFrame { frame, .. } => vec![*frame],
+            _ => Vec::new(),
+        };
+        let request = ToolRequest {
+            assertions: Assertions::default(),
+            call,
+        };
+        match backend.execute(&binding, &request, cancelled) {
+            Ok(reply) => {
+                let Some(artifact) = reply.artifacts.into_iter().next() else {
+                    return unavailable(format!("the {label} render returned no image"));
+                };
+                artifacts.push(EvidenceArtifact {
+                    label: label.to_owned(),
+                    frames,
+                    id: artifact.id,
+                    bytes: artifact.bytes,
+                    sha256: artifact.sha256,
+                    width: artifact.width,
+                    height: artifact.height,
+                });
+            }
+            Err(error) => return unavailable(format!("{label}: {error}")),
+        }
+    }
+    EvidenceView {
+        state: EvidenceState::Ready,
+        revision: short,
+        artifacts,
+        note: None,
     }
 }

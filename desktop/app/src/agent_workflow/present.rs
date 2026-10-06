@@ -196,6 +196,11 @@ pub fn engine_error(error: &EngineError, retained: bool) -> StructuredError {
                 "The working copy was kept.",
             ),
         },
+        EngineError::TaskScope(_) => (
+            "stale_task_scope",
+            "The selected scope is stale",
+            "The project source or compiled timeline changed after this brief was submitted. The saved scene/range was not remapped; reselect it and send the brief again.",
+        ),
         EngineError::Candidate(CandidateError::DraftChanged) => (
             "draft_changed",
             "The working copy changed while it was captured",
@@ -243,6 +248,10 @@ pub fn change_card(changes: &ChangeSet) -> ChangeCard {
 pub fn validation_card(report: &ValidationReport) -> ValidationCard {
     let coverage = report.coverage().map(|c| CoverageView {
         total_frames: c.total_frames,
+        requested_scope: c.requested_scope.clone(),
+        requested_interval: c.requested_interval,
+        requested_frames: c.requested_frames.clone(),
+        rendered_frame_indexes: c.rendered_frames.clone(),
         rendered_frames: c.rendered_frames.len(),
         inspected_frames: c.inspected_frames,
         boundary_frames: c.boundary_frames.len(),
@@ -324,8 +333,94 @@ pub fn validation_card(report: &ValidationReport) -> ValidationCard {
     }
 }
 
+/// Shown when the adapter does not negotiate ACP image prompts.
+pub const IMAGE_LIMITATION: &str = "Text-only: this adapter did not negotiate ACP image prompts, so before frames remain app-owned artifact references.";
+
+/// The before-evidence paragraph of a scoped first prompt: ids, hashes, sizes and frame
+/// indexes of artifacts rendered from the frozen base. Image bytes are separate ACP
+/// content blocks and never appear in this text or the persisted transcript.
+pub fn before_evidence_prompt(view: &EvidenceView, image_limitation: Option<&str>) -> String {
+    let mut text = format!(
+        "\nBefore evidence (frozen source base {}):\n",
+        view.revision
+    );
+    match view.state {
+        EvidenceState::Ready => {
+            for artifact in &view.artifacts {
+                text.push_str(&format!(
+                    "- {}: frames {:?}, {}x{} PNG, {} bytes, sha256 {} (app artifact {})\n",
+                    artifact.label,
+                    artifact.frames,
+                    artifact.width,
+                    artifact.height,
+                    artifact.bytes,
+                    &artifact.sha256[..12],
+                    artifact.id
+                ));
+            }
+            if let Some(limitation) = image_limitation {
+                text.push_str(limitation);
+                text.push('\n');
+            }
+        }
+        _ => text.push_str(&format!(
+            "- unavailable: {}\n",
+            view.note.as_deref().unwrap_or("not rendered")
+        )),
+    }
+    text.push_str(
+        "You can render the same frames of your working copy with the render_frame/render_strip tools to compare.\n",
+    );
+    text
+}
+
+const MAX_STYLE_FILE_BYTES: u64 = 64 * 1024;
+const MAX_STYLE_TOKENS: usize = 60;
+
+/// The resolved design tokens of the task's working copy (`style/tokens.json`), bounded:
+/// names, types and compact values, so the agent binds semantic tokens instead of copying
+/// literals. Unreadable or oversized style data is reported, never guessed.
+pub(crate) fn style_section(draft: &std::path::Path) -> String {
+    let path = draft.join("style/tokens.json");
+    let unavailable = |why: &str| format!("Resolved style tokens unavailable: {why}.\n");
+    let Ok(meta) = std::fs::metadata(&path) else {
+        return unavailable("the working copy has no style/tokens.json");
+    };
+    if meta.len() > MAX_STYLE_FILE_BYTES {
+        return unavailable("style/tokens.json exceeds the context bound");
+    }
+    let Ok(bytes) = std::fs::read(&path) else {
+        return unavailable("style/tokens.json could not be read");
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return unavailable("style/tokens.json is not valid JSON");
+    };
+    let Some(tokens) = value.get("tokens").and_then(|t| t.as_object()) else {
+        return unavailable("style/tokens.json has no tokens object");
+    };
+    let mut text = String::from(
+        "Resolved style tokens (read through fframes::Styles by semantic name; prefer these over literals):\n",
+    );
+    for (name, token) in tokens.iter().take(MAX_STYLE_TOKENS) {
+        let kind = token.get("type").and_then(|t| t.as_str()).unwrap_or("?");
+        let rendered = token
+            .get("value")
+            .map(|v| v.to_string())
+            .unwrap_or_default();
+        text.push_str(&format!("- {name} ({kind}): {}\n", message(&rendered)));
+    }
+    if tokens.len() > MAX_STYLE_TOKENS {
+        text.push_str(&format!(
+            "- … {} more tokens in style/tokens.json\n",
+            tokens.len() - MAX_STYLE_TOKENS
+        ));
+    }
+    text
+}
+
 /// The first prompt of a task: the user's brief verbatim, then bounded, deterministic
-/// context. No scoped packet and no retrieval: only the brief, what exists and the rules.
+/// context: the frozen scope, the working copy's design tokens when it has `style/tokens.json`
+/// (read at the task's start, when the working copy equals its base), what exists and the rules.
 pub fn first_prompt(context: &AgentTaskContext, route: &ToolRoute) -> String {
     let mut text = context.brief.clone();
     text.push_str("\n\n---\n");
@@ -336,6 +431,10 @@ pub fn first_prompt(context: &AgentTaskContext, route: &ToolRoute) -> String {
     text.push_str(
         "When you are done, end your turn. The app then validates the result (compile, timeline, rendered frames, audio) and applies it. If you need a clarification, ask one concise question in plain text and end your turn WITHOUT changing files; the answer arrives as your next prompt.\n",
     );
+    text.push_str(&context.scope.prompt_context());
+    if context.draft.join("style/tokens.json").exists() {
+        text.push_str(&style_section(&context.draft));
+    }
     let list = |label: &str, files: &[studio_project::revision::SourceFile], text: &mut String| {
         if files.is_empty() {
             return;
@@ -415,6 +514,92 @@ pub fn repair_prompt(context: &FailureContext, route: &ToolRoute) -> String {
 mod tests {
     use super::*;
     use studio_agent_spike::driver::Phase;
+
+    fn artifact(label: &str, frames: Vec<usize>) -> EvidenceArtifact {
+        EvidenceArtifact {
+            label: label.into(),
+            frames,
+            id: "artifact-7".into(),
+            bytes: 4096,
+            sha256: "0123456789abcdef".repeat(4),
+            width: 480,
+            height: 270,
+        }
+    }
+
+    #[test]
+    fn ready_before_evidence_names_frames_hashes_and_the_text_only_limit_without_pixels_or_paths() {
+        let text = before_evidence_prompt(
+            &EvidenceView {
+                state: EvidenceState::Ready,
+                revision: "d58449c3e9ec".into(),
+                artifacts: vec![
+                    artifact("selected", vec![17, 20, 23]),
+                    artifact("after-boundary", vec![33]),
+                ],
+                note: None,
+            },
+            Some(IMAGE_LIMITATION),
+        );
+        assert!(text.contains("frozen source base d58449c3e9ec"), "{text}");
+        assert!(text.contains("selected: frames [17, 20, 23]"), "{text}");
+        assert!(text.contains("after-boundary: frames [33]"), "{text}");
+        assert!(text.contains("sha256 0123456789ab"), "{text}");
+        assert!(text.contains(IMAGE_LIMITATION), "{text}");
+        assert!(
+            !text.contains("base64") && !text.contains("data:image"),
+            "{text}"
+        );
+        assert!(
+            !text.contains("/tmp") && !text.contains("/root") && !text.contains(".png"),
+            "no project or artifact path: {text}"
+        );
+    }
+
+    #[test]
+    fn the_style_section_lists_bounded_tokens_and_reports_missing_or_bad_files() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(style_section(dir.path()).contains("unavailable"));
+        std::fs::create_dir_all(dir.path().join("style")).unwrap();
+        std::fs::write(dir.path().join("style/tokens.json"), "not json").unwrap();
+        assert!(style_section(dir.path()).contains("not valid JSON"));
+        let tokens: serde_json::Map<String, serde_json::Value> = (0..70)
+            .map(|i| {
+                (
+                    format!("spacing.s{i:02}"),
+                    serde_json::json!({"type": "dimension", "value": i as f64}),
+                )
+            })
+            .collect();
+        std::fs::write(
+            dir.path().join("style/tokens.json"),
+            serde_json::json!({"schema": 1, "tokens": tokens}).to_string(),
+        )
+        .unwrap();
+        let text = style_section(dir.path());
+        assert!(text.contains("- spacing.s00 (dimension): 0.0"), "{text}");
+        assert!(text.contains("… 10 more tokens"), "{text}");
+        assert!(!text.contains("spacing.s69"), "{text}");
+    }
+
+    #[test]
+    fn unavailable_before_evidence_says_why_and_never_pretends_to_have_frames() {
+        let text = before_evidence_prompt(
+            &EvidenceView {
+                state: EvidenceState::Unavailable,
+                revision: "d58449c3e9ec".into(),
+                artifacts: Vec::new(),
+                note: Some("the baseline build failed".into()),
+            },
+            Some(IMAGE_LIMITATION),
+        );
+        assert!(
+            text.contains("unavailable: the baseline build failed"),
+            "{text}"
+        );
+        assert!(!text.contains("sha256"), "{text}");
+        assert!(!text.contains(IMAGE_LIMITATION), "{text}");
+    }
 
     #[test]
     fn messages_are_redacted_and_bounded_on_a_character_boundary() {

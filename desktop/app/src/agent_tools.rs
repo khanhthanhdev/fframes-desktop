@@ -106,7 +106,8 @@ pub enum RevisionLabel {
     DraftSnapshot,
     /// The quiesced candidate under validation.
     Candidate,
-    /// The task's source base; only reported by `build_status`, which captures nothing.
+    /// The task's frozen source base: reported by `build_status` and, for a fixed binding
+    /// to exactly that revision, by the before-evidence renders.
     TaskBase,
 }
 
