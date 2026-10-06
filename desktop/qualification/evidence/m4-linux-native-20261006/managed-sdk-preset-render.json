@@ -1,0 +1,25 @@
+{
+  "schema": "m4-development/1",
+  "evidence_kind": "development",
+  "gate": "dev_managed_sdk_preset_render",
+  "result": "pass",
+  "command": "python3 desktop/scripts/test-preset-relocation.py --sdk <locally assembled managed SDK> --out <fresh evidence directory>",
+  "exit_code": 0,
+  "fixture_only": true,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "overlay": false,
+  "summary": "The locally assembled managed SDK from this checkout exposes fframes::Styles and was used directly, without the overlay branch. The same src/lib.rs rendered differently under editorial and pulse; a project override changed output; overridden pixels matched after close/reopen and relocation; token, font and resource hashes matched across those stages; inspect without system fonts passed with each preset's bundled font and exited 2 when the font was removed; the checked-in pre-M4 project opened, built and rendered without source/Cargo rewrites.",
+  "pixel_sha256": {
+    "editorial": "0785706faa3683787a11f59f9a8a0d0caf67c8f2403fda9e0a8fd9fd9c85c057",
+    "pulse": "b1a4c989c590cb088c0fc275667505317dc1600950ffbadcc29a1a5657068924",
+    "overridden_reopened_relocated": "38409d3366bd7e81c966d8f54b0d8e0c81246faaac129fe0019ca60b928414c0"
+  },
+  "inspection_exits": {
+    "editorial_with_font": 0,
+    "editorial_font_removed": 2,
+    "pulse_with_font": 0,
+    "quiet_motion_with_font": 0,
+    "quiet_motion_font_removed": 2
+  },
+  "report_sha256": "3c906847b9c6c9a8a05789f1cccd31a6437b21ad963f360a63bc0e3c37c62a42"
+}

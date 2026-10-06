@@ -1,0 +1,106 @@
+{
+  "kind": "m4",
+  "schema_version": 1,
+  "timestamp": "2026-10-06T09:52:42Z",
+  "environment": {
+    "scope": "Native Linux x86_64 development evidence: scoped task context, candidate coverage, stale queue refusal, native Xvfb scope UI with capability-negotiated PNG evidence through the scripted ACP peer, and preset snapshot render/relocation using a locally assembled managed SDK from this checkout without an overlay. No authenticated provider, physical display/audio, Windows or macOS claim."
+  },
+  "gates": {
+    "dev_scoped_task_context": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "Scope packet round-trip, half-open selection semantics, source identity checks, and preservation of the frozen task scope through candidate capture pass their focused studio-engine tests.",
+      "notes": "Six scope tests and the 32-test candidate-validation suite passed, including bounded scene-source matching, source-hash verification, and candidate scope retention. This is development-fixture evidence, not a provider or preset qualification.",
+      "evidence": [
+        {
+          "path": "evidence/m4-phase4-scope-20261005/scoped-task-context.json",
+          "sha256": "5eaaa82cae858ca1fd14feb1f580518b1e8a480fb67eb8d87405f308d9c3815a"
+        }
+      ]
+    },
+    "dev_scoped_candidate_coverage": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "Selected half-open range samples and adjacent boundaries are inspected and rendered; a candidate shorter than its frozen range is retained as incomplete.",
+      "notes": "The focused candidate-validation tests passed for requested sample coverage and fail-closed shortened-candidate coverage.",
+      "evidence": [
+        {
+          "path": "evidence/m4-phase4-scope-20261005/scoped-candidate-coverage.json",
+          "sha256": "2d73e3579c1bb37e0ce74f3fac8dd6ca5bf0ae2a7826d2027903d21c9008dec8"
+        }
+      ]
+    },
+    "dev_stale_queue_refusal": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "A queued scope becomes visibly stale when the displayed preview identity changes and is refused without launching a second writer.",
+      "notes": "The focused AgentWorkflow scripted-peer integration test passed. The peer proves application workflow behavior only.",
+      "evidence": [
+        {
+          "path": "evidence/m4-phase4-scope-20261005/stale-queue-refusal.json",
+          "sha256": "94669b5ce2db09e587cb4362fadd381a27ff98b427a5ebec52a7a822896bca27"
+        }
+      ]
+    },
+    "dev_native_linux_scope_ui": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "The Linux native shell displays a pending frozen scope and actual before/candidate evidence without fabricating preview pixels; representative states are inspected through the running UI.",
+      "notes": "The native M4 Xvfb shell test passes: scene/range scope, revision-matched before/after evidence, capability-negotiated bounded PNG image blocks, and stale queued-scope refusal. The default AutoApply range path exposes decoded before/after thumbnails in its terminal task snapshot, and ManualReview still exposes its review controls. The M3 apply/Undo native regression also passes separately. The peer is scripted, not an authentic provider.",
+      "evidence": [
+        {
+          "path": "evidence/m4-linux-native-20261006/native-scope-ui.json",
+          "sha256": "73a89136f007aad5cb772b8529d5747d5436d9177b5a24dd89825616e7b0e213"
+        }
+      ]
+    },
+    "dev_managed_sdk_preset_render": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "A generated project renders the same token-bound source from two portable preset snapshots and survives relocation/reopen.",
+      "notes": "Pass on a locally assembled native managed SDK from this checkout: its SDK id is recorded, fframes::Styles is present, and the relocation script ran directly against the SDK without taking its overlay branch. This is Linux development evidence, not a published SDK release or cross-platform/provider qualification.",
+      "evidence": [
+        {
+          "path": "evidence/m4-linux-native-20261006/managed-sdk-preset-render.json",
+          "sha256": "3df40772efc4bda7a3e462da2e73a3bd6f97d79e6122704cea2d4c40269a4bc4"
+        },
+        {
+          "path": "evidence/m4-linux-native-20261006/managed-sdk-preset-render-report.json",
+          "sha256": "3c906847b9c6c9a8a05789f1cccd31a6437b21ad963f360a63bc0e3c37c62a42"
+        },
+        {
+          "path": "evidence/m4-linux-native-20261006/managed-sdk-preset-render-output.txt",
+          "sha256": "f1932f1b6093e7972bbb23298063a334cdedb2e3e0b07b2a3a48052cc0cc708c"
+        }
+      ]
+    },
+    "auth_provider_scoped_edit": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "A real authenticated ACP provider completes a scoped edit with revision-matched baseline/candidate evidence and safe teardown.",
+      "notes": "No authentic scoped edit was attempted; scripted fixtures and adapter readiness probes are not substitutes.",
+      "evidence": [],
+      "prerequisite": "Use an operator-authenticated real ACP adapter and run the scoped edit, review and teardown sequence on the managed SDK."
+    },
+    "auth_windows": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "The complete M4 workflow is exercised on Windows, including native interaction and task/process cleanup.",
+      "notes": "No Windows host was available for this run.",
+      "evidence": [],
+      "prerequisite": "Run the complete M4 qualification on a Windows host with a compatible SDK and native shell."
+    },
+    "auth_macos": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "The complete M4 workflow is exercised on macOS, including native interaction and task/process cleanup.",
+      "notes": "No macOS host was available for this run.",
+      "evidence": [],
+      "prerequisite": "Run the complete M4 qualification on a macOS host with a compatible SDK and native shell."
+    }
+  },
+  "acceptance": {
+    "m4_complete": "not_run",
+    "reason": "M4 development gates pass on native Linux x86_64, including a locally assembled managed SDK with fframes::Styles. Full M4 qualification remains not_run because authenticated-provider, Windows and macOS gates are not_run."
+  }
+}

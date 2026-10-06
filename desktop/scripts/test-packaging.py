@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression checks for artifact integrity and qualification claims."""
 import argparse
+import copy
 import hashlib
 import importlib.util
 import json
@@ -348,7 +349,20 @@ class M3LedgerTests(unittest.TestCase):
         evidence = {Path(item["path"]).parts[1] for gate in record["gates"].values() for item in gate["evidence"]}
         (name,) = evidence
         shutil.copytree(self.LEDGER.parent / "evidence" / name, root / "evidence" / name)
+        # Validator mutation tests synthesize their own adapter identity and evidence.
+        # Keep the real shipped ledger's authentic probe from conflicting with that fixture.
+        for gate in record["gates"].values():
+            if gate["kind"] == "authentic":
+                gate["status"] = "not_run"
+                gate["evidence"] = []
+                gate["prerequisite"] = "This isolated fixture does not exercise this authentic gate."
+        record["environment"]["adapter"] = None
+        record["acceptance"]["m3_authenticated"] = "not_run"
+        self.synthetic_gates = copy.deepcopy(record["gates"])
         return record, root / "m3-results.json", root / "evidence" / name
+
+    def reset_authentic_gate(self, record, gate):
+        record["gates"][gate] = copy.deepcopy(self.synthetic_gates[gate])
 
     def write(self, path, record):
         path.write_text(json.dumps(record))
@@ -430,8 +444,11 @@ class M3LedgerTests(unittest.TestCase):
         record["environment"]["adapter"] = dict(self.ADAPTER)
         return entry
 
-    def test_default_cli_validates_all_three_ledgers(self):
-        self.assertEqual([p.name for p in qualification.DEFAULT_LEDGERS], ["m0-results.json", "m2-results.json", "m3-results.json"])
+    def test_default_cli_validates_every_shipped_ledger(self):
+        self.assertEqual(
+            [p.name for p in qualification.DEFAULT_LEDGERS],
+            ["m0-results.json", "m2-results.json", "m3-results.json", "m4-results.json"],
+        )
         for path in qualification.DEFAULT_LEDGERS:
             qualification.validate(path)
 
@@ -547,7 +564,7 @@ class M3LedgerTests(unittest.TestCase):
                 self.passing(root, record, directory, gate, marker)
                 with self.assertRaisesRegex(ValueError, "does not follow the m3-authentic/1 contract"):
                     self.write(ledger, record)
-                record["gates"][gate] = json.loads(self.LEDGER.read_text())["gates"][gate]
+                self.reset_authentic_gate(record, gate)
 
     def test_a_real_shaped_record_passes_each_authentic_gate_but_does_not_imply_acceptance(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -556,7 +573,7 @@ class M3LedgerTests(unittest.TestCase):
             for gate in qualification.AUTHENTIC_CONTRACTS:
                 self.passing(root, record, directory, gate)
                 self.write(ledger, record)
-                record["gates"][gate] = json.loads(self.LEDGER.read_text())["gates"][gate]
+                self.reset_authentic_gate(record, gate)
             self.passing(root, record, directory, "auth_adapter_probe_v1")
             record["acceptance"]["m3_authenticated"] = "pass"
             with self.assertRaisesRegex(ValueError, "exactly when every authentic gate passes"):
@@ -594,13 +611,13 @@ class M3LedgerTests(unittest.TestCase):
             for label, bad, expected in cases:
                 with self.subTest(label):
                     self.rejects(root, record, ledger, directory, gate, bad, expected)
-                    record["gates"][gate] = json.loads(self.LEDGER.read_text())["gates"][gate]
+                    self.reset_authentic_gate(record, gate)
             # Platform gates need their own platform.
             for gate_name, wrong in (("auth_windows", "Linux"), ("auth_macos", "Windows")):
                 with self.subTest(gate_name):
                     bad = self.authentic_record(gate_name, platform={"system": wrong, "machine": "x86_64"})
                     self.rejects(root, record, ledger, directory, gate_name, bad, "measured on")
-                    record["gates"][gate_name] = json.loads(self.LEDGER.read_text())["gates"][gate_name]
+                    self.reset_authentic_gate(record, gate_name)
 
     def test_each_gates_own_measurements_are_enforced(self):
         defects = {
@@ -623,7 +640,7 @@ class M3LedgerTests(unittest.TestCase):
                     bad = self.authentic_record(gate)
                     defect(bad["measurements"])
                     self.rejects(root, record, ledger, directory, gate, bad, "Authentic pass")
-                    record["gates"][gate] = json.loads(self.LEDGER.read_text())["gates"][gate]
+                    self.reset_authentic_gate(record, gate)
 
     def test_one_record_cannot_back_two_gates_and_not_run_cites_nothing(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -634,7 +651,7 @@ class M3LedgerTests(unittest.TestCase):
             self.passing(root, record, directory, "auth_writer_process_group", shared)
             with self.assertRaisesRegex(ValueError, "bound to another gate"):
                 self.write(ledger, record)
-            record["gates"]["auth_writer_process_group"] = json.loads(self.LEDGER.read_text())["gates"]["auth_writer_process_group"]
+            self.reset_authentic_gate(record, "auth_writer_process_group")
             # The same bytes under two gates are caught as shared evidence too.
             record["environment"]["adapter"] = dict(self.ADAPTER)
             other = record["gates"]["auth_adapter_probe_v1"]

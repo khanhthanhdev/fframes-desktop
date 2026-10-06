@@ -1,0 +1,114 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M4QualificationResults",
+  "description": "M4 scoped-editing and preset qualification ledger. The validator checks evidence hashes, bounded evidence paths, credential/private-path scans, structured development pass records, real-adapter authentic pass records, and the derived completion status.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "timestamp", "environment", "gates", "acceptance"],
+  "properties": {
+    "kind": {"const": "m4"},
+    "schema_version": {"const": 1},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope"],
+      "properties": {"scope": {"type": "string", "minLength": 1}}
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dev_scoped_task_context",
+        "dev_scoped_candidate_coverage",
+        "dev_stale_queue_refusal",
+        "dev_native_linux_scope_ui",
+        "dev_managed_sdk_preset_render",
+        "auth_provider_scoped_edit",
+        "auth_windows",
+        "auth_macos"
+      ],
+      "properties": {
+        "dev_scoped_task_context": {"$ref": "#/definitions/developmentGate"},
+        "dev_scoped_candidate_coverage": {"$ref": "#/definitions/developmentGate"},
+        "dev_stale_queue_refusal": {"$ref": "#/definitions/developmentGate"},
+        "dev_native_linux_scope_ui": {"$ref": "#/definitions/developmentGate"},
+        "dev_managed_sdk_preset_render": {"$ref": "#/definitions/developmentGate"},
+        "auth_provider_scoped_edit": {"$ref": "#/definitions/authenticGate"},
+        "auth_windows": {"$ref": "#/definitions/authenticGate"},
+        "auth_macos": {"$ref": "#/definitions/authenticGate"}
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["m4_complete", "reason"],
+      "properties": {
+        "m4_complete": {"enum": ["pass", "not_run"]},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "definitions": {
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}
+        }
+      }
+    },
+    "developmentGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "status", "criteria", "notes", "evidence"],
+      "properties": {
+        "kind": {"const": "development"},
+        "status": {"enum": ["pass", "fail", "blocked", "not_run"]},
+        "criteria": {"type": "string", "minLength": 1},
+        "notes": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/definitions/evidence"},
+        "prerequisite": {"type": "string", "minLength": 20}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["blocked", "not_run"]}}},
+          "then": {"required": ["prerequisite", "evidence"], "properties": {"evidence": {"maxItems": 0}}},
+          "else": {"not": {"required": ["prerequisite"]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "pass"}}},
+          "then": {"properties": {"evidence": {"minItems": 1}}}
+        }
+      ]
+    },
+    "authenticGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "status", "criteria", "notes", "evidence"],
+      "properties": {
+        "kind": {"const": "authentic"},
+        "status": {"enum": ["pass", "fail", "blocked", "not_run"]},
+        "criteria": {"type": "string", "minLength": 1},
+        "notes": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/definitions/evidence"},
+        "prerequisite": {"type": "string", "minLength": 20}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["blocked", "not_run"]}}},
+          "then": {"required": ["prerequisite", "evidence"], "properties": {"evidence": {"maxItems": 0}}},
+          "else": {"not": {"required": ["prerequisite"]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "pass"}}},
+          "then": {"properties": {"evidence": {"minItems": 1}}}
+        }
+      ]
+    }
+  }
+}

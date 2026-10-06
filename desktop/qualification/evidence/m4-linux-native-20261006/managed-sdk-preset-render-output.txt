@@ -1,0 +1,39 @@
+SDK <locally assembled managed SDK> already provides fframes `styles`
++ cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test real_sdk_presets -- --ignored --nocapture
+   Compiling fframes-studio v0.1.0 (<workspace>/desktop/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 4.70s
+     Running tests/real_sdk_presets.rs (desktop/target/debug/deps/real_sdk_presets-f40a64ae146e9fdb)
+
+running 1 test
+test real_sdk_preset_snapshots_render_distinctly_and_survive_reopen_and_relocation has been running for over 60 seconds
+test real_sdk_preset_snapshots_render_distinctly_and_survive_reopen_and_relocation ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 132.77s
+
+
+Preset relocation: PASS
+  SDK id: studio-sdk-x86_64-unknown-linux-gnu-v2
+  editorial pixels : 0785706faa368378
+  pulse pixels     : b1a4c989c590cb08 (differs from editorial)
+  overridden pixels: 38409d3366bd7e81
+  reopened  pixels : 38409d3366bd7e81 (matches overridden)
+  relocated pixels : 38409d3366bd7e81 (matches overridden)
+  token hashes match before and after relocation: 8 files
+    87dab2bd4a8b7d7a  style/guide.md
+    ad52215c8306a207  style/overrides.json
+    648577feb8515d23  style/preset/LICENSE.txt
+    1cdd17e628c4e891  style/preset/examples/title-card.md
+    9af36190332437f5  style/preset/licenses/DMSans-OFL.txt
+    edb52f82adc6b830  style/preset-tokens.json
+    b29b913e89ad59f1  style/preset.json
+    1cb469ac9a9fc8a2  style/tokens.json
+  font/resource hashes match before and after relocation: 1 files
+    4f6a909db85e054e  media/preset-fonts-DMSans-Medium.ttf
+  inspect (no system fonts): passes with each preset's top-level font file, exits 2 when it is removed
+    editorial_with_font          exit 0
+    editorial_font_removed       exit 2
+    pulse_with_font              exit 0
+    quiet_motion_with_font       exit 0
+    quiet_motion_font_removed    exit 2
+  pre-M4 legacy project without styles: opened, built and rendered (05ac8cf6fbbe9c98); applying a preset later left src/lib.rs and Cargo.toml untouched
+  evidence kept in <fresh evidence directory>

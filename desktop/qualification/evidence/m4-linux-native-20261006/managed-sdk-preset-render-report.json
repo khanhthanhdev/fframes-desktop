@@ -1,0 +1,163 @@
+{
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "stages": [
+    {
+      "name": "editorial",
+      "root": "first/video",
+      "source_revision": "8da10e7d98a22b34d1cdd2df8250070bf413bb9f3fe5d70ff2ddf90080d309c5",
+      "preset": "editorial",
+      "preset_hash": "1d2a545c7b77b451d51e1b4f8c68df25a1b5e58a7d084ee3e3897ad21f7ce7ff",
+      "overrides": 0,
+      "png": "editorial.png",
+      "png_sha256": "097a942fda7e3dae2afe1c8e10dadf816aa62116e520babfef1caf056f390c99",
+      "pixel_sha256": "0785706faa3683787a11f59f9a8a0d0caf67c8f2403fda9e0a8fd9fd9c85c057",
+      "tokens": {
+        "style/guide.md": "50aff245f16005df47770672f5cda6c856ce5efac68a3f4e4d19213683d7ef05",
+        "style/overrides.json": "d2293801cf3935a7fe816ac1cb09d0a7a8323881053f3486864f35f1422e0d07",
+        "style/preset/LICENSE.txt": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "style/preset/examples/title-card.md": "d9d9d4f3b2eeb048b07ae2315feca4b81a9dcfc1c4a3d2d38f4adffa959f9276",
+        "style/preset/licenses/DMSans-OFL.txt": "9af36190332437f5ecd09974de43c1f7c77a310a996cdd8ceb25628b458840e1",
+        "style/preset-tokens.json": "d18f350c022795159068b52553e5e24bd83ad3e1a832c038df82a308006c048c",
+        "style/preset.json": "ec8b62c7904c23424330f69fe397290f5f761a5d0d46a5ce5a34acfa5304cd1f",
+        "style/tokens.json": "66a3db4857db592207bffed9ca7fcab87ecb9e7328333a7ed01aea80b6bee8ab"
+      },
+      "resources": {
+        "media/preset-fonts-DMSans-Medium.ttf": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033"
+      },
+      "lib_rs": "4de11dad283cd2285e8474e60f3985673d0a333679ba688103482f83b21a7822"
+    },
+    {
+      "name": "pulse",
+      "root": "first/video",
+      "source_revision": "e9656a3ace556e02e558ea35af2d46a3ee3e62e239bd81fa7cd5536a2e0ccc0b",
+      "preset": "pulse",
+      "preset_hash": "6734eff9d35ed04585ccb9a7d89520c4eea2516d1f4cbff701464123aa733db9",
+      "overrides": 0,
+      "png": "pulse.png",
+      "png_sha256": "fe74ddb0cf5ff8c65822805d9d23197f53d2633bd510d335a256bb020a5df239",
+      "pixel_sha256": "b1a4c989c590cb088c0fc275667505317dc1600950ffbadcc29a1a5657068924",
+      "tokens": {
+        "style/guide.md": "87dab2bd4a8b7d7a0e1e1c2c5e3fce05dae47606c155549ba6a92a8c8fe9b210",
+        "style/overrides.json": "d2293801cf3935a7fe816ac1cb09d0a7a8323881053f3486864f35f1422e0d07",
+        "style/preset/LICENSE.txt": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "style/preset/examples/title-card.md": "1cdd17e628c4e89115ed5ebba8d95292eaf064fe0e52267634a98418e4ad1601",
+        "style/preset/licenses/DMSans-OFL.txt": "9af36190332437f5ecd09974de43c1f7c77a310a996cdd8ceb25628b458840e1",
+        "style/preset-tokens.json": "edb52f82adc6b830edd90a3628b1e10ce7dbb125ae44400dcee9cf68be3e70b3",
+        "style/preset.json": "1da9d9e03fee9adf1e87b0dcef319d9b9f17411ee7d9876e7e44f5c3c248e95b",
+        "style/tokens.json": "f2fa28a2877aad58e1cd37c63f386192e815a26605f0dc9d0fbde094610da9f0"
+      },
+      "resources": {
+        "media/preset-fonts-DMSans-Medium.ttf": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033"
+      },
+      "lib_rs": "4de11dad283cd2285e8474e60f3985673d0a333679ba688103482f83b21a7822"
+    },
+    {
+      "name": "overridden",
+      "root": "first/video",
+      "source_revision": "2264e452ab6be504a3e8c1f8847d4e35f2a747c17d3208767a230ae362595b37",
+      "preset": "pulse",
+      "preset_hash": "6734eff9d35ed04585ccb9a7d89520c4eea2516d1f4cbff701464123aa733db9",
+      "overrides": 1,
+      "png": "overridden.png",
+      "png_sha256": "6f98d676a8e06565acd89139107ade22ec00f32ea28a7433521870325d4fcb8c",
+      "pixel_sha256": "38409d3366bd7e81c966d8f54b0d8e0c81246faaac129fe0019ca60b928414c0",
+      "tokens": {
+        "style/guide.md": "87dab2bd4a8b7d7a0e1e1c2c5e3fce05dae47606c155549ba6a92a8c8fe9b210",
+        "style/overrides.json": "ad52215c8306a207c16a007ae9c2616581583cc578d6b83d2ba994ca06a2af7f",
+        "style/preset/LICENSE.txt": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "style/preset/examples/title-card.md": "1cdd17e628c4e89115ed5ebba8d95292eaf064fe0e52267634a98418e4ad1601",
+        "style/preset/licenses/DMSans-OFL.txt": "9af36190332437f5ecd09974de43c1f7c77a310a996cdd8ceb25628b458840e1",
+        "style/preset-tokens.json": "edb52f82adc6b830edd90a3628b1e10ce7dbb125ae44400dcee9cf68be3e70b3",
+        "style/preset.json": "b29b913e89ad59f18ec5eb415aac2df44ff9c258466612e15724fe69a604f810",
+        "style/tokens.json": "1cb469ac9a9fc8a2f627866b3f8f2437492b7bcabba8dc2928f584013a32d4dd"
+      },
+      "resources": {
+        "media/preset-fonts-DMSans-Medium.ttf": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033"
+      },
+      "lib_rs": "4de11dad283cd2285e8474e60f3985673d0a333679ba688103482f83b21a7822"
+    },
+    {
+      "name": "reopened",
+      "root": "first/video",
+      "source_revision": "2264e452ab6be504a3e8c1f8847d4e35f2a747c17d3208767a230ae362595b37",
+      "preset": "pulse",
+      "preset_hash": "6734eff9d35ed04585ccb9a7d89520c4eea2516d1f4cbff701464123aa733db9",
+      "overrides": 1,
+      "png": "reopened.png",
+      "png_sha256": "6f98d676a8e06565acd89139107ade22ec00f32ea28a7433521870325d4fcb8c",
+      "pixel_sha256": "38409d3366bd7e81c966d8f54b0d8e0c81246faaac129fe0019ca60b928414c0",
+      "tokens": {
+        "style/guide.md": "87dab2bd4a8b7d7a0e1e1c2c5e3fce05dae47606c155549ba6a92a8c8fe9b210",
+        "style/overrides.json": "ad52215c8306a207c16a007ae9c2616581583cc578d6b83d2ba994ca06a2af7f",
+        "style/preset/LICENSE.txt": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "style/preset/examples/title-card.md": "1cdd17e628c4e89115ed5ebba8d95292eaf064fe0e52267634a98418e4ad1601",
+        "style/preset/licenses/DMSans-OFL.txt": "9af36190332437f5ecd09974de43c1f7c77a310a996cdd8ceb25628b458840e1",
+        "style/preset-tokens.json": "edb52f82adc6b830edd90a3628b1e10ce7dbb125ae44400dcee9cf68be3e70b3",
+        "style/preset.json": "b29b913e89ad59f18ec5eb415aac2df44ff9c258466612e15724fe69a604f810",
+        "style/tokens.json": "1cb469ac9a9fc8a2f627866b3f8f2437492b7bcabba8dc2928f584013a32d4dd"
+      },
+      "resources": {
+        "media/preset-fonts-DMSans-Medium.ttf": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033"
+      },
+      "lib_rs": "4de11dad283cd2285e8474e60f3985673d0a333679ba688103482f83b21a7822"
+    },
+    {
+      "name": "relocated",
+      "root": "elsewhere/renamed-video",
+      "source_revision": "2264e452ab6be504a3e8c1f8847d4e35f2a747c17d3208767a230ae362595b37",
+      "preset": "pulse",
+      "preset_hash": "6734eff9d35ed04585ccb9a7d89520c4eea2516d1f4cbff701464123aa733db9",
+      "overrides": 1,
+      "png": "relocated.png",
+      "png_sha256": "6f98d676a8e06565acd89139107ade22ec00f32ea28a7433521870325d4fcb8c",
+      "pixel_sha256": "38409d3366bd7e81c966d8f54b0d8e0c81246faaac129fe0019ca60b928414c0",
+      "tokens": {
+        "style/guide.md": "87dab2bd4a8b7d7a0e1e1c2c5e3fce05dae47606c155549ba6a92a8c8fe9b210",
+        "style/overrides.json": "ad52215c8306a207c16a007ae9c2616581583cc578d6b83d2ba994ca06a2af7f",
+        "style/preset/LICENSE.txt": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "style/preset/examples/title-card.md": "1cdd17e628c4e89115ed5ebba8d95292eaf064fe0e52267634a98418e4ad1601",
+        "style/preset/licenses/DMSans-OFL.txt": "9af36190332437f5ecd09974de43c1f7c77a310a996cdd8ceb25628b458840e1",
+        "style/preset-tokens.json": "edb52f82adc6b830edd90a3628b1e10ce7dbb125ae44400dcee9cf68be3e70b3",
+        "style/preset.json": "b29b913e89ad59f18ec5eb415aac2df44ff9c258466612e15724fe69a604f810",
+        "style/tokens.json": "1cb469ac9a9fc8a2f627866b3f8f2437492b7bcabba8dc2928f584013a32d4dd"
+      },
+      "resources": {
+        "media/preset-fonts-DMSans-Medium.ttf": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033"
+      },
+      "lib_rs": "4de11dad283cd2285e8474e60f3985673d0a333679ba688103482f83b21a7822"
+    }
+  ],
+  "inspections": {
+    "editorial_with_font": {
+      "exit": 0,
+      "output": "checked 20 frames: no problems found\n"
+    },
+    "editorial_font_removed": {
+      "exit": 2,
+      "output": "checked 20 frames: 1 findings\nWarning 0.00s..0.00s (frames 0..0, seen in 1): No match for '\"DM Sans\"' font-family.\n"
+    },
+    "pulse_with_font": {
+      "exit": 0,
+      "output": "checked 20 frames: no problems found\n"
+    },
+    "quiet_motion_with_font": {
+      "exit": 0,
+      "output": "checked 20 frames: no problems found\n"
+    },
+    "quiet_motion_font_removed": {
+      "exit": 2,
+      "output": "checked 20 frames: 1 findings\nWarning 0.00s..0.00s (frames 0..0, seen in 1): No match for '\"DM Sans\"' font-family.\n"
+    }
+  },
+  "legacy": {
+    "opened_without_styles": true,
+    "template": "pre-m4",
+    "png_sha256": "c99a4ff3fdb9b09f5507c9fac2c30288897e4068dcd7e66792a12a4c85922336",
+    "pixel_sha256": "05ac8cf6fbbe9c98bfef75d8cf7f176b9b7448176885da6cf27ec7263ffce102",
+    "pixel_sha256_after_preset": "6b34209a7675465b1b1976f3c5ce5f887ae1e181fee7d1c2197b3866507faf58",
+    "lib_rs_unchanged": true,
+    "lib_rs_sha256": "8bd1afa91bf62e855f9a4a0eb26eb280ead877bf49c111e38c398def8187b0d8",
+    "cargo_unchanged": true,
+    "cargo_sha256": "3fdcbdb8af6f284e87b53219ccf3696c2fcd512b385f7c13441e6d192106bc35"
+  }
+}

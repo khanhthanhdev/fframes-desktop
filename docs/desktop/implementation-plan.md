@@ -112,6 +112,8 @@ Connect scene/range selection to the task packet. Include compiled frame ranges,
 
 **Acceptance:** the same source project renders in two presets using semantic tokens; local overrides survive preset reapplication and reopening. Selecting a scene/range and prompting produces an edit with before/after evidence. Shared helper changes trigger broader validation instead of assuming the selected range is isolated.
 
+Execution detail: [Phase 4 step-by-step presets and scoped-editing plan](../../plans/261005-0715-desktop-phase-four-presets-scoped-editing/plan.md). Its four sequential execution stages belong to M4 and do not replace milestones M5–M7. Preset/scoped-editing implementation and native Linux development gates are complete, including the locally assembled managed-SDK render and before/after thumbnail review. M4 is not fully qualified: authenticated-provider, physical display/audio, Windows and macOS gates remain separate and unrun. See the [M4 ledger](../../desktop/qualification/m4-results.json); do not infer release readiness from the development evidence.
+
 ### M5 — Canvas selection and reliable source retrieval
 
 Add stable scene-instance/component/object IDs and optional source registration to desktop-generated projects. Emit a revision-specific editor index and frame-specific bounds/paint-order metadata. Prove how IDs survive SVG conversion before choosing the final macro/runtime representation.

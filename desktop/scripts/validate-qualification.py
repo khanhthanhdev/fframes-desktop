@@ -3,7 +3,7 @@
 
 Usage: validate-qualification.py [LEDGER ...]
 
-With no argument the three shipped ledgers (M0, M2, M3) are validated. M3 rules
+With no argument the shipped ledgers (M0, M2, M3, M4) are validated. M3 rules
 (``qualification/m3-results.json``, see ``m3-results.schema.json``): every evidence file is
 hashed, nothing passes without evidence, a ``not_run``/``blocked`` gate states its missing
 prerequisite, and:
@@ -31,7 +31,12 @@ import sys
 from pathlib import Path
 
 QUALIFICATION = Path(__file__).resolve().parents[1] / "qualification"
-DEFAULT_LEDGERS = [QUALIFICATION / "m0-results.json", QUALIFICATION / "m2-results.json", QUALIFICATION / "m3-results.json"]
+DEFAULT_LEDGERS = [
+    QUALIFICATION / "m0-results.json",
+    QUALIFICATION / "m2-results.json",
+    QUALIFICATION / "m3-results.json",
+    QUALIFICATION / "m4-results.json",
+]
 
 M0_GATES = {"managed_compilation", "gpui_startup", "renderer_worker", "acp_task", "selection_anchor"}
 M2_GATES = {
@@ -80,6 +85,17 @@ M3_GATES = {
     "auth_macos": "authentic",
 }
 M3_STATUSES = {"pass", "fail", "blocked", "not_run"}
+M4_GATES = {
+    "dev_scoped_task_context": "development",
+    "dev_scoped_candidate_coverage": "development",
+    "dev_stale_queue_refusal": "development",
+    "dev_native_linux_scope_ui": "development",
+    "dev_managed_sdk_preset_render": "development",
+    "auth_provider_scoped_edit": "authentic",
+    "auth_windows": "authentic",
+    "auth_macos": "authentic",
+}
+M4_STATUSES = {"pass", "fail", "blocked", "not_run"}
 # Agent names of the repository's scripted fixtures: they can never be an authentic adapter.
 FIXTURE_AGENT_NAMES = {"scripted-agent", "protocol-peer", "acp-peer", "fixture", "test-agent"}
 # Credential-like text. The M3 harness redacts with exactly these before serialization and the
@@ -650,6 +666,100 @@ def validate_m3(path, record):
         raise ValueError("M3 authenticated acceptance must pass exactly when every authentic gate passes")
 
 
+def validate_m4(path, record):
+    required = {"kind", "schema_version", "timestamp", "environment", "gates", "acceptance"}
+    if set(record) != required or record["schema_version"] != 1:
+        raise ValueError("Invalid M4 qualification schema")
+    if type(record["timestamp"]) is not str or not record["timestamp"].strip():
+        raise ValueError("Invalid M4 timestamp")
+    environment = record["environment"]
+    if type(environment) is not dict or set(environment) != {"scope"}:
+        raise ValueError("Invalid M4 environment")
+    if type(environment["scope"]) is not str or not environment["scope"].strip():
+        raise ValueError("Invalid M4 environment scope")
+    if type(record["gates"]) is not dict or set(record["gates"]) != set(M4_GATES):
+        raise ValueError("Invalid M4 gates")
+
+    scan_for_secrets(path, "ledger")
+    all_passed = True
+    for name, kind in M4_GATES.items():
+        gate = record["gates"][name]
+        if type(gate) is not dict or set(gate) - {
+            "kind", "status", "criteria", "notes", "evidence", "prerequisite"
+        }:
+            raise ValueError(f"Invalid M4 gate: {name}")
+        if gate.get("kind") != kind:
+            raise ValueError(f"M4 gate {name} must be of kind {kind}")
+        status = gate.get("status")
+        if status not in M4_STATUSES:
+            raise ValueError(f"Invalid M4 gate status: {name}")
+        for field in ("criteria", "notes"):
+            if type(gate.get(field)) is not str or not gate[field].strip():
+                raise ValueError(f"Missing M4 gate {field}: {name}")
+        files = evidence_files(path, name, gate.get("evidence", []))
+        for source in files:
+            scan_for_secrets(source, f"evidence of {name}")
+
+        if status == "pass":
+            if not files:
+                raise ValueError(f"{name} claims a pass without evidence")
+            schema = "m4-development/1" if kind == "development" else "m4-authentic/1"
+            proofs = [evidence_json(source) for source in files]
+            proofs = [value for value in proofs if value is not None and value.get("schema") == schema]
+            if not proofs:
+                raise ValueError(f"{name} has no structured {kind} pass evidence")
+            for proof in proofs:
+                if (
+                    proof.get("evidence_kind") != kind
+                    or proof.get("gate") != name
+                    or proof.get("result") != "pass"
+                ):
+                    raise ValueError(f"M4 pass evidence is not bound to {name}")
+                if kind == "development":
+                    if type(proof.get("exit_code")) is not int or proof["exit_code"] != 0:
+                        raise ValueError(f"Development pass {name} has no successful recorded check")
+                    if type(proof.get("fixture_only")) is not bool:
+                        raise ValueError(f"Development pass {name} must label fixture evidence")
+                    if type(proof.get("command")) is not str or not proof["command"].strip():
+                        raise ValueError(f"Development pass {name} has no check command")
+                else:
+                    adapter = proof.get("adapter")
+                    platform = proof.get("platform")
+                    if (
+                        proof.get("fixture_only") is not False
+                        or type(adapter) is not dict
+                        or type(adapter.get("name")) is not str
+                        or not adapter["name"].strip()
+                        or adapter["name"].strip().lower() in FIXTURE_AGENT_NAMES
+                        or adapter.get("protocol_version") != 1
+                        or type(adapter.get("launch_identity")) is not str
+                        or HEX64.fullmatch(adapter["launch_identity"]) is None
+                        or type(platform) is not dict
+                        or not all(type(platform.get(key)) is str and platform[key].strip() for key in ("system", "arch"))
+                        or proof.get("cleanup_empty") is not True
+                    ):
+                        raise ValueError(f"Authentic pass {name} lacks real adapter, platform or clean teardown evidence")
+        if status in {"not_run", "blocked"}:
+            prerequisite = gate.get("prerequisite")
+            if type(prerequisite) is not str or len(prerequisite.strip()) < 20:
+                raise ValueError(f"{name} is {status} without a stated prerequisite")
+            if files:
+                raise ValueError(f"Unrun M4 gate {name} must not cite pass evidence")
+        elif "prerequisite" in gate:
+            raise ValueError(f"{name} states a prerequisite although it is {status}")
+        all_passed &= status == "pass"
+
+    acceptance = record["acceptance"]
+    if type(acceptance) is not dict or set(acceptance) != {"m4_complete", "reason"}:
+        raise ValueError("Invalid M4 acceptance")
+    if acceptance["m4_complete"] not in {"pass", "not_run"}:
+        raise ValueError("Invalid M4 completion status")
+    if type(acceptance["reason"]) is not str or not acceptance["reason"].strip():
+        raise ValueError("Invalid M4 acceptance reason")
+    if (acceptance["m4_complete"] == "pass") != all_passed:
+        raise ValueError("M4 completion must pass exactly when every M4 gate passes")
+
+
 def validate(path):
     path = Path(path)
     record = load_record(path)
@@ -660,6 +770,8 @@ def validate(path):
         validate_m2(path, record)
     elif kind == "m3":
         validate_m3(path, record)
+    elif kind == "m4":
+        validate_m4(path, record)
     else:
         raise ValueError(f"Unsupported qualification kind: {kind}")
     return record

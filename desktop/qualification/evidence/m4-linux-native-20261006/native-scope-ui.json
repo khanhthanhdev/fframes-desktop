@@ -1,0 +1,26 @@
+{
+  "schema": "m4-development/1",
+  "evidence_kind": "development",
+  "gate": "dev_native_linux_scope_ui",
+  "result": "pass",
+  "command": "SDK_ACTIVE=<locally assembled managed SDK active symlink> M4_NATIVE_EVIDENCE=<evidence directory> cargo test --offline --manifest-path desktop/Cargo.toml -p fframes-studio --test x11_shell the_native_shell_freezes_scene_and_range_scope_and_shows_before_and_after_evidence -- --ignored --nocapture",
+  "exit_code": 0,
+  "fixture_only": true,
+  "summary": "The real fframes-studio shell on an owned Xvfb, driven with xdotool and observed through redacted telemetry, selected a scene and a half-open frame range; the scene task held a validated candidate for ManualReview with revision-matched before/after evidence, while the range task exercised the default AutoApply path. AutoApply now decodes the bounded task-owned PNG previews before publishing the after-evidence message that triggers promotion; the native test verifies the accepted terminal snapshot is already Released and has all before/after images loaded. Both thumbnails cover the same selected frames under distinct base/candidate revisions, and the terminal panel distinguishes Last task scope from the next Submit scope. Each prompt included one bounded PNG image block per listed app-owned artifact only after the scripted ACP peer negotiated image support; tests verified decoded bytes stayed within the 4 MiB prompt budget and image bytes never appeared in prompt text. ManualReview still shows Apply/Discard controls; the follow-up composer fits within 1280x800. A queued scope was marked stale after the preview identity changed and refused without starting a second writer; the test waits for the refusal panel to settle before capturing it. Refreshed screenshots were inspected. The separate M3 native apply/undo Xvfb regression also passed. The peer remains a fixture, not provider qualification.",
+  "screenshots": {
+    "range-selected-before-submit.png": "6c4c4462a2347be5a8ef0f5048b3fed68ca52429cb732442cc0af70c238b03e2",
+    "range-task-frozen-before-evidence.png": "1c16d665a99e3b9c6ecb63f94df3bb3e2ab2da3c3f91ebcc0c570f812d284357",
+    "range-task-review-before-and-after.png": "e207c3cda55dc7ca49167b8627471bd5961c2cf982dfe3d711416235f9dbaa3c",
+    "scene-selected-before-submit.png": "a3b1165511610e6b9cce2d76c0b1418bc446b61bce23bc3c0ce602dc6b699619",
+    "scene-task-frozen-before-evidence.png": "681f9c9462d046a93b6d567d494bd32346609157427bae8d4f515309c5a8e019",
+    "scene-task-review-before-and-after.png": "d6b651090854cd9f9e7df7bb3e27ae7bc1b7e9accb70c1b00da0fc7cd60dd43a",
+    "stale-queued-scope-refused.png": "cc92a0c4d583598ce3455fcdaf15281aa9ba09a2e985cf4fd7269afaa7a8cc25",
+    "stale-queued-scope.png": "a12ab66a18b8e61fae46ec8bd31db7648e996bbb6998b5911ea8bad0c027a76d"
+  },
+  "regressions": {
+    "m3_native_apply_undo": {
+      "command": "SDK_ACTIVE=<locally assembled managed SDK active symlink> cargo test --offline --manifest-path desktop/Cargo.toml -p fframes-studio --test x11_shell the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it -- --ignored --nocapture",
+      "exit_code": 0
+    }
+  }
+}

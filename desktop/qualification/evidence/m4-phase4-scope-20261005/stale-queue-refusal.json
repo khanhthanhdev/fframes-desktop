@@ -1,0 +1,10 @@
+{
+  "schema": "m4-development/1",
+  "evidence_kind": "development",
+  "gate": "dev_stale_queue_refusal",
+  "result": "pass",
+  "command": "cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test agent_workflow a_queued_scope_is_visible_and_refused_when_the_displayed_preview_changes -- --exact",
+  "exit_code": 0,
+  "fixture_only": true,
+  "summary": "The queue exposed the frozen range, marked it stale after preview identity changed, refused it at start, and did not launch a second prompt."
+}
