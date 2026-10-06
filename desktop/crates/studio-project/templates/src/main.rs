@@ -7,5 +7,9 @@ fn main() -> std::process::ExitCode {
         Ok(value) => value,
         Err(error) => { eprintln!("Media: {error}"); return std::process::ExitCode::FAILURE; }
     };
-    fframes::cli::new(&studio_video::StudioVideo, fframes::RenderOptions { media: Some(&media), ..Default::default() }).run()
+    let video = match studio_video::StudioVideo::new() {
+        Ok(value) => value,
+        Err(error) => { eprintln!("Styles: {error}"); return std::process::ExitCode::FAILURE; }
+    };
+    fframes::cli::new(&video, fframes::RenderOptions { media: Some(&media), ..Default::default() }).run()
 }

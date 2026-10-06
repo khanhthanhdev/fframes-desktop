@@ -13,6 +13,13 @@ static CAPABILITY_SHADER: LazyLock<Shader> = LazyLock::new(|| {
 
 pub struct StudioVideo;
 
+impl StudioVideo {
+    /// The Studio-owned worker and CLI entry points construct the video through `new`.
+    pub fn new() -> Result<Self, std::convert::Infallible> {
+        Ok(Self)
+    }
+}
+
 #[derive(Debug)]
 struct Repeated;
 impl Scene for Repeated {

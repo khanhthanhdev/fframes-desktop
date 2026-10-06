@@ -243,6 +243,7 @@ pub fn create(
     let root = staging.path();
     fs::create_dir_all(root.join("src/bin")).map_err(|e| io_error(root, e))?;
     fs::create_dir(root.join("media")).map_err(|e| io_error(root, e))?;
+    fs::create_dir(root.join("style")).map_err(|e| io_error(root, e))?;
     let manifest = Manifest {
         schema_version: SCHEMA_VERSION,
         project_id: uuid::Uuid::new_v4().to_string().try_into().unwrap(),
@@ -272,12 +273,16 @@ pub fn create(
     for dep in ["fframes-studio-runtime", "fframes-studio-protocol"] {
         cargo["dependencies"][dep]["version"] = toml::Value::String(format!("={runtime_version}"));
     }
-    let files: [(&str, &[u8]); 7] = [
+    let files: [(&str, &[u8]); 8] = [
         ("src/lib.rs", include_bytes!("../templates/src/lib.rs")),
         ("src/main.rs", include_bytes!("../templates/src/main.rs")),
         (
             "src/bin/studio_worker.rs",
             include_bytes!("../templates/src/bin/studio_worker.rs"),
+        ),
+        (
+            "style/tokens.json",
+            include_bytes!("../templates/style/tokens.json"),
         ),
         ("AGENTS.md", include_bytes!("../templates/AGENTS.md")),
         (".gitignore", b"/target/\n/out.*\n"),
@@ -301,6 +306,7 @@ pub fn create(
     sync_directory(&root.join("src/bin"))?;
     sync_directory(&root.join("src"))?;
     sync_directory(&root.join("media"))?;
+    sync_directory(&root.join("style"))?;
     // rename can replace an empty directory but never a nonempty destination.
     if destination.exists()
         && fs::read_dir(destination)

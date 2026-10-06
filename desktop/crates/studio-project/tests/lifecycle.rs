@@ -18,6 +18,15 @@ fn create_move_and_refuse_nonempty() {
     let root = temp.path().join("Vídeo with spaces");
     let project = create(&root, "My video", pin(), "1.1.0", "0.1.0").unwrap();
     assert!(project.worker_available);
+    let tokens = fs::read_to_string(root.join("style/tokens.json")).unwrap();
+    assert!(tokens.contains("\"schema\":1"));
+    assert!(
+        project
+            .inventory
+            .files
+            .iter()
+            .any(|f| f.path.as_str() == "style/tokens.json")
+    );
     assert!(create(&root, "Replacement", pin(), "1.1.0", "0.1.0").is_err());
     let moved = temp.path().join("Moved");
     fs::rename(root, &moved).unwrap();
