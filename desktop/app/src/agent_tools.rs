@@ -1,8 +1,9 @@
-//! The six project tools an agent may call, behind one typed dispatcher.
+//! The nine project tools an agent may call, behind one typed dispatcher.
 //!
-//! `project_context`, `timeline`, `render_frame`, `render_strip`, `inspect` and
-//! `build_status` are the whole surface: there is no shell, no filesystem write, no
-//! generalized selection/style/source lookup and no export tool. The app, the
+//! `project_context`, `timeline`, `render_frame`, `render_strip`, `inspect`,
+//! `build_status`, `selection_context`, `source_lookup` and `style_context` are the whole
+//! surface: there is no shell, no filesystem write, no
+//! generalized filesystem access and no export tool. The app, the
 //! `studio-tools` CLI and the `studio-mcp` stdio server all reach the same
 //! [`ToolDispatcher`] through the app-owned local broker ([`broker`]); the facades hold
 //! no compiler and never launch Cargo.
@@ -22,13 +23,16 @@ pub mod broker;
 pub mod client;
 pub mod mcp;
 
-pub const TOOL_NAMES: [&str; 6] = [
+pub const TOOL_NAMES: [&str; 9] = [
     "project_context",
     "timeline",
     "render_frame",
     "render_strip",
     "inspect",
     "build_status",
+    "selection_context",
+    "source_lookup",
+    "style_context",
 ];
 /// Queued tool calls (waiting for one of the tool workers) before `busy`.
 pub const MAX_QUEUED_CALLS: usize = 16;
@@ -195,6 +199,28 @@ pub enum ToolCall {
     },
     Inspect(FrameSelection),
     BuildStatus,
+    SelectionContext {
+        frame: usize,
+        seek_serial: u64,
+        identity: Option<fframes_studio_protocol::EditorObjectIdentity>,
+        frame_geometry_digest: Option<String>,
+    },
+    SourceLookup {
+        path: Option<studio_project::ProjectPath>,
+        symbol: Option<String>,
+        marker: Option<String>,
+        frame: Option<usize>,
+        seek_serial: Option<u64>,
+        identity: Option<fframes_studio_protocol::EditorObjectIdentity>,
+        frame_geometry_digest: Option<String>,
+    },
+    StyleContext {
+        token: Option<String>,
+        frame: Option<usize>,
+        seek_serial: Option<u64>,
+        identity: Option<fframes_studio_protocol::EditorObjectIdentity>,
+        frame_geometry_digest: Option<String>,
+    },
 }
 
 impl ToolCall {
@@ -206,6 +232,9 @@ impl ToolCall {
             Self::RenderStrip { .. } => "render_strip",
             Self::Inspect(_) => "inspect",
             Self::BuildStatus => "build_status",
+            Self::SelectionContext { .. } => "selection_context",
+            Self::SourceLookup { .. } => "source_lookup",
+            Self::StyleContext { .. } => "style_context",
         }
     }
 }
@@ -249,6 +278,49 @@ struct InspectParams {
     start: Option<u64>,
     end: Option<u64>,
     count: Option<u64>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SelectionParams {
+    project: Option<String>,
+    revision: Option<String>,
+    frame: u64,
+    seek_serial: u64,
+    scene_instance_key: Option<String>,
+    component_key: Option<String>,
+    object_key: Option<String>,
+    repeat_key: Option<String>,
+    frame_geometry_digest: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SourceLookupParams {
+    project: Option<String>,
+    revision: Option<String>,
+    path: Option<String>,
+    symbol: Option<String>,
+    marker: Option<String>,
+    frame: Option<u64>,
+    seek_serial: Option<u64>,
+    scene_instance_key: Option<String>,
+    component_key: Option<String>,
+    object_key: Option<String>,
+    repeat_key: Option<String>,
+    frame_geometry_digest: Option<String>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StyleParams {
+    project: Option<String>,
+    revision: Option<String>,
+    token: Option<String>,
+    frame: Option<u64>,
+    seek_serial: Option<u64>,
+    scene_instance_key: Option<String>,
+    component_key: Option<String>,
+    object_key: Option<String>,
+    repeat_key: Option<String>,
+    frame_geometry_digest: Option<String>,
 }
 
 pub const DEFAULT_RENDER_SCALE: f64 = 0.5;
@@ -382,6 +454,231 @@ impl ToolRequest {
                     ToolCall::Inspect(selection),
                 )
             }
+            "selection_context" => {
+                let p: SelectionParams = parsed(params)?;
+                let identity = match (
+                    p.scene_instance_key,
+                    p.component_key,
+                    p.object_key,
+                    p.repeat_key,
+                ) {
+                    (None, None, None, None) => None,
+                    (Some(scene), Some(component), Some(object), Some(repeat)) => {
+                        let values = [&scene, &component, &object, &repeat];
+                        if values.iter().any(|value| {
+                            value.is_empty()
+                                || value.len() > 256
+                                || value.chars().any(char::is_control)
+                        }) {
+                            return Err(ToolError::invalid(
+                                "selection identity key is empty, oversized, or contains control characters",
+                            ));
+                        }
+                        Some(fframes_studio_protocol::EditorObjectIdentity {
+                            scene_instance_key: scene,
+                            component_key: component,
+                            object_key: object,
+                            repeat_key: repeat,
+                        })
+                    }
+                    _ => {
+                        return Err(ToolError::invalid(
+                            "selection identity needs all four semantic key fields or none",
+                        ));
+                    }
+                };
+                if p.frame_geometry_digest.as_ref().is_some_and(|digest| {
+                    digest.len() != 64
+                        || !digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                }) {
+                    return Err(ToolError::invalid(
+                        "frame_geometry_digest must be a lowercase SHA-256 digest",
+                    ));
+                }
+                (
+                    Assertions {
+                        project: p.project,
+                        revision: p.revision,
+                    },
+                    ToolCall::SelectionContext {
+                        frame: index(p.frame, "frame")?,
+                        seek_serial: p.seek_serial,
+                        identity,
+                        frame_geometry_digest: p.frame_geometry_digest,
+                    },
+                )
+            }
+            "source_lookup" => {
+                let p: SourceLookupParams = parsed(params)?;
+                let (path, symbol) = match (p.path, p.symbol) {
+                    (Some(path), Some(symbol)) => (
+                        Some(
+                            studio_project::ProjectPath::try_from(path)
+                                .map_err(|error| ToolError::invalid(error.to_string()))?,
+                        ),
+                        Some(symbol),
+                    ),
+                    (None, None) => (None, None),
+                    _ => {
+                        return Err(ToolError::invalid(
+                            "explicit source lookup requires both path and symbol",
+                        ));
+                    }
+                };
+                if symbol.as_ref().is_some_and(|symbol| {
+                    symbol.is_empty() || symbol.len() > 512 || symbol.chars().any(char::is_control)
+                }) || p.marker.as_ref().is_some_and(|marker| {
+                    marker.is_empty() || marker.len() > 256 || marker.chars().any(char::is_control)
+                }) || p.frame_geometry_digest.as_ref().is_some_and(|digest| {
+                    digest.len() != 64
+                        || !digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                }) {
+                    return Err(ToolError::invalid(
+                        "source symbol, marker, or geometry digest is invalid",
+                    ));
+                }
+                let identity = match (
+                    p.scene_instance_key,
+                    p.component_key,
+                    p.object_key,
+                    p.repeat_key,
+                ) {
+                    (None, None, None, None) => None,
+                    (Some(scene), Some(component), Some(object), Some(repeat)) => {
+                        let values = [&scene, &component, &object, &repeat];
+                        if values.iter().any(|value| {
+                            value.is_empty()
+                                || value.len() > 256
+                                || value.chars().any(char::is_control)
+                        }) {
+                            return Err(ToolError::invalid("invalid semantic object key"));
+                        }
+                        Some(fframes_studio_protocol::EditorObjectIdentity {
+                            scene_instance_key: scene,
+                            component_key: component,
+                            object_key: object,
+                            repeat_key: repeat,
+                        })
+                    }
+                    _ => {
+                        return Err(ToolError::invalid(
+                            "selection lookup needs all four identity keys",
+                        ));
+                    }
+                };
+                let (frame, seek_serial) = match (p.frame, p.seek_serial, identity.as_ref()) {
+                    (Some(frame), Some(seek_serial), Some(_)) => {
+                        (Some(index(frame, "frame")?), Some(seek_serial))
+                    }
+                    (None, None, None) => (None, None),
+                    _ => {
+                        return Err(ToolError::invalid(
+                            "selection lookup requires frame, seek_serial, and all identity keys",
+                        ));
+                    }
+                };
+                let explicit = path.is_some() && symbol.is_some();
+                let selected = identity.is_some();
+                if explicit == selected
+                    || (p.marker.is_some() && !explicit)
+                    || (p.frame_geometry_digest.is_some() && !selected)
+                {
+                    return Err(ToolError::invalid(
+                        "provide either path+symbol or an exact frame/seek/identity selection",
+                    ));
+                }
+                (
+                    Assertions {
+                        project: p.project,
+                        revision: p.revision,
+                    },
+                    ToolCall::SourceLookup {
+                        path,
+                        symbol,
+                        marker: p.marker,
+                        frame,
+                        seek_serial,
+                        identity,
+                        frame_geometry_digest: p.frame_geometry_digest,
+                    },
+                )
+            }
+            "style_context" => {
+                let p: StyleParams = parsed(params)?;
+                if p.token.as_ref().is_some_and(|token| {
+                    token.is_empty() || token.len() > 128 || token.chars().any(char::is_control)
+                }) {
+                    return Err(ToolError::invalid(
+                        "token filter is empty, oversized, or contains control characters",
+                    ));
+                }
+                let identity = match (
+                    p.scene_instance_key,
+                    p.component_key,
+                    p.object_key,
+                    p.repeat_key,
+                ) {
+                    (None, None, None, None) => None,
+                    (Some(scene), Some(component), Some(object), Some(repeat)) => {
+                        let values = [&scene, &component, &object, &repeat];
+                        if values.iter().any(|value| {
+                            value.is_empty()
+                                || value.len() > 256
+                                || value.chars().any(char::is_control)
+                        }) {
+                            return Err(ToolError::invalid("invalid semantic object key"));
+                        }
+                        Some(fframes_studio_protocol::EditorObjectIdentity {
+                            scene_instance_key: scene,
+                            component_key: component,
+                            object_key: object,
+                            repeat_key: repeat,
+                        })
+                    }
+                    _ => {
+                        return Err(ToolError::invalid(
+                            "style lookup needs all four identity keys",
+                        ));
+                    }
+                };
+                let (frame, seek_serial) = match (p.frame, p.seek_serial, identity.as_ref()) {
+                    (Some(frame), Some(seek_serial), Some(_)) => {
+                        (Some(index(frame, "frame")?), Some(seek_serial))
+                    }
+                    (None, None, None) => (None, None),
+                    _ => {
+                        return Err(ToolError::invalid(
+                            "object style lookup requires frame, seek_serial, and all identity keys",
+                        ));
+                    }
+                };
+                if p.frame_geometry_digest.as_ref().is_some_and(|digest| {
+                    digest.len() != 64
+                        || !digest
+                            .bytes()
+                            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                }) || (p.frame_geometry_digest.is_some() && identity.is_none())
+                {
+                    return Err(ToolError::invalid("invalid frame geometry digest"));
+                }
+                (
+                    Assertions {
+                        project: p.project,
+                        revision: p.revision,
+                    },
+                    ToolCall::StyleContext {
+                        token: p.token,
+                        frame,
+                        seek_serial,
+                        identity,
+                        frame_geometry_digest: p.frame_geometry_digest,
+                    },
+                )
+            }
             other => {
                 return Err(ToolError::new(
                     ToolErrorCode::MethodNotFound,
@@ -498,7 +795,7 @@ impl ToolDispatcher {
     }
 }
 
-/// Machine-readable descriptions of the six tools (used by `studio-mcp tools/list` and
+/// Machine-readable descriptions of the tools (used by `studio-mcp tools/list` and
 /// the CLI help). Parameters mirror [`ToolRequest::parse`].
 pub fn tool_descriptions() -> Vec<Value> {
     let common = json!({
@@ -512,6 +809,34 @@ pub fn tool_descriptions() -> Vec<Value> {
         }
         json!({"type": "object", "properties": properties, "required": required, "additionalProperties": false})
     };
+    let source_lookup_schema = with(
+        json!({
+            "path": {"type": "string"},
+            "symbol": {"type": "string"},
+            "marker": {"type": "string"},
+            "frame": {"type": "integer", "minimum": 0},
+            "seek_serial": {"type": "integer", "minimum": 0},
+            "scene_instance_key": {"type": "string"},
+            "component_key": {"type": "string"},
+            "object_key": {"type": "string"},
+            "repeat_key": {"type": "string"},
+            "frame_geometry_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }),
+        &[],
+    );
+    let style_context_schema = with(
+        json!({
+            "token": {"type": "string", "description": "Optional exact token name filter."},
+            "frame": {"type": "integer", "minimum": 0},
+            "seek_serial": {"type": "integer", "minimum": 0},
+            "scene_instance_key": {"type": "string"},
+            "component_key": {"type": "string"},
+            "object_key": {"type": "string"},
+            "repeat_key": {"type": "string"},
+            "frame_geometry_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}
+        }),
+        &[],
+    );
     vec![
         json!({"name": "project_context", "description": "Project manifest summary, source file inventory and the revision this call describes. Read-only.", "inputSchema": with(json!({}), &[])}),
         json!({"name": "timeline", "description": "Compiled timeline: size, fps, frame count, scenes and audio tracks of the current revision. Builds are unvalidated until the acceptance validator runs.", "inputSchema": with(json!({}), &[])}),
@@ -519,6 +844,9 @@ pub fn tool_descriptions() -> Vec<Value> {
         json!({"name": "render_strip", "description": "Render up to 24 evenly spaced frames from start to end into one PNG strip artifact.", "inputSchema": with(json!({"start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}, "count": {"type": "integer", "minimum": 1, "maximum": MAX_STRIP_FRAMES}, "scale": {"type": "number", "exclusiveMinimum": 0, "maximum": 1}}), &["start", "end", "count"])}),
         json!({"name": "inspect", "description": "Inspection diagnostics (missing assets, unsupported shaders, ...) for up to 256 frames: list `frames`, or `start`/`end`/`count`.", "inputSchema": with(json!({"frames": {"type": "array", "items": {"type": "integer", "minimum": 0}, "maxItems": MAX_INSPECT_FRAMES_PER_CALL}, "start": {"type": "integer", "minimum": 0}, "end": {"type": "integer", "minimum": 0}, "count": {"type": "integer", "minimum": 1, "maximum": MAX_INSPECT_FRAMES_PER_CALL}}), &[])}),
         json!({"name": "build_status", "description": "Observe compile state for this project. Never launches Cargo.", "inputSchema": with(json!({}), &[])}),
+        json!({"name": "selection_context", "description": "Read the validated semantic objects on an exact source-revision frame and optional frozen object key. Supply the displayed frame and seek serial; include frame_geometry_digest when validating a frozen selection. It does not infer source locations.", "inputSchema": with(json!({"frame": {"type": "integer", "minimum": 0}, "seek_serial": {"type": "integer", "minimum": 0}, "scene_instance_key": {"type": "string"}, "component_key": {"type": "string"}, "object_key": {"type": "string"}, "repeat_key": {"type": "string"}, "frame_geometry_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}), &["frame", "seek_serial"])}),
+        json!({"name": "source_lookup", "description": "Provide exactly one query: either a project-relative path and symbol (optionally a marker), or a complete frame/seek/object identity tuple. The parser rejects mixed or incomplete forms. Reads hash-verified Rust syntax; no macro expansion, type resolution, code execution, or live filesystem access.", "inputSchema": source_lookup_schema}),
+        json!({"name": "style_context", "description": "Read the active preset identity, typed token values and explicitly registered bindings for this immutable revision. Optionally filter by token, and optionally provide a complete frame/seek/object identity tuple; partial tuples are rejected.", "inputSchema": style_context_schema}),
     ]
 }
 

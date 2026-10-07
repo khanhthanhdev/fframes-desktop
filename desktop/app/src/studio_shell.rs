@@ -10,6 +10,7 @@ use crate::{
 };
 use crate::{
     audio_service::{AudioEvent, AudioService, OutputDevice, OutputHandle},
+    canvas_view::CanvasViewState,
     frame_image::{ImagePresentationManager, create_render_image},
     preset_panel::{
         Catalog, PresetCommand, PresetEvent, PresetPanel, PresetPick, PresetReport, PresetView,
@@ -18,7 +19,7 @@ use crate::{
     timeline_view::{TimelineEvent, TimelineView},
 };
 use gpui::{
-    AppContext, Context, InteractiveElement, IntoElement, ParentElement, Render,
+    AppContext, Context, InteractiveElement, IntoElement, MouseButton, ParentElement, Render,
     StatefulInteractiveElement, Styled, Window, canvas, div, px, rgb,
 };
 use parking_lot::Mutex;
@@ -32,7 +33,7 @@ use std::{
     time::{Duration, Instant},
 };
 use studio_engine::{
-    Controller, app_paths::AppPaths, build_materialization::sdk_pin, store::Store,
+    Controller, TaskScope, app_paths::AppPaths, build_materialization::sdk_pin, store::Store,
 };
 use studio_project::{ProjectId, manifest::CargoEntry};
 use studio_sdk::{CompatibilityManifest, Doctor};
@@ -514,6 +515,10 @@ pub struct StudioShell {
     displayed: Option<Arc<studio_engine::ReadyPreview>>,
     pending_ready: Option<PreparedInstall>,
     pending_frame: Option<studio_engine::PreviewFrame>,
+    canvas: CanvasViewState,
+    canvas_origin: (f64, f64),
+    canvas_extent: (f64, f64),
+    canvas_pan_position: Option<(f64, f64)>,
     images: ImagePresentationManager,
     preview_extent: (u32, u32),
     clear_images: bool,
@@ -761,9 +766,7 @@ impl StudioShell {
                 }
                 TimelineEvent::ScopeChanged(scope) => {
                     let scope = scope.map(|scope| scope.map(|scope| *scope));
-                    shell
-                        .panel
-                        .update(cx, |panel, cx| panel.set_task_scope(scope, cx));
+                    shell.install_task_scope(scope, cx);
                 }
             });
         let panel = cx.new(ConversationPanel::new);
@@ -849,6 +852,10 @@ impl StudioShell {
             displayed: None,
             pending_ready: None,
             pending_frame: None,
+            canvas: CanvasViewState::default(),
+            canvas_origin: (0.0, 0.0),
+            canvas_extent: (0.0, 0.0),
+            canvas_pan_position: None,
             images: ImagePresentationManager::new(),
             preview_extent: (1280, 720),
             clear_images: false,
@@ -1042,6 +1049,7 @@ impl StudioShell {
                         })),
                         "panel": shell.panel.read(cx).telemetry(),
                         "preview": shell.preview_telemetry(),
+                        "canvas": shell.canvas_telemetry(),
                         "buttons": serde_json::to_value(&shell.button_bounds)
                             .unwrap_or(serde_json::Value::Null),
                         "ruler_bounds": shell.timeline.read(cx).qualification_metrics()["ruler_bounds"].clone(),
@@ -1113,6 +1121,84 @@ impl StudioShell {
                 "position": d.position,
                 "seek_serial": d.seek_serial,
             })),
+        })
+    }
+    /// Bounded native-selection observations for the opt-in qualification telemetry.
+    /// Only semantic keys and geometry are recorded; authored source and image bytes are not.
+    fn canvas_telemetry(&self) -> serde_json::Value {
+        let metadata = self
+            .canvas
+            .displayed
+            .as_ref()
+            .and_then(|displayed| displayed.metadata.as_ref());
+        let objects: Vec<_> = metadata
+            .into_iter()
+            .flat_map(|metadata| metadata.objects.iter())
+            .take(64)
+            .map(|object| {
+                serde_json::json!({
+                    "identity": object.identity,
+                    "bounds": object.bounds,
+                    "paint_order": object.paint_order,
+                    "support": format!("{:?}", object.support),
+                })
+            })
+            .collect();
+        let selection = self.canvas.selection.as_ref().map(|selection| {
+            serde_json::json!({
+                "identity": selection.identity,
+                "bounds": selection.bounds,
+                "support": format!("{:?}", selection.support),
+            })
+        });
+        let viewport = self.canvas.viewport.as_ref();
+        let image_bounds = viewport.map(|viewport| {
+            let bounds = viewport.image_bounds();
+            serde_json::json!({
+                "x": bounds.x,
+                "y": bounds.y,
+                "width": bounds.width,
+                "height": bounds.height,
+            })
+        });
+        let rectangle = self.canvas.rectangle_scope.map(|rectangle| {
+            serde_json::json!({
+                "x": rectangle.x,
+                "y": rectangle.y,
+                "width": rectangle.width,
+                "height": rectangle.height,
+            })
+        });
+        let rendered_image = self.images.current_image();
+        let rendered_image_size = rendered_image.as_ref().map(|image| image.size(0));
+        let rendered_bright_pixels = rendered_image
+            .as_ref()
+            .and_then(|image| image.as_bytes(0))
+            .map(|pixels| {
+                pixels
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .filter(|pixel| pixel[..3].iter().all(|channel| *channel > 180) && pixel[3] > 0)
+                    .count()
+            });
+        serde_json::json!({
+            "frame_index": self.canvas.displayed.as_ref().map(|frame| frame.frame_index),
+            "seek_serial": self.canvas.displayed.as_ref().map(|frame| frame.seek_serial),
+            "metadata_status": metadata.map(|metadata| format!("{:?}", metadata.status)),
+            "object_count": metadata.map_or(0, |metadata| metadata.objects.len()),
+            "objects_truncated": metadata.is_some_and(|metadata| metadata.objects.len() > 64),
+            "objects": objects,
+            "selection": selection,
+            "rectangle": rectangle,
+            "drawing_rectangle": self.canvas.is_drawing_rectangle(),
+            "video_dimensions": viewport.map(|viewport| viewport.video_dimensions()),
+            "image_bounds": image_bounds,
+            "canvas_origin": self.canvas_origin,
+            "canvas_extent": self.canvas_extent,
+            "rendered_image_size": rendered_image_size.map(|size| (size.width.0, size.height.0)),
+            "rendered_bright_pixels": rendered_bright_pixels,
+            "message": self.canvas.message,
         })
     }
     fn qualification_snapshot(&self, cx: &Context<Self>) -> serde_json::Value {
@@ -1605,8 +1691,8 @@ impl StudioShell {
                     },
                     cx,
                 );
-                panel.set_task_scope(scope, cx);
             });
+            self.install_task_scope(scope, cx);
         }
         self.sync_agent_build();
         cx.notify();
@@ -1626,6 +1712,8 @@ impl StudioShell {
         self.displayed = None;
         self.pending_ready = None;
         self.pending_frame = None;
+        self.canvas.clear();
+        self.canvas_pan_position = None;
         self.clear_images = true;
         let _ = self
             .transport
@@ -1844,6 +1932,141 @@ impl StudioShell {
         self.audio_ready_epoch = None;
         self.request_frame(self.transport.position(), cx);
     }
+
+    fn pause_at_painted_frame(&mut self, cx: &mut Context<Self>) {
+        if !self.transport.playing() {
+            return;
+        }
+        let frame = self
+            .painted_frame
+            .unwrap_or_else(|| self.transport.position());
+        self.pause_playback(cx);
+        self.seek_preview(frame, cx);
+    }
+
+    fn install_task_scope(
+        &mut self,
+        scope: Result<Option<TaskScope>, String>,
+        cx: &mut Context<Self>,
+    ) {
+        let scope = scope.and_then(|scope| match scope {
+            Some(mut scope) => {
+                scope.canvas_selection = self.canvas.task_scope_selection();
+                scope.validate().map_err(|error| error.to_string())?;
+                Ok(Some(scope))
+            }
+            None if self.canvas.task_scope_selection().is_some() => {
+                Err("canvas selection has no matching compiled timeline".into())
+            }
+            None => Ok(None),
+        });
+        self.panel
+            .update(cx, |panel, cx| panel.set_task_scope(scope, cx));
+    }
+
+    fn canvas_point(&self, position: gpui::Point<gpui::Pixels>) -> (f64, f64) {
+        (
+            f64::from(position.x) - self.canvas_origin.0,
+            f64::from(position.y) - self.canvas_origin.1,
+        )
+    }
+
+    fn canvas_pointer_down(&mut self, event: &gpui::MouseDownEvent, cx: &mut Context<Self>) {
+        let point = self.canvas_point(event.position);
+        if event.button != MouseButton::Middle {
+            self.canvas_pan_position = None;
+        }
+        if event.button == MouseButton::Left {
+            self.pause_at_painted_frame(cx);
+        }
+        match event.button {
+            MouseButton::Middle => self.canvas_pan_position = Some(point),
+            MouseButton::Left if event.modifiers.shift => {
+                if !self.canvas.begin_rectangle(point.0, point.1) {
+                    self.canvas.message =
+                        Some("Start a rectangle drag inside the painted video image.".into());
+                }
+            }
+            MouseButton::Left if event.modifiers.alt => {
+                if let Err(error) = self.canvas.select_at(point.0, point.1, true) {
+                    self.canvas.message = Some(error.to_string());
+                }
+            }
+            MouseButton::Left => {
+                if let Err(error) = self.canvas.select_at(point.0, point.1, false) {
+                    self.canvas.message = Some(error.to_string());
+                }
+            }
+            _ => return,
+        }
+        self.install_task_scope(self.timeline.read(cx).selected_scope(), cx);
+        cx.notify();
+    }
+
+    fn canvas_pointer_move(&mut self, event: &gpui::MouseMoveEvent, cx: &mut Context<Self>) {
+        let point = self.canvas_point(event.position);
+        if self.canvas.is_drawing_rectangle() {
+            self.canvas.update_rectangle(point.0, point.1);
+            cx.notify();
+        } else if event.pressed_button == Some(MouseButton::Middle)
+            && let Some(previous) = self.canvas_pan_position.replace(point)
+            && let Some(viewport) = &mut self.canvas.viewport
+        {
+            let _ = viewport.pan_by(point.0 - previous.0, point.1 - previous.1);
+            cx.notify();
+        }
+    }
+
+    fn canvas_pointer_up(&mut self, button: MouseButton, cx: &mut Context<Self>) {
+        if button == MouseButton::Middle {
+            self.canvas_pan_position = None;
+        } else if button == MouseButton::Left && self.canvas.is_drawing_rectangle() {
+            if let Some(rect) = self.canvas.end_rectangle() {
+                self.canvas.message = Some(format!(
+                    "Rectangle scope · {:.0}×{:.0} video pixels · source identity is not inferred.",
+                    rect.width, rect.height
+                ));
+            }
+            self.install_task_scope(self.timeline.read(cx).selected_scope(), cx);
+            cx.notify();
+        }
+    }
+
+    fn canvas_scroll(&mut self, event: &gpui::ScrollWheelEvent, cx: &mut Context<Self>) {
+        let point = self.canvas_point(event.position);
+        let delta = match event.delta {
+            gpui::ScrollDelta::Pixels(pixels) => f64::from(pixels.y),
+            gpui::ScrollDelta::Lines(lines) => f64::from(lines.y * 32.0),
+        };
+        if event.modifiers.control || event.modifiers.platform {
+            let factor = if delta > 0.0 {
+                1.0 + delta.abs() * 0.01
+            } else {
+                1.0 / (1.0 + delta.abs() * 0.01)
+            };
+            if let Some(viewport) = &mut self.canvas.viewport {
+                let _ = viewport.zoom_at(point.0, point.1, factor);
+            }
+        } else if let Some(viewport) = &mut self.canvas.viewport {
+            let _ = viewport.pan_by(-delta, 0.0);
+        }
+        cx.notify();
+    }
+
+    fn cycle_canvas_selection(&mut self, cx: &mut Context<Self>) {
+        if let Err(error) = self.canvas.cycle_last_hit() {
+            self.canvas.message = Some(error.to_string());
+        }
+        cx.notify();
+    }
+
+    fn reset_canvas_view(&mut self, cx: &mut Context<Self>) {
+        if let Some(viewport) = &mut self.canvas.viewport {
+            viewport.reset_to_fit();
+        }
+        cx.notify();
+    }
+
     fn prime_playback(&mut self, cx: &mut Context<Self>) {
         if let Some(ready) = &self.displayed {
             self.output = None;
@@ -2255,6 +2478,17 @@ impl Render for StudioShell {
                             self.presented_serial = ready.seek_serial;
                             self.painted_frame =
                                 ready.frame.as_ref().map(|f| f.response.frame_index);
+                            if let Some(frame) = ready.frame.as_ref() {
+                                if let Err(error) =
+                                    self.canvas.install_frame(ready.identity().clone(), frame)
+                                {
+                                    self.canvas.clear();
+                                    self.canvas.message =
+                                        Some(format!("Canvas metadata unavailable: {error}"));
+                                }
+                            } else {
+                                self.canvas.clear();
+                            }
                             self.timeline
                                 .update(cx, |v, cx| v.install(model.unwrap(), ready.position, cx));
                             self.displayed = Some(ready.clone());
@@ -2289,8 +2523,22 @@ impl Render for StudioShell {
             match create_render_image(&f.response.header, &f.pixels) {
                 Ok(image) => {
                     self.images.replace_image(image, window);
+                    if let Some(preview) = self
+                        .displayed
+                        .as_ref()
+                        .map(|ready| ready.identity().clone())
+                    {
+                        if let Err(error) = self.canvas.install_frame(preview, &f) {
+                            self.canvas.clear();
+                            self.canvas.message =
+                                Some(format!("Canvas metadata unavailable: {error}"));
+                        }
+                    } else {
+                        self.canvas.clear();
+                    }
                     self.presented_serial = f.response.seek_serial;
                     self.painted_frame = Some(f.response.frame_index);
+                    self.install_task_scope(self.timeline.read(cx).selected_scope(), cx);
                 }
                 Err(e) => self.error = Some(e.to_string()),
             }
@@ -2477,11 +2725,25 @@ impl Render for StudioShell {
             .aria_label("Compiled preview")
             .focus_visible(|s| s.border_color(rgb(ACCENT)))
             .on_key_down(cx.listener(|shell, event: &gpui::KeyDownEvent, _, cx| {
+                if event.keystroke.modifiers.alt
+                    || event.keystroke.modifiers.control
+                    || event.keystroke.modifiers.platform
+                    || event.keystroke.modifiers.shift
+                {
+                    return;
+                }
                 match event.keystroke.key.as_str() {
                     "space" => shell.toggle_playback(cx),
                     "left" => shell.step_preview(-1, cx),
                     "right" => shell.step_preview(1, cx),
                     "home" => shell.seek_preview(0, cx),
+                    "c" => shell.cycle_canvas_selection(cx),
+                    "0" => shell.reset_canvas_view(cx),
+                    "escape" => {
+                        shell.canvas.clear_selection();
+                        shell.install_task_scope(shell.timeline.read(cx).selected_scope(), cx);
+                        cx.notify();
+                    }
                     "end" => {
                         if let Some(d) = &shell.displayed {
                             shell.seek_preview(d.timeline.total_frames, cx);
@@ -2490,6 +2752,40 @@ impl Render for StudioShell {
                     _ => return,
                 }
                 cx.stop_propagation();
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|shell, event: &gpui::MouseDownEvent, _, cx| {
+                    shell.canvas_pointer_down(event, cx)
+                }),
+            )
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener(|shell, event: &gpui::MouseDownEvent, _, cx| {
+                    shell.canvas_pointer_down(event, cx)
+                }),
+            )
+            .on_mouse_move(cx.listener(|shell, event: &gpui::MouseMoveEvent, _, cx| {
+                shell.canvas_pointer_move(event, cx)
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, cx| shell.canvas_pointer_up(MouseButton::Left, cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|shell, _, _, cx| shell.canvas_pointer_up(MouseButton::Left, cx)),
+            )
+            .on_mouse_up(
+                MouseButton::Middle,
+                cx.listener(|shell, _, _, cx| shell.canvas_pointer_up(MouseButton::Middle, cx)),
+            )
+            .on_mouse_up_out(
+                MouseButton::Middle,
+                cx.listener(|shell, _, _, cx| shell.canvas_pointer_up(MouseButton::Middle, cx)),
+            )
+            .on_scroll_wheel(cx.listener(|shell, event: &gpui::ScrollWheelEvent, _, cx| {
+                shell.canvas_scroll(event, cx)
             }))
             .flex_1()
             .min_h(px(120.))
@@ -2511,7 +2807,23 @@ impl Render for StudioShell {
                         (f32::from(bounds.size.height) * dpi).round().max(1.) as u32,
                     );
                     entity.update(cx, |shell, cx| {
+                        shell.canvas_origin =
+                            (f64::from(bounds.origin.x), f64::from(bounds.origin.y));
+                        shell.canvas_extent =
+                            (f64::from(bounds.size.width), f64::from(bounds.size.height));
                         shell.preview_extent = extent;
+                        if let Some(displayed) = &shell.displayed {
+                            let before = shell.canvas.viewport.clone();
+                            let _ = shell.canvas.resize(
+                                f64::from(bounds.size.width),
+                                f64::from(bounds.size.height),
+                                displayed.timeline.width as u32,
+                                displayed.timeline.height as u32,
+                            );
+                            if before != shell.canvas.viewport {
+                                cx.notify();
+                            }
+                        }
                         if shell.displayed.as_ref().is_some_and(|d| {
                             crate::frame_image::preview_scale(
                                 d.timeline.width,
@@ -2531,7 +2843,24 @@ impl Render for StudioShell {
             .size_full(),
         );
         if let Some(image) = self.images.current_image() {
-            preview_surface = preview_surface.child(gpui::img(image).size_full());
+            let image = gpui::img(image);
+            preview_surface = if let Some(bounds) = self
+                .canvas
+                .viewport
+                .as_ref()
+                .map(studio_engine::CanvasViewport::image_bounds)
+            {
+                preview_surface.child(
+                    image
+                        .absolute()
+                        .left(px(bounds.x as f32))
+                        .top(px(bounds.y as f32))
+                        .w(px(bounds.width as f32))
+                        .h(px(bounds.height as f32)),
+                )
+            } else {
+                preview_surface.child(image.size_full())
+            };
         } else {
             preview_surface = preview_surface
                 .child(div().text_lg().child(if self.displayed.is_some() {
@@ -2546,7 +2875,47 @@ impl Render for StudioShell {
                         .child("Build preview to compile the project's current source."),
                 );
         }
+        if let Some(bounds) = self.canvas.selected_bounds() {
+            preview_surface = preview_surface.child(
+                div()
+                    .absolute()
+                    .left(px(bounds.x as f32))
+                    .top(px(bounds.y as f32))
+                    .w(px(bounds.width as f32))
+                    .h(px(bounds.height as f32))
+                    .border_2()
+                    .border_color(rgb(ACCENT)),
+            );
+        }
+        if let (Some(viewport), Some(rect)) = (&self.canvas.viewport, &self.canvas.rectangle_scope)
+        {
+            let bounds = viewport.video_scope_bounds(rect);
+            preview_surface = preview_surface.child(
+                div()
+                    .absolute()
+                    .left(px(bounds.x as f32))
+                    .top(px(bounds.y as f32))
+                    .w(px(bounds.width as f32))
+                    .h(px(bounds.height as f32))
+                    .border_2()
+                    .border_color(rgb(0xf2cc60)),
+            );
+        }
         center = center.child(preview_surface);
+        center = center.child(
+            div()
+                .text_xs()
+                .text_color(rgb(MUTED))
+                .child("Select: click · Rectangle: Shift-drag · Cycle: Alt-click/C · Zoom: Ctrl-wheel · Pan: middle-drag · Fit: 0"),
+        );
+        if let Some(message) = &self.canvas.message {
+            center = center.child(
+                div()
+                    .text_xs()
+                    .text_color(rgb(MUTED))
+                    .child(message.clone()),
+            );
+        }
         let label = match &self.preview_state.status {
             studio_engine::PreviewStatus::Building => "Building/preparing · prior preview retained",
             studio_engine::PreviewStatus::Preparing => "Preparing matching frame and audio",

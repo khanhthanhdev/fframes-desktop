@@ -27,11 +27,18 @@ pub fn validate_preview_timeline(t: &PreviewTimelineResponse) -> Result<(), Stri
         return Err("Invalid compiled timeline timebase/dimensions".into());
     }
     let mut ids = std::collections::HashSet::new();
+    let mut editor_ids = std::collections::HashSet::new();
     for scene in &t.scenes {
         if scene.start_frame > scene.end_frame
             || scene.end_frame > t.total_frames
             || scene.instance_id.is_empty()
             || !ids.insert(&scene.instance_id)
+            || scene.editor_instance_key.as_ref().is_some_and(|key| {
+                key.is_empty()
+                    || key.len() > 256
+                    || key.chars().any(char::is_control)
+                    || !editor_ids.insert(key)
+            })
             || !scene.start_seconds.is_finite()
             || !scene.end_seconds.is_finite()
             || scene.start_seconds < 0.
@@ -95,6 +102,13 @@ impl PreviewFrame {
             || r.scale > 1.
         {
             return Err("Invalid preview frame identity/geometry/payload".into());
+        }
+        if r.editor_metadata.as_ref().is_some_and(|metadata| {
+            metadata
+                .validate_for_frame(r.frame_index, r.seek_serial)
+                .is_err()
+        }) {
+            return Err("Invalid editor metadata on preview frame".into());
         }
         Ok(())
     }

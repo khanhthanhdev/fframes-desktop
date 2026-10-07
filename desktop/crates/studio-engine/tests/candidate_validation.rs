@@ -276,6 +276,7 @@ fn timeline(
             .enumerate()
             .map(|(i, (s, e))| PreviewSceneInfo {
                 instance_id: format!("scene-{i}"),
+                editor_instance_key: None,
                 index: i,
                 name: format!("s{i}"),
                 full_name: format!("s{i}"),
@@ -323,6 +324,7 @@ fn frame(revision: &str, index: usize, value: u8) -> PreviewFrame {
                 offset: 0,
                 payload_len: 32,
             },
+            editor_metadata: None,
         },
         pixels: vec![value; 32],
     }
@@ -573,6 +575,7 @@ fn scoped_coverage_requires_selected_samples_and_refuses_shrunken_candidates() {
         scene_sources: vec![],
         scene_source_search_truncated: false,
         style_snapshot: None,
+        canvas_selection: None,
     };
     scope.validate().unwrap();
 

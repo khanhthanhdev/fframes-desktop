@@ -45,6 +45,7 @@ fn scene_scope(initial: &fframes_studio_protocol::PreviewIdentity) -> TaskScope 
         scene_sources: vec![],
         scene_source_search_truncated: false,
         style_snapshot: None,
+        canvas_selection: None,
     }
 }
 
@@ -223,6 +224,7 @@ fn a_queued_scope_is_visible_and_refused_when_the_displayed_preview_changes() {
         scene_sources: vec![],
         scene_source_search_truncated: false,
         style_snapshot: None,
+        canvas_selection: None,
     };
     w.wf()
         .set_displayed_preview_identity(Some(initial.clone()))

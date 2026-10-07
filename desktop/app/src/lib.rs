@@ -4,6 +4,7 @@ pub mod app;
 pub mod audio_service;
 pub mod build_service;
 pub mod candidate_runner;
+pub mod canvas_view;
 pub mod conversation_panel;
 mod evidence_preview;
 pub mod frame_image;

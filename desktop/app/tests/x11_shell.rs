@@ -27,6 +27,8 @@ use std::{
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
+use studio_engine::build_materialization::sdk_pin;
+use studio_sdk::{CompatibilityManifest, SdkInstaller};
 
 #[path = "support/preview_fixture.rs"]
 #[allow(dead_code)]
@@ -538,10 +540,13 @@ fn the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it() {
 }
 
 impl Screen {
-    /// A PNG of the whole X screen (xwd, converted by ffmpeg) into `$M4_NATIVE_EVIDENCE`
-    /// when that directory is set; otherwise nothing is captured.
+    /// A PNG of the whole X screen (xwd, converted by ffmpeg) into a qualification evidence
+    /// directory when configured; otherwise nothing is captured.
     fn screenshot(&self, name: &str) {
-        let Some(dir) = std::env::var_os("M4_NATIVE_EVIDENCE").map(PathBuf::from) else {
+        let directory = std::env::var_os("M5_NATIVE_EVIDENCE")
+            .or_else(|| std::env::var_os("M4_NATIVE_EVIDENCE"))
+            .map(PathBuf::from);
+        let Some(dir) = directory else {
             return;
         };
         fs::create_dir_all(&dir).unwrap();
@@ -998,4 +1003,284 @@ fn the_native_shell_freezes_scene_and_range_scope_and_shows_before_and_after_evi
             "image prompt budget: {prompt}"
         );
     }
+}
+
+/// The actual generated starter title is selected from the displayed managed-worker frame.
+/// The exact title rectangle is taken from frame metadata and mapped through the shell's
+/// measured image transform, so this test fails rather than passing by clicking a guessed
+/// location. It also exercises keyboard cycling, pointer-centred zoom, pan and rectangle
+/// fallback through native X11 input.
+#[test]
+#[ignore = "requires SDK_BUNDLE, Xvfb, xdotool, xwd and ffmpeg; native managed-SDK canvas interaction"]
+fn the_native_shell_selects_the_managed_starter_title_and_keeps_rectangle_scope_nonsemantic() {
+    let _serial = ONE_AT_A_TIME.lock().unwrap_or_else(|e| e.into_inner());
+    assert!(
+        tool_available("Xvfb")
+            && tool_available("xdotool")
+            && tool_available("xwd")
+            && tool_available("ffmpeg"),
+        "Xvfb, xdotool, xwd and ffmpeg are required"
+    );
+    let bundle = PathBuf::from(std::env::var_os("SDK_BUNDLE").expect("SDK_BUNDLE"));
+    let manifest = CompatibilityManifest::from_json_str(
+        &fs::read_to_string(bundle.join("compatibility.json")).unwrap(),
+    )
+    .unwrap();
+    let temporary = tempfile::Builder::new()
+        .prefix("fft-m5-x11")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let artifacts: Vec<_> = manifest
+        .artifacts
+        .iter()
+        .map(|artifact| {
+            (
+                artifact.clone(),
+                bundle.join(artifact.url.trim_start_matches("file://")),
+            )
+        })
+        .collect();
+    let home = temporary.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    let sdk = SdkInstaller::new(home.join(".fframes/sdk"))
+        .install_from_local_artifacts(&manifest, &artifacts)
+        .unwrap();
+    let project = temporary.path().join("video");
+    studio_project::create(
+        &project,
+        "M5 native canvas selection",
+        sdk_pin(&manifest),
+        &manifest.fframes_version,
+        "0.1.0",
+    )
+    .unwrap();
+    assert!(sdk.join("compatibility.json").is_file());
+
+    let data = std::env::var_os("M5_NATIVE_DATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| temporary.path().join("data"));
+    let runtime = temporary.path().join("runtime");
+    fs::create_dir_all(data.join("fframes-studio")).unwrap();
+    fs::create_dir_all(&runtime).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let screen = Screen::start();
+    let telemetry = Telemetry(temporary.path().join("telemetry.json"));
+    let log = fs::File::create(temporary.path().join("studio.log")).unwrap();
+    let _app = spawn(
+        Command::new(env!("CARGO_BIN_EXE_fframes-studio"))
+            .args(["qualify-m3", "--project"])
+            .arg(&project)
+            .arg("--telemetry")
+            .arg(&telemetry.0)
+            .env("DISPLAY", &screen.display)
+            .env("HOME", &home)
+            .env("XDG_DATA_HOME", &data)
+            .env("XDG_RUNTIME_DIR", &runtime)
+            .env("LIBGL_ALWAYS_SOFTWARE", "1")
+            .stdout(log.try_clone().unwrap())
+            .stderr(log),
+    );
+    let opened = telemetry.wait("the managed-SDK project to open", |value| {
+        value["agent_workflow_open"] == true && value["sdk_ready_for_agent"] == true
+    });
+    assert_eq!(phase(&opened), "");
+    let window = screen.window();
+    let build = telemetry.settled("the build button", |value| {
+        value["buttons"]["build-preview"].clone()
+    });
+    screen.click(&window, button_centre(&build, "build-preview"));
+    let measured = telemetry.wait("managed title metadata", |value| {
+        value["canvas"]["metadata_status"] == "Supported"
+            && value["canvas"]["objects"]
+                .as_array()
+                .is_some_and(|objects| {
+                    objects.iter().any(|object| {
+                        object["identity"]["object_key"] == "headline"
+                            && object["bounds"].is_object()
+                    })
+                })
+    });
+    assert!(
+        measured["canvas"]["rendered_bright_pixels"]
+            .as_u64()
+            .unwrap_or(0)
+            > 0,
+        "the GPUI image buffer must contain visible title pixels"
+    );
+    let objects = measured["canvas"]["objects"].as_array().unwrap();
+    let title = objects
+        .iter()
+        .find(|object| {
+            object["identity"]["scene_instance_key"] == "starter-video"
+                && object["identity"]["component_key"] == "starter-title"
+                && object["identity"]["object_key"] == "headline"
+                && object["identity"]["repeat_key"] == "primary"
+        })
+        .expect("registered title is present in the displayed frame metadata");
+    let bounds = &title["bounds"];
+    let image = &measured["canvas"]["image_bounds"];
+    let dimensions = &measured["canvas"]["video_dimensions"];
+    let origin = &measured["canvas"]["canvas_origin"];
+    let number = |value: &Value| value.as_f64().expect("finite geometry");
+    let (video_width, video_height) = (number(&dimensions[0]), number(&dimensions[1]));
+    let x = number(&origin[0])
+        + number(&image["x"])
+        + (number(&bounds["x"]) + number(&bounds["width"]) / 2.) / video_width
+            * number(&image["width"]);
+    let y = number(&origin[1])
+        + number(&image["y"])
+        + (number(&bounds["y"]) + number(&bounds["height"]) / 2.) / video_height
+            * number(&image["height"]);
+    screen.click(&window, (x.round() as u32, y.round() as u32));
+    let selected = telemetry.wait("the registered title to be selected", |value| {
+        value["canvas"]["selection"]["identity"]["object_key"] == "headline"
+    });
+    assert_eq!(
+        selected["canvas"]["selection"]["identity"], title["identity"],
+        "the native hit test must select the exact semantic tuple"
+    );
+    screen.xdotool(&["key", "--window", &window, "c"]);
+    let cycled_to_group = telemetry.wait("canvas selection cycling to the parent group", |value| {
+        value["canvas"]["selection"]["identity"]["object_key"] == "root"
+    });
+    assert_eq!(
+        cycled_to_group["canvas"]["selection"]["identity"]["component_key"], "video",
+        "overlap cycling exposes the registered parent group"
+    );
+    screen.xdotool(&["key", "--window", &window, "c"]);
+    let cycled = telemetry.wait("canvas cycling back to the title", |value| {
+        value["canvas"]["selection"]["identity"] == title["identity"]
+    });
+    assert_eq!(cycled["canvas"]["selection"]["identity"], title["identity"]);
+    screen.screenshot("m5-managed-title-selected");
+
+    let before_zoom = cycled["canvas"]["image_bounds"]["width"].as_f64().unwrap();
+    screen.xdotool(&[
+        "mousemove",
+        "--window",
+        &window,
+        &x.round().to_string(),
+        &y.round().to_string(),
+        "keydown",
+        "ctrl",
+        "click",
+        "4",
+        "keyup",
+        "ctrl",
+    ]);
+    let zoomed = telemetry.wait("pointer-centred canvas zoom", |value| {
+        value["canvas"]["image_bounds"]["width"]
+            .as_f64()
+            .is_some_and(|width| width > before_zoom * 1.05)
+    });
+    assert_eq!(
+        zoomed["canvas"]["selection"]["identity"], title["identity"],
+        "zoom does not rebind the selected title"
+    );
+
+    let before_pan_x = zoomed["canvas"]["image_bounds"]["x"].as_f64().unwrap();
+    screen.xdotool(&[
+        "mousemove",
+        "--window",
+        &window,
+        &x.round().to_string(),
+        &y.round().to_string(),
+        "mousedown",
+        "2",
+        "mousemove_relative",
+        "--sync",
+        "25",
+        "15",
+        "mouseup",
+        "2",
+    ]);
+    let panned = telemetry.wait("canvas pan", |value| {
+        value["canvas"]["image_bounds"]["x"]
+            .as_f64()
+            .is_some_and(|current| (current - before_pan_x).abs() > 10.)
+    });
+    assert_eq!(
+        panned["canvas"]["selection"]["identity"], title["identity"],
+        "pan does not rebind the selected title"
+    );
+
+    let image = &panned["canvas"]["image_bounds"];
+    let origin = &panned["canvas"]["canvas_origin"];
+    let extent = &panned["canvas"]["canvas_extent"];
+    let x1 = number(&origin[0]) + number(&image["x"]) + number(&image["width"]) * 0.35;
+    let y1 = number(&origin[1]) + number(&image["y"]) + number(&image["height"]) * 0.35;
+    let x2 = number(&origin[0])
+        + (number(&image["x"]) + number(&image["width"]) * 0.65).min(number(&extent[0]) - 2.);
+    let y2 = number(&origin[1])
+        + (number(&image["y"]) + number(&image["height"]) * 0.65).min(number(&extent[1]) - 2.);
+    screen.xdotool(&["key", "--window", &window, "Escape"]);
+    screen.xdotool(&["keydown", "shift"]);
+    screen.xdotool(&[
+        "mousemove",
+        "--window",
+        &window,
+        &x1.round().to_string(),
+        &y1.round().to_string(),
+        "mousedown",
+        "1",
+    ]);
+    let drawing = telemetry.wait(
+        "rectangle drag to begin inside the painted image",
+        |value| value["canvas"]["drawing_rectangle"] == true,
+    );
+    assert_eq!(drawing["canvas"]["selection"], Value::Null);
+    screen.xdotool(&[
+        "mousemove",
+        "--window",
+        &window,
+        &x2.round().to_string(),
+        &y2.round().to_string(),
+        "mousemove_relative",
+        "--sync",
+        "1",
+        "0",
+    ]);
+    let preview_rectangle = telemetry.wait("rectangle drag to update its video bounds", |value| {
+        value["canvas"]["rectangle"].is_object() && value["canvas"]["selection"].is_null()
+    });
+    assert!(
+        preview_rectangle["canvas"]["rectangle"]["width"]
+            .as_f64()
+            .unwrap()
+            > 0.
+    );
+    assert!(
+        preview_rectangle["canvas"]["rectangle"]["height"]
+            .as_f64()
+            .unwrap()
+            > 0.
+    );
+    screen.xdotool(&["mouseup", "1"]);
+    screen.xdotool(&["keyup", "shift"]);
+    let scope_deadline = Instant::now() + Duration::from_secs(15);
+    let rectangle = loop {
+        if let Some(value) = telemetry.read()
+            && value["canvas"]["rectangle"].is_object()
+            && value["canvas"]["selection"].is_null()
+            && value["panel"]["submit_scope"]
+                .as_str()
+                .is_some_and(|scope| scope.starts_with("Rectangle "))
+        {
+            break value;
+        }
+        assert!(
+            Instant::now() < scope_deadline,
+            "rectangle scope was not presented as the submission scope; last telemetry: {:?}",
+            telemetry.read()
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    assert_eq!(rectangle["canvas"]["metadata_status"], "Supported");
+    assert!(rectangle["canvas"]["rectangle"]["width"].as_f64().unwrap() > 0.);
+    assert!(rectangle["canvas"]["rectangle"]["height"].as_f64().unwrap() > 0.);
+    screen.screenshot("m5-nonsemantic-rectangle-scope");
 }

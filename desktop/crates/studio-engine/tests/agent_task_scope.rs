@@ -4,7 +4,8 @@ use studio_engine::{ScopeSelection, TaskScope, TaskScopeError, TimelineSelection
 
 fn scene(id: &str, index: usize, start_frame: usize, end_frame: usize) -> PreviewSceneInfo {
     PreviewSceneInfo {
-        instance_id: format!("worker-7:{id}"),
+        instance_id: id.into(),
+        editor_instance_key: Some(id.into()),
         index,
         name: format!("Scene {id}"),
         full_name: format!("video::{id}"),
@@ -52,7 +53,7 @@ fn scene_scope_freezes_instance_overlap_and_adjacent_boundaries() {
 
     let scope = TaskScope::from_timeline(&report, &selected).unwrap();
     assert!(
-        matches!(scope.selection, ScopeSelection::Scene { ref instance_id, .. } if instance_id == "worker-7:main")
+        matches!(scope.selection, ScopeSelection::Scene { ref instance_id, .. } if instance_id == "main")
     );
     let compiled = scope.compiled.as_ref().unwrap();
     assert_eq!((compiled.start_frame, compiled.end_frame), (15, 45));
@@ -62,7 +63,7 @@ fn scene_scope_freezes_instance_overlap_and_adjacent_boundaries() {
             .iter()
             .map(|scene| scene.instance_id.as_str())
             .collect::<Vec<_>>(),
-        ["worker-7:intro", "worker-7:main", "worker-7:outro"]
+        ["intro", "main", "outro"]
     );
     for frame in [14, 15, 19, 20, 44, 45] {
         assert!(compiled.boundary_frames.contains(&frame));
@@ -137,6 +138,111 @@ fn a_scope_frozen_against_an_adopted_preview_with_generation_zero_is_valid() {
 }
 
 #[test]
+fn canvas_packets_freeze_exact_object_or_nonsemantic_rectangle_evidence() {
+    let report = timeline();
+    let mut scope = TaskScope::from_timeline(&report, &TimelineSelection::default()).unwrap();
+    scope.canvas_selection = Some(studio_engine::CanvasTaskSelection {
+        preview: report.envelope.identity.clone(),
+        frame_index: 12,
+        seek_serial: 44,
+        editor_index_digest: Some("b".repeat(64)),
+        frame_geometry_digest: Some("c".repeat(64)),
+        video_width: 1920,
+        video_height: 1080,
+        selection: studio_engine::CanvasTaskSelectionKind::Element {
+            identity: EditorObjectIdentity {
+                scene_instance_key: "intro".into(),
+                component_key: "title".into(),
+                object_key: "headline".into(),
+                repeat_key: "primary".into(),
+            },
+            bounds: studio_engine::VideoPixelRect {
+                x: 10,
+                y: 20,
+                width: 300,
+                height: 90,
+            },
+            support: EditorGeometrySupport::ApproximateBounds,
+            style_tokens: vec!["color.text".into()],
+            source_anchor: Some(EditorSourceAnchor {
+                path: "src/lib.rs".into(),
+                symbol: "render_frame".into(),
+                marker: Some("title-anchor".into()),
+            }),
+        },
+    });
+    scope.validate().unwrap();
+    assert!(
+        scope
+            .label()
+            .contains("scene=intro component=title object=headline repeat=primary")
+    );
+    assert!(scope.label().contains("frame 12"));
+    assert!(scope.label().contains("Whole project · [0..60)"));
+    let serialized = serde_json::to_value(&scope).unwrap();
+    let restored: TaskScope = serde_json::from_value(serialized).unwrap();
+    assert_eq!(restored, scope);
+
+    let mut invalid = scope.clone();
+    invalid
+        .canvas_selection
+        .as_mut()
+        .unwrap()
+        .preview
+        .worker_generation += 1;
+    assert_eq!(invalid.validate().unwrap_err(), TaskScopeError::Identity);
+    let mut invalid = scope.clone();
+    if let Some(studio_engine::CanvasTaskSelection {
+        selection: studio_engine::CanvasTaskSelectionKind::Element { identity, .. },
+        ..
+    }) = invalid.canvas_selection.as_mut()
+    {
+        identity.scene_instance_key = "missing-scene".into();
+    }
+    assert_eq!(
+        invalid.validate().unwrap_err(),
+        TaskScopeError::MissingScene
+    );
+    let mut invalid = scope.clone();
+    invalid.canvas_selection.as_mut().unwrap().frame_index = 30;
+    assert_eq!(
+        invalid.validate().unwrap_err(),
+        TaskScopeError::MissingScene
+    );
+    let mut invalid = scope.clone();
+    if let Some(studio_engine::CanvasTaskSelection {
+        selection: studio_engine::CanvasTaskSelectionKind::Element { source_anchor, .. },
+        ..
+    }) = invalid.canvas_selection.as_mut()
+    {
+        source_anchor.as_mut().unwrap().path = "../outside.rs".into();
+    }
+    assert_eq!(invalid.validate().unwrap_err(), TaskScopeError::Identity);
+
+    scope.canvas_selection.as_mut().unwrap().selection =
+        studio_engine::CanvasTaskSelectionKind::Rectangle {
+            bounds: studio_engine::VideoPixelRect {
+                x: 0,
+                y: 0,
+                width: 1920,
+                height: 1080,
+            },
+        };
+    scope.canvas_selection.as_mut().unwrap().editor_index_digest = None;
+    scope
+        .canvas_selection
+        .as_mut()
+        .unwrap()
+        .frame_geometry_digest = None;
+    scope.validate().unwrap();
+    assert!(
+        scope
+            .prompt_context()
+            .contains("no source identity or anchor is inferred")
+    );
+}
+
+#[test]
 fn scope_round_trips_and_legacy_whole_project_has_no_compiled_identity() {
     let report = timeline();
     let scope = TaskScope::from_timeline(&report, &TimelineSelection::default()).unwrap();
@@ -178,7 +284,7 @@ fn scene_source_candidates_are_bounded_exact_and_bound_to_inventory_hashes() {
     let main = scope
         .scene_sources
         .iter()
-        .find(|reference| reference.instance_id == "worker-7:main")
+        .find(|reference| reference.instance_id == "main")
         .unwrap();
     assert_eq!(
         main.resolution,
@@ -193,7 +299,7 @@ fn scene_source_candidates_are_bounded_exact_and_bound_to_inventory_hashes() {
     let intro = scope
         .scene_sources
         .iter()
-        .find(|reference| reference.instance_id == "worker-7:intro")
+        .find(|reference| reference.instance_id == "intro")
         .unwrap();
     assert_eq!(
         intro.resolution,

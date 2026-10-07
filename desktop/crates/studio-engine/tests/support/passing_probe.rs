@@ -48,6 +48,7 @@ impl CandidateProbe for PassingProbe {
     fn timeline(&mut self) -> Result<PreviewTimelineResponse, ProbeError> {
         let scene = |i: usize, s: usize, e: usize| PreviewSceneInfo {
             instance_id: format!("scene-{i}"),
+            editor_instance_key: None,
             index: i,
             name: format!("s{i}"),
             full_name: format!("s{i}"),
@@ -90,6 +91,7 @@ impl CandidateProbe for PassingProbe {
                     offset: 0,
                     payload_len: 32,
                 },
+                editor_metadata: None,
             },
             pixels: vec![7; 32],
         })

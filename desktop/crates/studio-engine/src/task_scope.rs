@@ -1,6 +1,9 @@
 //! Immutable, revision-bound scope captured when a brief is submitted.
 
-use fframes_studio_protocol::{PreviewIdentity, PreviewTimelineResponse};
+use fframes_studio_protocol::{
+    EditorGeometrySupport, EditorObjectIdentity, EditorSourceAnchor, PreviewIdentity,
+    PreviewTimelineResponse,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -30,6 +33,43 @@ pub enum ScopeSelection {
         full_name: String,
     },
     FrameRange,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VideoPixelRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CanvasTaskSelectionKind {
+    Element {
+        identity: EditorObjectIdentity,
+        bounds: VideoPixelRect,
+        support: EditorGeometrySupport,
+        source_anchor: Option<EditorSourceAnchor>,
+        #[serde(default)]
+        style_tokens: Vec<String>,
+    },
+    Rectangle {
+        bounds: VideoPixelRect,
+    },
+}
+
+/// Frozen canvas evidence bound to the exact preview/frame that was displayed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CanvasTaskSelection {
+    pub preview: PreviewIdentity,
+    pub frame_index: usize,
+    pub seek_serial: u64,
+    pub editor_index_digest: Option<String>,
+    pub frame_geometry_digest: Option<String>,
+    pub video_width: u32,
+    pub video_height: u32,
+    pub selection: CanvasTaskSelectionKind,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +140,9 @@ pub struct TaskScope {
     pub scene_sources: Vec<SceneSourceReference>,
     pub scene_source_search_truncated: bool,
     pub style_snapshot: Option<StyleSnapshotIdentity>,
+    /// Optional selection from the displayed preview, independent of timeline range scope.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub canvas_selection: Option<CanvasTaskSelection>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -130,6 +173,7 @@ impl TaskScope {
             scene_sources: Vec::new(),
             scene_source_search_truncated: false,
             style_snapshot: None,
+            canvas_selection: None,
         }
     }
 
@@ -302,6 +346,7 @@ impl TaskScope {
             scene_sources: Vec::new(),
             scene_source_search_truncated: false,
             style_snapshot: None,
+            canvas_selection: None,
         };
         scope.validate()?;
         Ok(scope)
@@ -321,7 +366,10 @@ impl TaskScope {
             if !matches!(self.selection, ScopeSelection::WholeProject) {
                 return Err(TaskScopeError::Identity);
             }
-            if !self.scene_sources.is_empty() || self.scene_source_search_truncated {
+            if !self.scene_sources.is_empty()
+                || self.scene_source_search_truncated
+                || self.canvas_selection.is_some()
+            {
                 return Err(TaskScopeError::Identity);
             }
             return Ok(());
@@ -387,6 +435,88 @@ impl TaskScope {
                 || !is_sha256(&style.resolved_tokens_hash))
         {
             return Err(TaskScopeError::Identity);
+        }
+        if let Some(canvas) = &self.canvas_selection {
+            if canvas.preview != compiled.preview
+                || canvas.frame_index >= compiled.total_frames
+                || canvas.frame_index < compiled.start_frame
+                || canvas.frame_index >= compiled.end_frame
+                || canvas.video_width == 0
+                || canvas.video_height == 0
+                || canvas.video_width > 65_536
+                || canvas.video_height > 65_536
+                || canvas
+                    .editor_index_digest
+                    .as_ref()
+                    .is_some_and(|digest| !is_sha256(digest))
+                || canvas
+                    .frame_geometry_digest
+                    .as_ref()
+                    .is_some_and(|digest| !is_sha256(digest))
+                || canvas.editor_index_digest.is_some() != canvas.frame_geometry_digest.is_some()
+            {
+                return Err(TaskScopeError::Identity);
+            }
+            let valid_bounds = |bounds: &VideoPixelRect| {
+                bounds.width > 0
+                    && bounds.height > 0
+                    && bounds
+                        .x
+                        .checked_add(bounds.width)
+                        .is_some_and(|right| right <= canvas.video_width)
+                    && bounds
+                        .y
+                        .checked_add(bounds.height)
+                        .is_some_and(|bottom| bottom <= canvas.video_height)
+            };
+            if let CanvasTaskSelectionKind::Element { identity, .. } = &canvas.selection
+                && !compiled.scenes.iter().any(|scene| {
+                    scene.instance_id == identity.scene_instance_key
+                        && scene.start_frame <= canvas.frame_index
+                        && canvas.frame_index < scene.end_frame
+                })
+            {
+                return Err(TaskScopeError::MissingScene);
+            }
+            match &canvas.selection {
+                CanvasTaskSelectionKind::Element {
+                    identity,
+                    bounds,
+                    support,
+                    source_anchor,
+                    style_tokens,
+                } if [
+                    identity.scene_instance_key.as_str(),
+                    identity.component_key.as_str(),
+                    identity.object_key.as_str(),
+                    identity.repeat_key.as_str(),
+                ]
+                .iter()
+                .all(|value| is_bounded_editor_key(value))
+                    && canvas.editor_index_digest.is_some()
+                    && *support != EditorGeometrySupport::Unsupported
+                    && valid_bounds(bounds)
+                    && style_tokens.len() <= 64
+                    && style_tokens.iter().all(|token| {
+                        !token.is_empty()
+                            && token.len() <= 128
+                            && !token.chars().any(char::is_control)
+                    })
+                    && style_tokens.iter().collect::<BTreeSet<_>>().len() == style_tokens.len()
+                    && source_anchor.as_ref().is_none_or(|anchor| {
+                        safe_source_path(&anchor.path)
+                            && !anchor.symbol.is_empty()
+                            && anchor.symbol.len() <= 512
+                            && !anchor.symbol.chars().any(char::is_control)
+                            && anchor.marker.as_ref().is_none_or(|marker| {
+                                !marker.is_empty()
+                                    && marker.len() <= 256
+                                    && !marker.chars().any(char::is_control)
+                            })
+                    }) => {}
+                CanvasTaskSelectionKind::Rectangle { bounds } if valid_bounds(bounds) => {}
+                _ => return Err(TaskScopeError::Identity),
+            }
         }
         Ok(())
     }
@@ -515,6 +645,31 @@ impl TaskScope {
     }
 
     pub fn label(&self) -> String {
+        let scope = self.timeline_scope_label();
+        if let Some(canvas) = &self.canvas_selection {
+            return match &canvas.selection {
+                CanvasTaskSelectionKind::Element {
+                    identity, support, ..
+                } => format!(
+                    "Element scene={} component={} object={} repeat={} · frame {} · {:?} · {}",
+                    identity.scene_instance_key,
+                    identity.component_key,
+                    identity.object_key,
+                    identity.repeat_key,
+                    canvas.frame_index,
+                    support,
+                    scope
+                ),
+                CanvasTaskSelectionKind::Rectangle { bounds } => format!(
+                    "Rectangle {}×{} video px · frame {} · {}",
+                    bounds.width, bounds.height, canvas.frame_index, scope
+                ),
+            };
+        }
+        scope
+    }
+
+    fn timeline_scope_label(&self) -> String {
         let Some(compiled) = &self.compiled else {
             return "Whole project".into();
         };
@@ -543,6 +698,68 @@ impl TaskScope {
             &self.source_revision[..12],
             compiled.preview.worker_generation
         );
+        if let Some(canvas) = &self.canvas_selection {
+            match &canvas.selection {
+                CanvasTaskSelectionKind::Element {
+                    identity,
+                    bounds,
+                    support,
+                    source_anchor,
+                    style_tokens,
+                } => {
+                    text.push_str(&format!(
+                        "Frozen canvas element: scene={} component={} object={} repeat={} at frame {} seek {}; video rect [{}, {} {}×{}] / {}×{} px; support={:?}; source_anchor={} .\n",
+                        identity.scene_instance_key,
+                        identity.component_key,
+                        identity.object_key,
+                        identity.repeat_key,
+                        canvas.frame_index,
+                        canvas.seek_serial,
+                        bounds.x,
+                        bounds.y,
+                        bounds.width,
+                        bounds.height,
+                        canvas.video_width,
+                        canvas.video_height,
+                        support,
+                        if source_anchor.is_some() { "registered" } else { "not registered" },
+                    ));
+                    if let Some(anchor) = source_anchor {
+                        text.push_str(&format!(
+                            "Explicit source anchor (resolve from immutable source): {}::{} marker={:?}.\n",
+                            anchor.path, anchor.symbol, anchor.marker
+                        ));
+                    }
+                    if !style_tokens.is_empty() {
+                        text.push_str(&format!(
+                            "Explicit style-token bindings: {}.\n",
+                            style_tokens.join(", ")
+                        ));
+                    }
+                }
+                CanvasTaskSelectionKind::Rectangle { bounds } => text.push_str(&format!(
+                    "Frozen nonsemantic video-pixel rectangle: [{}, {} {}×{}] on frame {} ({}×{} px); no source identity or anchor is inferred.\n",
+                    bounds.x,
+                    bounds.y,
+                    bounds.width,
+                    bounds.height,
+                    canvas.frame_index,
+                    canvas.video_width,
+                    canvas.video_height,
+                )),
+            }
+            text.push_str(&format!(
+                "Canvas identity digests: editor_index={} frame_geometry={}.\n",
+                canvas
+                    .editor_index_digest
+                    .as_deref()
+                    .map_or("unavailable", |digest| &digest[..12]),
+                canvas
+                    .frame_geometry_digest
+                    .as_deref()
+                    .map_or("unavailable", |digest| &digest[..12]),
+            ));
+        }
         if !compiled.scenes.is_empty() {
             text.push_str(
                 "Compiled scene context (selected/overlapping and adjacent instances):\n",
@@ -642,6 +859,10 @@ fn is_rust_identifier(value: &str) -> bool {
         .next()
         .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
         && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
+}
+
+fn is_bounded_editor_key(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
 }
 
 fn safe_source_path(value: &str) -> bool {

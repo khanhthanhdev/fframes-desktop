@@ -5763,9 +5763,11 @@ name = "studio-project"
 version = "0.1.0"
 dependencies = [
  "libc",
+ "proc-macro2",
  "serde",
  "serde_json",
  "sha2",
+ "syn 2.0.119",
  "tempfile",
  "thiserror 2.0.21",
  "toml 0.8.23",

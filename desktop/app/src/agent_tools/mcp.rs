@@ -1,5 +1,5 @@
 //! Minimal Model Context Protocol server over stdio, implemented here without an MCP
-//! crate. It exposes the six project tools and forwards every `tools/call` unchanged
+//! crate. It exposes the project tools and forwards every `tools/call` unchanged
 //! (same method, `arguments` verbatim) to the app-owned broker ([`super::broker`]).
 //!
 //! # Qualification
@@ -15,7 +15,7 @@
 //!   for (per the lifecycle spec the client then decides whether to continue).
 //!   Capabilities: `{"tools":{"listChanged":false}}`.
 //! - Notifications (no `id`) never get a response. `ping` answers `{}`.
-//! - `tools/list` returns exactly the six [`tool_descriptions`].
+//! - `tools/list` returns exactly the [`tool_descriptions`].
 //! - `tools/call`: an unknown tool name is JSON-RPC error `-32602`; otherwise the call
 //!   goes to the broker. A reply becomes `{content:[{type:"text",text:<compact reply
 //!   JSON>}],structuredContent:<reply>,isError:false}`; a tool error becomes

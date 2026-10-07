@@ -376,15 +376,25 @@ fn error_code(reply: &Value) -> &str {
 // ---------------------------------------------------------------- contract
 
 #[test]
-fn six_unique_tools_are_listed_by_mcp_and_descriptions() {
+fn all_unique_tools_are_listed_by_mcp_and_descriptions() {
     let names: HashSet<&str> = TOOL_NAMES.iter().copied().collect();
-    assert_eq!(TOOL_NAMES.len(), 6);
-    assert_eq!(names.len(), 6, "tool names must be unique");
+    assert_eq!(TOOL_NAMES.len(), 9);
+    assert_eq!(names.len(), 9, "tool names must be unique");
     let described: Vec<String> = tool_descriptions()
         .iter()
         .map(|tool| tool["name"].as_str().unwrap().to_string())
         .collect();
     assert_eq!(described, TOOL_NAMES);
+    for tool in tool_descriptions() {
+        let schema = tool["inputSchema"].as_object().unwrap();
+        assert!(
+            ["oneOf", "anyOf", "allOf"]
+                .iter()
+                .all(|operator| !schema.contains_key(*operator)),
+            "{} must not expose unsupported top-level schema combinators",
+            tool["name"]
+        );
+    }
 
     let mut server = McpServer::new(|| Err(ToolError::new(ToolErrorCode::Unavailable, "none")));
     initialize(&mut server);
@@ -543,6 +553,120 @@ fn request_parsing_rejects_bad_shapes_and_accepts_documented_ones() {
             end: 9,
             count: 4
         })
+    );
+    assert_eq!(
+        ok(
+            "selection_context",
+            json!({"frame": 12, "seek_serial": 4, "frame_geometry_digest": REV_A})
+        )
+        .call,
+        ToolCall::SelectionContext {
+            frame: 12,
+            seek_serial: 4,
+            identity: None,
+            frame_geometry_digest: Some(REV_A.into()),
+        }
+    );
+    assert_eq!(
+        ok("selection_context", json!({"frame": 12, "seek_serial": 4, "scene_instance_key": "scene-a", "component_key": "title", "object_key": "headline", "repeat_key": "primary"})).call,
+        ToolCall::SelectionContext {
+            frame: 12,
+            seek_serial: 4,
+            identity: Some(fframes_studio_protocol::EditorObjectIdentity {
+                scene_instance_key: "scene-a".into(),
+                component_key: "title".into(),
+                object_key: "headline".into(),
+                repeat_key: "primary".into(),
+            }),
+            frame_geometry_digest: None,
+        }
+    );
+    assert_eq!(
+        code(
+            "selection_context",
+            json!({"frame": 1, "seek_serial": 0, "object_key": "title"})
+        ),
+        ToolErrorCode::InvalidParams
+    );
+    assert_eq!(
+        ok(
+            "source_lookup",
+            json!({"path": "src/main.rs", "symbol": "main", "marker": "TITLE"})
+        )
+        .call,
+        ToolCall::SourceLookup {
+            path: Some(studio_project::ProjectPath::try_from("src/main.rs".to_string()).unwrap()),
+            symbol: Some("main".into()),
+            marker: Some("TITLE".into()),
+            frame: None,
+            seek_serial: None,
+            identity: None,
+            frame_geometry_digest: None,
+        }
+    );
+    assert_eq!(
+        ok("source_lookup", json!({"frame": 12, "seek_serial": 44, "scene_instance_key": "scene-a", "component_key": "title", "object_key": "headline", "repeat_key": "primary", "frame_geometry_digest": REV_A})).call,
+        ToolCall::SourceLookup {
+            path: None,
+            symbol: None,
+            marker: None,
+            frame: Some(12),
+            seek_serial: Some(44),
+            identity: Some(fframes_studio_protocol::EditorObjectIdentity {
+                scene_instance_key: "scene-a".into(),
+                component_key: "title".into(),
+                object_key: "headline".into(),
+                repeat_key: "primary".into(),
+            }),
+            frame_geometry_digest: Some(REV_A.into()),
+        }
+    );
+    assert_eq!(
+        code("source_lookup", json!({"path": "src/main.rs"})),
+        ToolErrorCode::InvalidParams
+    );
+    assert_eq!(
+        code(
+            "source_lookup",
+            json!({"path": "src/main.rs", "symbol": "main", "frame": 12, "seek_serial": 4, "scene_instance_key": "scene-a", "component_key": "title", "object_key": "headline", "repeat_key": "primary"})
+        ),
+        ToolErrorCode::InvalidParams
+    );
+    assert_eq!(
+        code(
+            "source_lookup",
+            json!({"path": "../secret.rs", "symbol": "main"})
+        ),
+        ToolErrorCode::InvalidParams
+    );
+    assert_eq!(
+        ok("style_context", json!({"token": "color.accent"})).call,
+        ToolCall::StyleContext {
+            token: Some("color.accent".into()),
+            frame: None,
+            seek_serial: None,
+            identity: None,
+            frame_geometry_digest: None,
+        }
+    );
+    assert_eq!(
+        ok("style_context", json!({"frame": 12, "seek_serial": 44, "scene_instance_key": "scene-a", "component_key": "title", "object_key": "headline", "repeat_key": "primary", "frame_geometry_digest": REV_A})).call,
+        ToolCall::StyleContext {
+            token: None,
+            frame: Some(12),
+            seek_serial: Some(44),
+            identity: Some(fframes_studio_protocol::EditorObjectIdentity {
+                scene_instance_key: "scene-a".into(),
+                component_key: "title".into(),
+                object_key: "headline".into(),
+                repeat_key: "primary".into(),
+            }),
+            frame_geometry_digest: Some(REV_A.into()),
+        }
+    );
+    assert_eq!(
+        code("style_context", json!({"frame": 12, "seek_serial": 44})),
+        ToolErrorCode::InvalidParams
     );
 }
 
@@ -2515,7 +2639,7 @@ fn mcp_flags_and_a_missing_broker() {
     mcp.send(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion": MCP_PROTOCOL_VERSION}}));
     assert!(mcp.recv().get("result").is_some());
     mcp.send(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
-    assert_eq!(mcp.recv()["result"]["tools"].as_array().unwrap().len(), 6);
+    assert_eq!(mcp.recv()["result"]["tools"].as_array().unwrap().len(), 9);
     mcp.send(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"timeline"}}));
     let call = mcp.recv();
     assert_eq!(call["result"]["isError"], true);

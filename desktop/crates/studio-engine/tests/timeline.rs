@@ -27,6 +27,7 @@ fn report(total_frames: usize) -> PreviewTimelineResponse {
 fn scene(id: &str, index: usize, start: usize, end: usize) -> PreviewSceneInfo {
     PreviewSceneInfo {
         instance_id: format!("revision-7:{id}"),
+        editor_instance_key: None,
         index,
         name: "Repeated".into(),
         full_name: "video::Repeated".into(),

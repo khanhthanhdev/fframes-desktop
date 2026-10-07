@@ -3,6 +3,7 @@ pub mod agent_task;
 pub mod app_paths;
 pub mod build_materialization;
 pub mod candidate_validation;
+pub mod canvas_selection;
 pub mod controller;
 pub mod diagnostics;
 pub mod edit_transaction;
@@ -21,6 +22,7 @@ pub use agent_task::{
     TaskSourceBase, TaskState, TurnCompletion, WriterGeneration, WriterGoneEvidence,
     WriterObservation, evaluate_quiescence,
 };
+pub use canvas_selection::*;
 pub use controller::{
     CompletionOutcome, Controller, PresetMutation, PresetOutcome, Promotion, RecoveryStatus,
     UndoPreparation,
@@ -36,9 +38,9 @@ pub use preset_state::{
 pub use preview_state::*;
 pub use state::*;
 pub use task_scope::{
-    CompiledScope, SceneSourceCandidate, SceneSourceReference, SceneSourceResolution,
-    ScopeSelection, ScopedScene, SourceMatchConfidence, StyleSnapshotIdentity, TaskScope,
-    TaskScopeError,
+    CanvasTaskSelection, CanvasTaskSelectionKind, CompiledScope, SceneSourceCandidate,
+    SceneSourceReference, SceneSourceResolution, ScopeSelection, ScopedScene,
+    SourceMatchConfidence, StyleSnapshotIdentity, TaskScope, TaskScopeError, VideoPixelRect,
 };
 pub use timeline::*;
 

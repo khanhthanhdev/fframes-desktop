@@ -36,6 +36,15 @@ impl PreviewWorkerClient {
             .map(|h| h.capability_gaps.clone())
             .unwrap_or_default()
     }
+    /// Whether the worker implements optional, frame-coupled semantic selection metadata.
+    pub fn supports_editor_frames(&self) -> bool {
+        self.hello.as_ref().is_some_and(|hello| {
+            hello
+                .capabilities
+                .iter()
+                .any(|capability| capability == "editor_frame_v1")
+        })
+    }
     pub fn identity(&self) -> &PreviewIdentity {
         &self.identity
     }
@@ -142,7 +151,7 @@ impl PreviewWorkerClient {
         };
         let result = self.transport.with_deadline(|t| {
             t.write_message(request)?;
-            let response: PreviewResponse = t.read_message()?;
+            let mut response: PreviewResponse = t.read_message()?;
             let envelope = match &response {
                 PreviewResponse::Timeline(r) => Some(&r.envelope),
                 PreviewResponse::ScaledFrame(r) => Some(&r.envelope),
@@ -158,6 +167,24 @@ impl PreviewWorkerClient {
             }
             if let PreviewResponse::Error(error) = &response {
                 return Err(invalid(format!("{}: {}", error.code, error.message)));
+            }
+            if let (PreviewRequest::ScaledFrame(request), PreviewResponse::ScaledFrame(frame)) =
+                (request, &mut response)
+                && let Some(metadata) = &frame.editor_metadata
+                && (metadata
+                    .validate_for_frame(request.frame_index, request.seek_serial)
+                    .is_err()
+                    || self.timeline.as_ref().is_none_or(|timeline| {
+                        metadata.video_width as usize != timeline.width
+                            || metadata.video_height as usize != timeline.height
+                    }))
+            {
+                frame.editor_metadata = Some(invalid_editor_metadata(
+                    request.frame_index,
+                    request.seek_serial,
+                    self.timeline.as_ref().map_or(1, |timeline| timeline.width) as u32,
+                    self.timeline.as_ref().map_or(1, |timeline| timeline.height) as u32,
+                ));
             }
             match (request, &response) {
                 (PreviewRequest::ScaledFrame(req), PreviewResponse::ScaledFrame(r)) => {
@@ -423,6 +450,26 @@ impl PreviewWorkerClient {
             return;
         };
         let _ = self.exchange(&PreviewRequest::Shutdown(e.clone()), &e, false);
+    }
+}
+
+fn invalid_editor_metadata(
+    frame_index: usize,
+    seek_serial: u64,
+    video_width: u32,
+    video_height: u32,
+) -> EditorFrameMetadata {
+    let digest = "0".repeat(64);
+    EditorFrameMetadata {
+        frame_index,
+        seek_serial,
+        video_width,
+        video_height,
+        editor_index_digest: digest.clone(),
+        frame_geometry_digest: digest,
+        status: EditorFrameStatus::Invalid,
+        reason: Some("worker returned invalid selection metadata".into()),
+        objects: Vec::new(),
     }
 }
 

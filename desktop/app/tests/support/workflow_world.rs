@@ -17,9 +17,12 @@ use std::{
 use studio_agent_spike::{AdapterConfig, ExecutableSearch, McpStdioSupport, driver::OptionValue};
 use studio_bootstrap::{ProcessTreeManager, WriterOwnership};
 use studio_engine::{
-    AgentTaskId, Boundary, CompiledScope, Controller, DraftState, Fault, ScopeSelection, TaskScope,
-    TaskState, TransactionHooks, app_paths::AppPaths, build_materialization::MaterializedBuild,
+    AgentTaskId, Boundary, CanvasTaskSelection, CanvasTaskSelectionKind, CompiledScope,
+    Controller, DraftState, Fault, ScopeSelection, TaskScope, TaskState, TransactionHooks,
+    TimelineSelection, VideoPixelRect, app_paths::AppPaths,
+    build_materialization::MaterializedBuild,
 };
+use fframes_studio_protocol::{EditorGeometrySupport, EditorObjectIdentity, EditorSourceAnchor};
 
 #[path = "build_fixture.rs"]
 mod fixture;
@@ -96,6 +99,8 @@ struct Options {
     block_compiler: bool,
     /// The real SDK and its manifest: real Cargo compiles and the real preview worker.
     real: Option<(PathBuf, studio_sdk::CompatibilityManifest)>,
+    /// Generate the production Studio starter instead of the synthetic timeline fixture.
+    starter_project: bool,
     /// Failure injection for background jobs.
     job_faults: Option<JobFaults>,
     /// A configured credential value (auth variable `SCRIPTED_TOKEN`).
@@ -117,6 +122,7 @@ impl Default for Options {
             adapter: true,
             block_compiler: false,
             real: None,
+            starter_project: false,
             job_faults: None,
             secret: None,
         }
@@ -153,7 +159,18 @@ impl World {
         let root = temp.path().join("video");
         let (sdk, manifest, limit) = match &options.real {
             Some((sdk, manifest)) => {
-                preview_fixture::create(&root, manifest);
+                if options.starter_project {
+                    studio_project::create(
+                        &root,
+                        "M5 selected-title workflow",
+                        studio_engine::build_materialization::sdk_pin(manifest),
+                        &manifest.fframes_version,
+                        "0.1.0",
+                    )
+                    .unwrap();
+                } else {
+                    preview_fixture::create(&root, manifest);
+                }
                 (sdk.clone(), manifest.clone(), Duration::from_secs(1200))
             }
             None => {
@@ -372,6 +389,11 @@ impl World {
     fn submit_plan(&self, turns: &[Value]) {
         self.set_plan(turns);
         self.wf().submit("plan brief").unwrap();
+    }
+
+    fn submit_scoped_plan(&self, brief: &str, scope: TaskScope, turns: &[Value]) {
+        self.set_plan(turns);
+        self.wf().submit_scoped(brief, scope).unwrap();
     }
 
     fn evidence(&self, name: &str) -> Vec<Value> {
