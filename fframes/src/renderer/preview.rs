@@ -5,8 +5,9 @@ use super::FFramesRendererRuntime;
 use super::renderer_error::{FFramesRendererError, FFramesRendererResult};
 use crate::diagnostics::{self, Diagnostic};
 use crate::{
-    AudioTimelineSamples, Color, FFramesContext, Frame, RenderOptions, ResolvedRenderingTimeline,
-    TextCache, TimeBase, TimelineIndex, Video, VideoDecodersWorker, VideoSize, usvgr,
+    AudioTimelineSamples, Color, EditorFrameGeometry, FFramesContext, Frame, RenderOptions,
+    ResolvedRenderingTimeline, TextCache, TimeBase, TimelineIndex, Video, VideoDecodersWorker,
+    VideoSize, editor_geometry, usvgr,
 };
 use serde::Serialize;
 use std::collections::HashMap;
@@ -192,6 +193,8 @@ pub struct TimelineReport {
 #[derive(Debug, Clone, Serialize)]
 pub struct SceneReport {
     pub index: usize,
+    /// Stable author-supplied scene identity; absent for legacy scenes.
+    pub editor_instance_key: Option<String>,
     pub name: String,
     pub full_name: String,
     /// Frames including overlaps with the neighbours, end exclusive.
@@ -331,6 +334,7 @@ impl<'a, 'media: 'a, TVideo: Video> Previewer<'a, 'media, TVideo> {
                 .iter()
                 .map(|scene| SceneReport {
                     index: scene.index,
+                    editor_instance_key: scene.editor_instance_key.clone(),
                     name: scene.name.clone(),
                     full_name: scene.full_name.clone(),
                     start_frame: scene.frames.start,
@@ -445,6 +449,26 @@ impl<'a, 'media: 'a, TVideo: Video> Previewer<'a, 'media, TVideo> {
         let tree = self.svg_tree(frame)?;
         let (width, height) = self.size();
         renderer.render_tree(&tree, TVideo::BACKGROUND_COLOR, width, height)
+    }
+
+    /// Renders a frame and derives opt-in editor bounds from that exact converted tree.
+    ///
+    /// Geometry is expressed in full-resolution video pixels, not the current preview
+    /// raster size. Invalid or duplicate editor annotations suppress metadata without
+    /// suppressing otherwise valid preview pixels.
+    pub fn render_with_editor_geometry(
+        &mut self,
+        frame: usize,
+        renderer: &mut dyn FrameRenderer,
+    ) -> FFramesRendererResult<(
+        RgbaFrame,
+        Result<EditorFrameGeometry, crate::EditorMetadataError>,
+    )> {
+        let tree = self.svg_tree(frame)?;
+        let geometry = editor_geometry(&tree, TVideo::WIDTH as u32, TVideo::HEIGHT as u32);
+        let (width, height) = self.size();
+        let pixels = renderer.render_tree(&tree, TVideo::BACKGROUND_COLOR, width, height)?;
+        Ok((pixels, geometry))
     }
 
     /// Renders a frame and reports the problems found while converting it.

@@ -77,6 +77,12 @@ pub trait Video: Sync + Sized {
     /// return `Result` because it is extremely expensive to stop the rendering once it has
     /// started. Prepare compiler guaranteed data in advance and read it from `self`.
     fn render_frame<'a>(&'a self, frame: Frame, ctx: &FFramesContext<'a, '_>) -> Svgr<'a>;
+
+    /// Stable author-supplied identity for the root video scene, when it is
+    /// intentionally exposed to canvas selection.
+    fn editor_instance_key(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]

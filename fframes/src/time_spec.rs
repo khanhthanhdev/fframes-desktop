@@ -69,6 +69,8 @@ impl std::error::Error for TimeSpecError {}
 #[derive(Debug, Clone)]
 pub struct TimelineScene {
     pub index: usize,
+    /// Explicit, stable scene instance key, if the author registered one.
+    pub editor_instance_key: Option<String>,
     /// Short name, e.g. `Intro` for `my_video::scenes::Intro`.
     pub name: String,
     /// Name as returned by `Scene::name`.
@@ -109,6 +111,7 @@ impl TimelineIndex {
                         .iter()
                         .map(|(range, info, scene)| TimelineScene {
                             index: info.index,
+                            editor_instance_key: scene.editor_instance_key().map(str::to_owned),
                             name: short_scene_name(scene.name()).to_owned(),
                             full_name: scene.name().to_owned(),
                             frames: range.clone(),
@@ -358,18 +361,21 @@ mod tests {
             scenes: vec![
                 TimelineScene {
                     index: 0,
+                    editor_instance_key: None,
                     name: "Intro".into(),
                     full_name: "video::Intro".into(),
                     frames: 0..100,
                 },
                 TimelineScene {
                     index: 1,
+                    editor_instance_key: None,
                     name: "Speaker".into(),
                     full_name: "video::Speaker".into(),
                     frames: 90..200,
                 },
                 TimelineScene {
                     index: 2,
+                    editor_instance_key: None,
                     name: "Speaker".into(),
                     full_name: "video::Speaker".into(),
                     frames: 200..300,

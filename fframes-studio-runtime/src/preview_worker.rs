@@ -2,7 +2,7 @@ use crate::{WorkerError, WorkerTransport};
 use fframes::{AudioMixer, CpuFrameRenderer, Previewer, RenderOptions, Video};
 use fframes_studio_protocol::*;
 use sha2::{Digest, Sha256};
-use std::collections::VecDeque;
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -92,6 +92,191 @@ fn error(env: Option<PreviewEnvelope>, code: &str, message: impl ToString) -> Pr
     })
 }
 
+fn editor_frame_metadata(
+    geometry: Result<fframes::EditorFrameGeometry, fframes::EditorMetadataError>,
+    frame_index: usize,
+    seek_serial: u64,
+    video_width: usize,
+    video_height: usize,
+    ambiguous_scene_keys: &HashSet<String>,
+) -> EditorFrameMetadata {
+    let invalid = |reason: String| {
+        let digest = format!("{:x}", Sha256::digest(reason.as_bytes()));
+        EditorFrameMetadata {
+            frame_index,
+            seek_serial,
+            video_width: video_width as u32,
+            video_height: video_height as u32,
+            editor_index_digest: digest.clone(),
+            frame_geometry_digest: digest,
+            status: EditorFrameStatus::Invalid,
+            reason: Some(reason.chars().take(256).collect()),
+            objects: Vec::new(),
+        }
+    };
+    let geometry = match geometry {
+        Ok(geometry) => geometry,
+        Err(reason) => return invalid(reason.to_string()),
+    };
+    if geometry.video_width as usize != video_width
+        || geometry.video_height as usize != video_height
+    {
+        return invalid("video dimensions do not match preview timeline".into());
+    }
+    let mut objects: Vec<_> = geometry
+        .objects
+        .into_iter()
+        .map(|object| {
+            let identity = EditorObjectIdentity {
+                scene_instance_key: object.key.scene_instance_key,
+                component_key: object.key.component_key,
+                object_key: object.key.object_key,
+                repeat_key: object.key.repeat_key,
+            };
+            EditorObjectGeometry {
+                identity,
+                parent: object.parent.map(|parent| EditorObjectIdentity {
+                    scene_instance_key: parent.scene_instance_key,
+                    component_key: parent.component_key,
+                    object_key: parent.object_key,
+                    repeat_key: parent.repeat_key,
+                }),
+                source_anchor: object.source_anchor.map(|anchor| EditorSourceAnchor {
+                    path: anchor.path,
+                    symbol: anchor.symbol,
+                    marker: anchor.marker,
+                }),
+                style_tokens: object.style_tokens,
+                bounds: Rect {
+                    x: object.bounds.x,
+                    y: object.bounds.y,
+                    width: object.bounds.width,
+                    height: object.bounds.height,
+                },
+                paint_order: object.paint_order,
+                support: match object.support {
+                    fframes::EditorGeometrySupport::ExactBounds => {
+                        EditorGeometrySupport::ExactBounds
+                    }
+                    fframes::EditorGeometrySupport::ApproximateBounds => {
+                        EditorGeometrySupport::ApproximateBounds
+                    }
+                    fframes::EditorGeometrySupport::Unsupported => {
+                        EditorGeometrySupport::Unsupported
+                    }
+                },
+            }
+        })
+        .collect();
+    objects.sort_by(|a, b| {
+        (
+            &a.identity.scene_instance_key,
+            &a.identity.component_key,
+            &a.identity.object_key,
+            &a.identity.repeat_key,
+        )
+            .cmp(&(
+                &b.identity.scene_instance_key,
+                &b.identity.component_key,
+                &b.identity.object_key,
+                &b.identity.repeat_key,
+            ))
+    });
+    if objects
+        .iter()
+        .any(|object| ambiguous_scene_keys.contains(&object.identity.scene_instance_key))
+    {
+        return invalid("editor scene instance key is duplicated in the timeline".into());
+    }
+    let editor_index: Vec<_> = objects
+        .iter()
+        .map(|object| {
+            (
+                &object.identity,
+                &object.source_anchor,
+                &object.style_tokens,
+            )
+        })
+        .collect();
+    let editor_index_digest = match serde_json::to_vec(&editor_index) {
+        Ok(bytes) => format!("{:x}", Sha256::digest(bytes)),
+        Err(error) => return invalid(error.to_string()),
+    };
+    let frame_geometry_digest = match serde_json::to_vec(&objects) {
+        Ok(bytes) => format!("{:x}", Sha256::digest(bytes)),
+        Err(error) => return invalid(error.to_string()),
+    };
+    let status = if objects.is_empty() {
+        EditorFrameStatus::Unannotated
+    } else {
+        EditorFrameStatus::Supported
+    };
+    let metadata = EditorFrameMetadata {
+        frame_index,
+        seek_serial,
+        video_width: geometry.video_width,
+        video_height: geometry.video_height,
+        editor_index_digest,
+        frame_geometry_digest,
+        status,
+        reason: None,
+        objects,
+    };
+    if metadata
+        .validate_for_frame(frame_index, seek_serial)
+        .is_err()
+        || serde_json::to_vec(&metadata)
+            .is_ok_and(|bytes| bytes.len() > MAX_EDITOR_METADATA_BYTES - 4096)
+    {
+        return invalid("editor metadata failed validation or exceeds the 1 MiB limit".into());
+    }
+    metadata
+}
+
+fn duplicate_editor_scene_keys(scenes: &[fframes::SceneReport]) -> HashSet<String> {
+    let mut counts = HashMap::<&str, usize>::new();
+    for key in scenes
+        .iter()
+        .filter_map(|scene| scene.editor_instance_key.as_deref())
+    {
+        *counts.entry(key).or_default() += 1;
+    }
+    counts
+        .into_iter()
+        .filter(|(_, count)| *count > 1)
+        .map(|(key, _)| key.to_owned())
+        .collect()
+}
+
+fn preview_scene_infos(
+    scenes: Vec<fframes::SceneReport>,
+    identity: &PreviewIdentity,
+) -> Vec<PreviewSceneInfo> {
+    let duplicate_keys = duplicate_editor_scene_keys(&scenes);
+    scenes
+        .into_iter()
+        .map(|scene| {
+            let editor_instance_key = scene
+                .editor_instance_key
+                .filter(|key| !duplicate_keys.contains(key));
+            let instance_id = editor_instance_key
+                .clone()
+                .unwrap_or_else(|| format!("{}:scene:{}", identity.source_revision, scene.index));
+            PreviewSceneInfo {
+                instance_id,
+                editor_instance_key,
+                index: scene.index,
+                name: scene.name,
+                full_name: scene.full_name,
+                start_frame: scene.start_frame,
+                end_frame: scene.end_frame,
+                start_seconds: scene.start_seconds,
+                end_seconds: scene.end_seconds,
+            }
+        })
+        .collect()
+}
+
 pub fn serve_preview_worker<V: Video>(
     video: &V,
     options: &RenderOptions,
@@ -170,7 +355,10 @@ pub fn serve_preview_worker<V: Video>(
                 let gaps: Vec<_> = req
                     .required_capabilities
                     .iter()
-                    .filter(|c| !PREVIEW_CAPABILITIES.contains(&c.as_str()))
+                    .filter(|capability| {
+                        !PREVIEW_CAPABILITIES.contains(&capability.as_str())
+                            && !OPTIONAL_PREVIEW_CAPABILITIES.contains(&capability.as_str())
+                    })
                     .cloned()
                     .collect();
                 if !req.offered_versions.contains(&PREVIEW_CONTRACT_VERSION) || !gaps.is_empty() {
@@ -187,7 +375,11 @@ pub fn serve_preview_worker<V: Video>(
                     runtime_version: env!("CARGO_PKG_VERSION").into(),
                     sdk_version: config.sdk_version.clone(),
                     backend: "cpu".into(),
-                    capabilities: PREVIEW_CAPABILITIES.iter().map(|s| (*s).into()).collect(),
+                    capabilities: PREVIEW_CAPABILITIES
+                        .iter()
+                        .chain(OPTIONAL_PREVIEW_CAPABILITIES)
+                        .map(|s| (*s).into())
+                        .collect(),
                     capability_gaps: vec!["shader_preview".into()],
                     max_frame_bytes: MAX_FRAME_PAYLOAD_BYTES,
                     max_control_bytes: crate::worker::MAX_CONTROL_MESSAGE_SIZE,
@@ -212,23 +404,7 @@ pub fn serve_preview_worker<V: Video>(
                     height: report.height,
                     total_frames: report.duration_frames,
                     duration_seconds: report.duration_seconds,
-                    scenes: report
-                        .scenes
-                        .into_iter()
-                        .map(|s| PreviewSceneInfo {
-                            instance_id: format!(
-                                "{}:scene:{}",
-                                config.identity.source_revision, s.index
-                            ),
-                            index: s.index,
-                            name: s.name,
-                            full_name: s.full_name,
-                            start_frame: s.start_frame,
-                            end_frame: s.end_frame,
-                            start_seconds: s.start_seconds,
-                            end_seconds: s.end_seconds,
-                        })
-                        .collect(),
+                    scenes: preview_scene_infos(report.scenes, &config.identity),
                     audio_tracks: report
                         .audio
                         .into_iter()
@@ -274,8 +450,8 @@ pub fn serve_preview_worker<V: Video>(
                 let scale = req.scale.min(max_scale);
                 previewer.set_scale(scale);
                 let started = Instant::now();
-                match previewer.render(req.frame_index, &mut renderer) {
-                    Ok(frame) => {
+                match previewer.render_with_editor_geometry(req.frame_index, &mut renderer) {
+                    Ok((frame, geometry)) => {
                         let expected = (frame.width as usize)
                             .checked_mul(frame.height as usize)
                             .and_then(|v| v.checked_mul(4));
@@ -294,6 +470,15 @@ pub fn serve_preview_worker<V: Video>(
                             offset: 0,
                             payload_len: frame.pixels.len(),
                         };
+                        let ambiguous_scene_keys = duplicate_editor_scene_keys(&report.scenes);
+                        let editor_metadata = editor_frame_metadata(
+                            geometry,
+                            req.frame_index,
+                            req.seek_serial,
+                            report.width,
+                            report.height,
+                            &ambiguous_scene_keys,
+                        );
                         let response = PreviewResponse::ScaledFrame(ScaledFrameResponse {
                             header: FrameHeader::new_straight_rgba(
                                 &config.identity.source_revision,
@@ -309,6 +494,7 @@ pub fn serve_preview_worker<V: Video>(
                             scale,
                             render_duration_micros: started.elapsed().as_micros() as u64,
                             record: record.clone(),
+                            editor_metadata: Some(editor_metadata),
                         });
                         transport.write_control_message(&response)?;
                         transport.write_binary_record(&record, &frame.pixels)?
@@ -493,6 +679,114 @@ pub fn serve_preview_worker<V: Video>(
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod editor_metadata_tests {
+    use super::*;
+    use fframes::{EditorGeometrySupport, EditorObjectGeometry, EditorObjectKey, EditorRect};
+
+    fn identity() -> PreviewIdentity {
+        PreviewIdentity {
+            project_id: "project".into(),
+            open_session: "session".into(),
+            source_revision: "a".repeat(64),
+            worker_generation: 1,
+        }
+    }
+
+    fn geometry(object_count: usize, object_key_bytes: usize) -> fframes::EditorFrameGeometry {
+        let objects = (0..object_count)
+            .map(|index| {
+                let suffix = format!("{index:04}");
+                let object = if object_key_bytes > suffix.len() {
+                    format!("{}{suffix}", "x".repeat(object_key_bytes - suffix.len()))
+                } else {
+                    suffix
+                };
+                EditorObjectGeometry {
+                    key: EditorObjectKey::new("s", "c", object, "r").unwrap(),
+                    style_tokens: Vec::new(),
+                    parent: None,
+                    source_anchor: None,
+                    bounds: EditorRect {
+                        x: 0.0,
+                        y: 0.0,
+                        width: 1.0,
+                        height: 1.0,
+                    },
+                    paint_order: index as u32,
+                    support: EditorGeometrySupport::ExactBounds,
+                }
+            })
+            .collect();
+        fframes::EditorFrameGeometry {
+            video_width: 320,
+            video_height: 180,
+            objects,
+        }
+    }
+
+    #[test]
+    fn object_count_limit_is_reachable_with_compact_semantic_keys() {
+        let metadata = editor_frame_metadata(
+            Ok(geometry(MAX_EDITOR_OBJECTS_PER_FRAME, 4)),
+            0,
+            1,
+            320,
+            180,
+            &HashSet::new(),
+        );
+        assert_eq!(metadata.status, EditorFrameStatus::Supported);
+        assert_eq!(metadata.objects.len(), MAX_EDITOR_OBJECTS_PER_FRAME);
+        assert!(serde_json::to_vec(&metadata).unwrap().len() <= MAX_EDITOR_METADATA_BYTES - 4096);
+    }
+
+    #[test]
+    fn metadata_byte_limit_rejects_overflow_without_publishing_partial_objects() {
+        let metadata = editor_frame_metadata(
+            Ok(geometry(MAX_EDITOR_OBJECTS_PER_FRAME, 256)),
+            0,
+            1,
+            320,
+            180,
+            &HashSet::new(),
+        );
+        assert_eq!(metadata.status, EditorFrameStatus::Invalid);
+        assert!(metadata.objects.is_empty());
+        assert!(metadata.reason.as_deref().unwrap().contains("1 MiB limit"));
+        metadata.validate_for_frame(0, 1).unwrap();
+    }
+
+    #[test]
+    fn duplicate_scene_keys_fall_back_to_unique_positional_timeline_ids() {
+        let scene = |index| fframes::SceneReport {
+            index,
+            editor_instance_key: Some("duplicate".into()),
+            name: format!("Scene {index}"),
+            full_name: format!("video::scene_{index}"),
+            start_frame: index * 10,
+            end_frame: (index + 1) * 10,
+            start_seconds: index as f32,
+            end_seconds: (index + 1) as f32,
+        };
+        let preview = identity();
+        let scenes = preview_scene_infos(vec![scene(0), scene(1)], &preview);
+
+        assert_eq!(
+            scenes[0].instance_id,
+            format!("{}:scene:0", preview.source_revision)
+        );
+        assert_eq!(
+            scenes[1].instance_id,
+            format!("{}:scene:1", preview.source_revision)
+        );
+        assert!(
+            scenes
+                .iter()
+                .all(|scene| scene.editor_instance_key.is_none())
+        );
+    }
 }
 
 fn request_identity(request: &PreviewRequest) -> (u64, Option<&PreviewEnvelope>) {

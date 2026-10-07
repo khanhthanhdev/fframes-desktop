@@ -1,4 +1,6 @@
 use crate::error::{FFramesError, Result};
+#[cfg(any(not(feature = "compile-time-svgtree"), target_arch = "wasm32"))]
+use std::fmt::Write as _;
 use std::{fmt, iter::FromIterator};
 
 #[derive(Default, Clone, Debug)]
@@ -12,6 +14,68 @@ pub struct Svgr<'a> {
 }
 
 impl<'a> Svgr<'a> {
+    /// Wrap this SVG subtree in an explicit, stable editor object identity.
+    ///
+    /// The wrapper is ordinary SVG and therefore renders identically. Its encoded
+    /// group ID survives both the compile-time nested-tree and runtime-string paths.
+    pub fn with_editor_object(self, key: &crate::EditorObjectKey) -> Self {
+        let render_id = key.render_id();
+        #[cfg(all(feature = "compile-time-svgtree", not(target_arch = "wasm32")))]
+        {
+            use usvgr::svgtree::{
+                AId, Attribute, EId, NestedNodeData, NestedNodeKind, SvgAttributeValue,
+            };
+
+            let group = |children| NestedNodeData {
+                kind: NestedNodeKind::Element { tag_name: EId::G },
+                attrs: vec![Attribute {
+                    name: AId::Id,
+                    value: SvgAttributeValue::from(render_id.clone()),
+                }]
+                .into_boxed_slice(),
+                children,
+                static_hash: None,
+            };
+            let mut document = self.svg_tree;
+            if let [Some(root)] = document.nodes.as_mut_slice()
+                && root.kind == (NestedNodeKind::Element { tag_name: EId::Svg })
+            {
+                let children = std::mem::take(&mut root.children);
+                root.children = vec![Some(group(children))];
+                return Self { svg_tree: document };
+            }
+            Self {
+                svg_tree: usvgr::svgtree::NestedSvgDocument::from_nodes(vec![Some(group(
+                    document.nodes,
+                ))]),
+            }
+        }
+        #[cfg(any(not(feature = "compile-time-svgtree"), target_arch = "wasm32"))]
+        {
+            let wrapped = if let Ok((root_start, root_end)) = svg_document_bounds(&self.value) {
+                let mut wrapped = String::with_capacity(self.value.len() + render_id.len() + 16);
+                wrapped.push_str(&self.value[..root_start]);
+                let _ = write!(wrapped, "<g id=\"{render_id}\">");
+                wrapped.push_str(&self.value[root_start..root_end]);
+                wrapped.push_str("</g>");
+                wrapped.push_str(&self.value[root_end..]);
+                wrapped
+            } else {
+                let mut wrapped = String::with_capacity(self.value.len() + render_id.len() + 64);
+                wrapped.push_str("<svg xmlns=\"http://www.w3.org/2000/svg\">");
+                let _ = write!(wrapped, "<g id=\"{render_id}\">");
+                wrapped.push_str(&self.value);
+                wrapped.push_str("</g>");
+                wrapped.push_str("</svg>");
+                wrapped
+            };
+            Self {
+                value: wrapped,
+                marker: std::marker::PhantomData,
+            }
+        }
+    }
+
     #[cfg(all(feature = "compile-time-svgtree", not(target_arch = "wasm32")))]
     pub fn into_svg_tree(
         self,
@@ -48,6 +112,39 @@ impl<'a> Svgr<'a> {
     pub fn empty() -> Self {
         Self::default()
     }
+}
+
+#[cfg(any(not(feature = "compile-time-svgtree"), target_arch = "wasm32"))]
+fn svg_document_bounds(
+    svg: &str,
+) -> std::result::Result<(usize, usize), crate::EditorMetadataError> {
+    let document = usvgr::roxmltree::Document::parse(svg)
+        .map_err(|_| crate::EditorMetadataError::InvalidSvgDocument)?;
+    let root = document.root_element();
+    if root.tag_name().name() != "svg" {
+        return Err(crate::EditorMetadataError::InvalidSvgDocument);
+    }
+    let range = root.range();
+    let bytes = svg.as_bytes();
+    let mut quote = None;
+    let opening_end = (range.start..range.end)
+        .find(|index| {
+            let byte = bytes[*index];
+            match (quote, byte) {
+                (Some(expected), value) if expected == value => quote = None,
+                (None, b'\'' | b'"') => quote = Some(byte),
+                (None, b'>') => return true,
+                _ => {}
+            }
+            false
+        })
+        .ok_or(crate::EditorMetadataError::InvalidSvgDocument)?
+        + 1;
+    let closing_start = svg[opening_end..range.end]
+        .rfind("</")
+        .map(|offset| opening_end + offset)
+        .ok_or(crate::EditorMetadataError::InvalidSvgDocument)?;
+    Ok((opening_end, closing_start))
 }
 
 #[cfg(any(not(feature = "compile-time-svgtree"), target_arch = "wasm32"))]

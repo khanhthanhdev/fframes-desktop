@@ -63,6 +63,13 @@ pub trait Scene: Debug + Sync + Send {
     fn name(&self) -> &'static str {
         std::any::type_name::<Self>()
     }
+
+    /// Stable author-supplied identity for this scene instance. Repeated instances
+    /// of one scene type must return distinct keys; anonymous legacy scenes remain
+    /// available for timeline playback but cannot be semantically selected.
+    fn editor_instance_key(&self) -> Option<&str> {
+        None
+    }
 }
 
 #[derive(Debug, Clone)]

@@ -7,6 +7,8 @@ pub const MAX_PREVIEW_WIDTH: u32 = 1280;
 pub const MAX_PREVIEW_HEIGHT: u32 = 720;
 pub const MAX_INSPECT_FRAMES: usize = 256;
 pub const MAX_DIAGNOSTICS: usize = 1024;
+pub const MAX_EDITOR_OBJECTS_PER_FRAME: usize = 4096;
+pub const MAX_EDITOR_METADATA_BYTES: usize = 1024 * 1024;
 pub const MAX_AUDIO_READ_BYTES: usize = 256 * 1024;
 pub const MAX_PREPARED_AUDIO_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 pub const MAX_PREPARED_AUDIO_CACHE_BYTES: u64 = 8 * 1024 * 1024 * 1024;
@@ -16,6 +18,8 @@ pub const PREVIEW_CAPABILITIES: &[&str] = &[
     "inspect_v1",
     "prepared_audio_v1",
 ];
+/// Additive preview features that older M2 workers may omit without losing playback.
+pub const OPTIONAL_PREVIEW_CAPABILITIES: &[&str] = &["editor_frame_v1"];
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PreviewIdentity {
@@ -72,6 +76,9 @@ pub struct TrackMixInfo {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PreviewSceneInfo {
     pub instance_id: String,
+    /// Stable author-supplied identity, absent for legacy positional scenes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_instance_key: Option<String>,
     pub index: usize,
     pub name: String,
     pub full_name: String,
@@ -115,6 +122,354 @@ pub struct ScaledFrameResponse {
     pub header: super::FrameHeader,
     pub render_duration_micros: u64,
     pub record: BinaryRecordHeader,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub editor_metadata: Option<EditorFrameMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct EditorObjectIdentity {
+    pub scene_instance_key: String,
+    pub component_key: String,
+    pub object_key: String,
+    pub repeat_key: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorGeometrySupport {
+    ExactBounds,
+    ApproximateBounds,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorObjectGeometry {
+    pub identity: EditorObjectIdentity,
+    pub parent: Option<EditorObjectIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anchor: Option<EditorSourceAnchor>,
+    #[serde(default)]
+    pub style_tokens: Vec<String>,
+    pub bounds: super::Rect,
+    pub paint_order: u32,
+    pub support: EditorGeometrySupport,
+}
+
+/// Optional author-registered source hint. It is not authorization to read a path;
+/// consumers must resolve it inside the immutable project inventory.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EditorSourceAnchor {
+    pub path: String,
+    pub symbol: String,
+    pub marker: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EditorFrameStatus {
+    Supported,
+    Unannotated,
+    Invalid,
+}
+
+/// Frame-specific metadata published atomically with the preview image that produced it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EditorFrameMetadata {
+    pub frame_index: usize,
+    pub seek_serial: u64,
+    pub video_width: u32,
+    pub video_height: u32,
+    /// Digest of the sorted semantic identity set for this frame.
+    pub editor_index_digest: String,
+    /// Digest of identity, geometry, support and traversal order for this frame.
+    pub frame_geometry_digest: String,
+    pub status: EditorFrameStatus,
+    pub reason: Option<String>,
+    pub objects: Vec<EditorObjectGeometry>,
+}
+
+impl EditorFrameMetadata {
+    pub fn validate_for_frame(&self, frame_index: usize, seek_serial: u64) -> Result<(), String> {
+        if self.frame_index != frame_index
+            || self.seek_serial != seek_serial
+            || self.video_width == 0
+            || self.video_height == 0
+            || self.objects.len() > MAX_EDITOR_OBJECTS_PER_FRAME
+            || !valid_sha256(&self.editor_index_digest)
+            || !valid_sha256(&self.frame_geometry_digest)
+            || self
+                .reason
+                .as_ref()
+                .is_some_and(|reason| reason.len() > 256 || reason.chars().any(char::is_control))
+        {
+            return Err("invalid editor frame identity, digest, or bounds".into());
+        }
+        if (self.status == EditorFrameStatus::Supported && self.objects.is_empty())
+            || (self.status != EditorFrameStatus::Supported && !self.objects.is_empty())
+            || (self.status == EditorFrameStatus::Invalid && self.reason.is_none())
+            || (self.status != EditorFrameStatus::Invalid && self.reason.is_some())
+        {
+            return Err("inconsistent editor frame support status".into());
+        }
+        let mut identities = std::collections::HashSet::new();
+        for object in &self.objects {
+            if !valid_key(&object.identity.scene_instance_key)
+                || !valid_key(&object.identity.component_key)
+                || !valid_key(&object.identity.object_key)
+                || !valid_key(&object.identity.repeat_key)
+                || !identities.insert(&object.identity)
+                || !object.bounds.x.is_finite()
+                || !object.bounds.y.is_finite()
+                || !object.bounds.width.is_finite()
+                || !object.bounds.height.is_finite()
+                || object.bounds.x < 0.0
+                || object.bounds.y < 0.0
+                || object.bounds.width < 0.0
+                || object.bounds.height < 0.0
+                || object.bounds.x + object.bounds.width > self.video_width as f32
+                || object.bounds.y + object.bounds.height > self.video_height as f32
+                || object
+                    .parent
+                    .as_ref()
+                    .is_some_and(|parent| parent == &object.identity)
+                || object.source_anchor.as_ref().is_some_and(|anchor| {
+                    !valid_relative_path(&anchor.path)
+                        || anchor.symbol.is_empty()
+                        || anchor.symbol.len() > 512
+                        || anchor.symbol.chars().any(char::is_control)
+                        || anchor.marker.as_ref().is_some_and(|marker| {
+                            marker.is_empty()
+                                || marker.len() > 256
+                                || marker.chars().any(char::is_control)
+                        })
+                })
+                || object.style_tokens.len() > 64
+                || object.style_tokens.iter().any(|token| {
+                    token.is_empty() || token.len() > 128 || token.chars().any(char::is_control)
+                })
+                || object
+                    .style_tokens
+                    .iter()
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+                    != object.style_tokens.len()
+            {
+                return Err("invalid editor object key or geometry".into());
+            }
+        }
+        let parent_by_identity: std::collections::HashMap<_, _> = self
+            .objects
+            .iter()
+            .map(|object| (&object.identity, object.parent.as_ref()))
+            .collect();
+        if self.objects.iter().any(|object| {
+            object
+                .parent
+                .as_ref()
+                .is_some_and(|parent| !parent_by_identity.contains_key(parent))
+        }) {
+            return Err("editor object parent is absent from the frame".into());
+        }
+        for object in &self.objects {
+            let mut cursor = object.parent.as_ref();
+            let mut depth = 0;
+            while let Some(parent) = cursor {
+                depth += 1;
+                if depth > 128 || parent == &object.identity {
+                    return Err("editor object hierarchy is cyclic or too deep".into());
+                }
+                cursor = parent_by_identity.get(parent).and_then(|parent| *parent);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn valid_key(value: &str) -> bool {
+    !value.is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_relative_path(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 512
+        && !value.starts_with('/')
+        && !value.chars().any(|ch| matches!(ch, '\\' | ':' | '\0'))
+        && value
+            .split('/')
+            .all(|part| !part.is_empty() && part != "." && part != "..")
+}
+
+#[cfg(test)]
+mod editor_metadata_tests {
+    use super::*;
+    use crate::{AlphaMode, CURRENT_PROTOCOL_VERSION, ChannelOrder, ColorSpace, FrameHeader, Rect};
+
+    fn identity() -> PreviewIdentity {
+        PreviewIdentity {
+            project_id: "project".into(),
+            open_session: "session".into(),
+            source_revision: "a".repeat(64),
+            worker_generation: 1,
+        }
+    }
+
+    fn object(index: usize, parent: Option<usize>) -> EditorObjectGeometry {
+        let object_identity = |index: usize| EditorObjectIdentity {
+            scene_instance_key: "scene".into(),
+            component_key: "component".into(),
+            object_key: format!("object-{index}"),
+            repeat_key: "primary".into(),
+        };
+        EditorObjectGeometry {
+            identity: object_identity(index),
+            parent: parent.map(object_identity),
+            source_anchor: None,
+            style_tokens: Vec::new(),
+            bounds: Rect {
+                x: 0.0,
+                y: 0.0,
+                width: 1.0,
+                height: 1.0,
+            },
+            paint_order: index as u32,
+            support: EditorGeometrySupport::ExactBounds,
+        }
+    }
+
+    fn metadata(objects: Vec<EditorObjectGeometry>) -> EditorFrameMetadata {
+        EditorFrameMetadata {
+            frame_index: 3,
+            seek_serial: 7,
+            video_width: 100,
+            video_height: 100,
+            editor_index_digest: "b".repeat(64),
+            frame_geometry_digest: "c".repeat(64),
+            status: if objects.is_empty() {
+                EditorFrameStatus::Unannotated
+            } else {
+                EditorFrameStatus::Supported
+            },
+            reason: None,
+            objects,
+        }
+    }
+
+    #[test]
+    fn frame_metadata_accepts_object_and_hierarchy_limits() {
+        let mut objects = Vec::with_capacity(MAX_EDITOR_OBJECTS_PER_FRAME);
+        for index in 0..MAX_EDITOR_OBJECTS_PER_FRAME {
+            let parent = if (1..=128).contains(&index) {
+                Some(index - 1)
+            } else {
+                None
+            };
+            objects.push(object(index, parent));
+        }
+        metadata(objects).validate_for_frame(3, 7).unwrap();
+    }
+
+    #[test]
+    fn frame_metadata_rejects_object_count_missing_parents_cycles_and_excess_depth() {
+        let too_many = (0..=MAX_EDITOR_OBJECTS_PER_FRAME)
+            .map(|index| object(index, None))
+            .collect();
+        assert!(
+            metadata(too_many)
+                .validate_for_frame(3, 7)
+                .unwrap_err()
+                .contains("bounds")
+        );
+
+        assert!(
+            metadata(vec![object(0, Some(99))])
+                .validate_for_frame(3, 7)
+                .unwrap_err()
+                .contains("parent is absent")
+        );
+        assert!(
+            metadata(vec![object(0, Some(1)), object(1, Some(0))])
+                .validate_for_frame(3, 7)
+                .unwrap_err()
+                .contains("cyclic or too deep")
+        );
+
+        let too_deep = (0..130)
+            .map(|index| object(index, (index > 0).then(|| index - 1)))
+            .collect();
+        assert!(
+            metadata(too_deep)
+                .validate_for_frame(3, 7)
+                .unwrap_err()
+                .contains("cyclic or too deep")
+        );
+    }
+
+    #[test]
+    fn older_preview_payloads_without_editor_fields_remain_deserializable() {
+        let mut scene = serde_json::to_value(PreviewSceneInfo {
+            instance_id: "scene-0".into(),
+            editor_instance_key: None,
+            index: 0,
+            name: "Scene".into(),
+            full_name: "video::Scene".into(),
+            start_frame: 0,
+            end_frame: 1,
+            start_seconds: 0.0,
+            end_seconds: 1.0,
+        })
+        .unwrap();
+        scene.as_object_mut().unwrap().remove("editor_instance_key");
+        let restored_scene: PreviewSceneInfo = serde_json::from_value(scene).unwrap();
+        assert_eq!(restored_scene.editor_instance_key, None);
+
+        let response = ScaledFrameResponse {
+            envelope: PreviewEnvelope {
+                contract_version: PREVIEW_CONTRACT_VERSION,
+                identity: identity(),
+                request_id: 9,
+            },
+            frame_index: 3,
+            seek_serial: 7,
+            scale: 1.0,
+            header: FrameHeader {
+                protocol_version: CURRENT_PROTOCOL_VERSION,
+                source_revision: "a".repeat(64),
+                worker_generation: 1,
+                request_id: 9,
+                frame_index: 3,
+                width: 1,
+                height: 1,
+                stride_bytes: 4,
+                channel_order: ChannelOrder::Rgba8,
+                alpha_mode: AlphaMode::Straight,
+                color_space: ColorSpace::Srgb,
+                payload_len: 4,
+            },
+            render_duration_micros: 1,
+            record: BinaryRecordHeader {
+                kind: BinaryRecordKind::FrameRgba8,
+                identity: identity(),
+                request_id: 9,
+                offset: 0,
+                payload_len: 4,
+            },
+            editor_metadata: None,
+        };
+        let mut old_response = serde_json::to_value(response).unwrap();
+        old_response
+            .as_object_mut()
+            .unwrap()
+            .remove("editor_metadata");
+        let restored: ScaledFrameResponse = serde_json::from_value(old_response).unwrap();
+        assert!(restored.editor_metadata.is_none());
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

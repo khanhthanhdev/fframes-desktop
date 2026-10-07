@@ -38,7 +38,16 @@ pub fn render_frame_guarded<'a, TVideo: Video>(
     let index = frame.global_index;
     let fps = frame.fps.max(1);
 
-    catch_unwind(AssertUnwindSafe(|| video.render_frame(frame, ctx))).map_err(|payload| {
+    catch_unwind(AssertUnwindSafe(|| {
+        let rendered = video.render_frame(frame, ctx);
+        match video.editor_instance_key().and_then(|instance_key| {
+            crate::EditorObjectKey::new(instance_key, "video", "root", "root").ok()
+        }) {
+            Some(key) => rendered.with_editor_object(&key),
+            None => rendered,
+        }
+    }))
+    .map_err(|payload| {
         let message = payload
             .downcast_ref::<&str>()
             .map(std::string::ToString::to_string)

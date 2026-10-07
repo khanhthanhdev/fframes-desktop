@@ -113,10 +113,16 @@ impl<'a, 'media: 'a> FFramesContext<'a, 'media> {
                 .iter()
                 .filter(|&(range, _, _scene)| range.contains(&global_frame.index))
                 .map(|(range, _, scene)| {
-                    scene.render_frame(
+                    let rendered = scene.render_frame(
                         Frame::clone_with_scene_offset(global_frame, range.start),
                         self,
-                    )
+                    );
+                    match scene.editor_instance_key().and_then(|instance_key| {
+                        crate::EditorObjectKey::new(instance_key, "scene", "root", "root").ok()
+                    }) {
+                        Some(key) => rendered.with_editor_object(&key),
+                        None => rendered,
+                    }
                 })
                 .collect::<Svgr>()
         } else {
