@@ -4,6 +4,22 @@ Date: 2026-10-01. Status: implementation available; Phase Zero qualification **P
 
 The isolated desktop workspace connects managed setup, an external annotated renderer, image presentation, source inspection and a configurable ACP adapter session. Linux X11 software rendering has reproducible unprivileged, network-isolated install/build, presentation, keyboard and source-click evidence. Physical-display/IME, Windows/macOS and authenticated provider qualification remain open. A software-rendered X11 run does not qualify every native platform.
 
+## M6 provider and handoff qualification
+
+The native provider registry, experimental picker, stopped-writer handoff and guarded session-manifest restore are implemented with fixture-backed development coverage. Their user-visible availability is not a provider qualification: [M6 results](../../desktop/qualification/m6-results.json) currently rank all four connectors as **insufficient evidence**. On the recorded host, the Claude, Codex, Pi and Antigravity ACP executables were not discoverable; their authenticated workflow gates remain `not_run`, while Windows, macOS and physical-device gates remain `blocked` on unavailable hosts/hardware.
+
+From the repository root, use the M6 runner as follows:
+
+```sh
+python3 desktop/scripts/qualify-m6-providers.py --help
+python3 desktop/scripts/qualify-m6-providers.py --mode development
+python3 desktop/scripts/qualify-m6-providers.py --mode authentic
+python3 desktop/scripts/validate-qualification.py desktop/qualification/m6-results.json
+python3 desktop/scripts/test-qualification-m6.py
+```
+
+Development mode executes the local fixture, actor/engine, panel, qualification-contract and format checks; it removes common API-key/token variables from child environments, redacts common credential forms and private paths in saved logs, and writes a run report and hashed logs under `desktop/qualification/evidence/`. Development evidence never edits the provider ledger and cannot satisfy authentic gates. Authentic mode performs only a read-only `PATH` lookup for the four adapter executable names. It launches no process, reads no credentials, makes no ACP handshake and leaves the ledger unchanged; therefore a found executable remains `not_run`, not ready or qualified. Real workflow qualification requires a supervised authenticated run in a disposable project, separate platform/device evidence and the full gate-specific structured proofs accepted by the validator. Do not infer passes from the fixture UI run or Xvfb. M6 export evidence uses the existing CLI backend; native export UI, installers and clean-machine release acceptance remain M7.
+
 Compiler, GPUI and framework pins are owned by [the desktop workspace](../../desktop/Cargo.toml), [toolchain](../../desktop/rust-toolchain.toml) and [SDK manifest](../../desktop/packaging/sdk/phase-zero-sdk.json). Worker protocol and ACP protocol versions are both `1`; their transports differ. Worker control uses length-prefixed JSON over stdin/stdout, frames use a dedicated loopback TCP stream, and bounded stderr carries diagnostics. ACP uses newline-delimited JSON-RPC over adapter stdio.
 
 ## Run the native spike

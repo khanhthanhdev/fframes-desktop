@@ -128,6 +128,8 @@ Add a deterministic Rust syntax/symbol retrieval index for containing implementa
 
 ### M6 — Qualify providers and implement handoff
 
+Execution detail: [Phase 6 provider qualification and controlled handoff plan](../../plans/261007-0712-desktop-phase-six-provider-qualification-handoff/plan.md). Its three sequential execution stages belong to M6 and reuse the implemented M0–M5 development foundations. Provider profiles/evidence contracts, controlled handoff/restoration and the native picker are implemented in the current workspace. The [M6 ledger](../../desktop/qualification/m6-results.json) advertises no qualified connector or best-two recommendation; authentic, physical-device and platform gates remain open. M6 uses the existing CLI for export evidence; native export controls and consumer qualification belong to M7. Historical plan status is not current qualification evidence.
+
 Qualify Claude, Codex, Pi and Antigravity through their current ACP distribution. Record adapter/CLI version, OS, auth path, capability negotiation, completion, cancellation, restoration, visual context and MCP/CLI tool access.
 
 Start with the two providers that pass the full Studio workflow most reliably. Keep the other connectors experimental until they pass the same suite. Add a native provider driver only when a specific gap prevents useful editing, as Zeron's experience suggests.
