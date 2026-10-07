@@ -1685,6 +1685,8 @@ impl StudioShell {
                         paths,
                         serial: opened.serial,
                         adapter: opened.adapter,
+                        registry: opened.registry,
+                        qualification: opened.qualification,
                         settings_error: opened.settings_error,
                         resolution: opened.resolution,
                         policy: opened.policy,

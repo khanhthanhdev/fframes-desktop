@@ -39,6 +39,7 @@ use studio_engine::app_paths::AppPaths;
 /// Directory of the installed ledger bundle inside the app data directory.
 pub const LEDGER_DIR: &str = "qualification";
 pub const LEDGER_FILE: &str = "m3-results.json";
+pub const LEDGER_FILE_M6: &str = "m6-results.json";
 pub const WRITER_GATE: &str = "auth_writer_process_group";
 /// `schema` of every authentic evidence record.
 pub const EVIDENCE_SCHEMA: &str = "m3-authentic/1";
@@ -257,9 +258,9 @@ pub fn resolve_ownership(
 /// [`resolve_ownership`] against an explicit ledger bundle, launch digest and platform.
 pub fn resolve_with(ledger_dir: &Path, launch_digest: &str, platform: &Platform) -> Resolution {
     match verify(ledger_dir, launch_digest, platform) {
-        Ok(evidence_sha256) => Resolution {
+        Ok((gate_tag, evidence_sha256)) => Resolution {
             ownership: WriterOwnership::ProcessGroupContained {
-                qualification: format!("m3-ledger:{WRITER_GATE}:{}", &evidence_sha256[..12]),
+                qualification: format!("{gate_tag}:{}", &evidence_sha256[..12]),
             },
             containment: Containment::Qualified { evidence_sha256 },
         },
@@ -292,9 +293,163 @@ fn is_sha256(value: &str) -> bool {
     value.len() == 64 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Validates the ledger and returns the SHA-256 of the evidence record that qualifies
-/// `launch_digest` on `platform`.
-fn verify(ledger_dir: &Path, launch_digest: &str, platform: &Platform) -> Result<String, String> {
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum M6VerifyOutcome {
+    Qualified(String),
+    LaunchNotPresent,
+    Refused(String),
+}
+
+/// Validates the ledger and returns (gate_tag, sha256) of the qualifying evidence record.
+fn verify(
+    ledger_dir: &Path,
+    launch_digest: &str,
+    platform: &Platform,
+) -> Result<(String, String), String> {
+    let m6_path = ledger_dir.join(LEDGER_FILE_M6);
+    if m6_path.exists() {
+        match verify_m6(ledger_dir, launch_digest, platform) {
+            M6VerifyOutcome::Qualified(evidence_sha256) => {
+                return Ok(("m6-ledger:interruption_and_cleanup".into(), evidence_sha256));
+            }
+            M6VerifyOutcome::Refused(reason) => {
+                // When the launch identity is present in M6, qualification failure strictly
+                // refuses the writer; it must NEVER fall back to legacy M3 evidence!
+                return Err(reason);
+            }
+            M6VerifyOutcome::LaunchNotPresent => {
+                // Launch identity was not found in M6; fall back to legacy M3 ledger.
+            }
+        }
+    }
+    let evidence_sha256 = verify_m3(ledger_dir, launch_digest, platform)?;
+    Ok((format!("m3-ledger:{WRITER_GATE}"), evidence_sha256))
+}
+
+/// Verifies writer containment evidence against M6 provider qualification records.
+fn verify_m6(ledger_dir: &Path, launch_digest: &str, platform: &Platform) -> M6VerifyOutcome {
+    let ledger_path = ledger_dir.join(LEDGER_FILE_M6);
+    let bytes = match read_bounded(&ledger_path, MAX_LEDGER_BYTES) {
+        Ok(bytes) => bytes,
+        Err(_) if !ledger_path.exists() => {
+            return M6VerifyOutcome::LaunchNotPresent;
+        }
+        Err(error) => return M6VerifyOutcome::Refused(error),
+    };
+    let ledger: Value = match serde_json::from_slice(&bytes) {
+        Ok(v) => v,
+        Err(_) => {
+            return M6VerifyOutcome::Refused(
+                "the installed M6 qualification ledger is not valid JSON".into(),
+            );
+        }
+    };
+    if text(&ledger, "kind") != Some("m6") || ledger.get("schema_version") != Some(&Value::from(1))
+    {
+        return M6VerifyOutcome::Refused(
+            "the installed qualification ledger is not an M6 ledger".into(),
+        );
+    }
+    let Some(providers) = ledger.get("providers").and_then(Value::as_object) else {
+        return M6VerifyOutcome::Refused("the M6 ledger has no providers".into());
+    };
+    let mut matching = None;
+    for (_id, prov) in providers {
+        if text(prov, "launch_identity") == Some(launch_digest) {
+            matching = Some(prov);
+            break;
+        }
+    }
+    let Some(prov) = matching else {
+        return M6VerifyOutcome::LaunchNotPresent;
+    };
+    let prov_status = text(prov, "status").unwrap_or("unknown");
+    let Some(gates) = prov.get("gates").and_then(Value::as_object) else {
+        return M6VerifyOutcome::Refused("the provider has no gates".into());
+    };
+    let Some(gate) = gates.get("interruption_and_cleanup") else {
+        return M6VerifyOutcome::Refused(
+            "the provider has no interruption_and_cleanup gate".into(),
+        );
+    };
+    if text(gate, "kind") != Some("authentic") || text(gate, "status") != Some("pass") {
+        return M6VerifyOutcome::Refused(format!(
+            "the provider in the installed M6 qualification ledger has not passed qualification (status: {prov_status})"
+        ));
+    }
+    let cited: Vec<(String, String)> = gate
+        .get("evidence")
+        .and_then(Value::as_array)
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|e| Some((text(e, "path")?.to_owned(), text(e, "sha256")?.to_owned())))
+                .collect()
+        })
+        .unwrap_or_default();
+    if cited.is_empty() {
+        return M6VerifyOutcome::Refused("the M6 writer-containment gate cites no evidence".into());
+    }
+    let Ok(evidence_root) = ledger_dir.join("evidence").canonicalize() else {
+        return M6VerifyOutcome::Refused("missing evidence directory".into());
+    };
+    let mut last_reason =
+        "no authentic writer-containment evidence qualified this launch".to_owned();
+    // Phase 1: Containment-check and hash EVERY cited evidence file in one pass;
+    // refuse immediately on ANY missing, unhashable, tampered, unreadable, or invalid JSON file!
+    let mut verified_records = Vec::with_capacity(cited.len());
+    for (relative, claimed) in &cited {
+        let path = match contained(ledger_dir, &evidence_root, relative) {
+            Ok(p) => p,
+            Err(r) => return M6VerifyOutcome::Refused(r),
+        };
+        let actual = match hash_file(&path) {
+            Ok(a) => a,
+            Err(e) => return M6VerifyOutcome::Refused(format!("cannot hash {relative}: {e}")),
+        };
+        if !actual.eq_ignore_ascii_case(claimed) {
+            return M6VerifyOutcome::Refused(format!(
+                "{relative} changed (hash differs from ledger)"
+            ));
+        }
+        let bytes = match read_bounded(&path, MAX_EVIDENCE_BYTES) {
+            Ok(b) => b,
+            Err(e) => return M6VerifyOutcome::Refused(e),
+        };
+        let Ok(record) = serde_json::from_slice::<Value>(&bytes) else {
+            return M6VerifyOutcome::Refused(format!("{relative} is not valid JSON"));
+        };
+        verified_records.push((record, actual));
+    }
+
+    // Phase 2: Now that every cited file is verified un-tampered and intact, evaluate records
+    let mut qualified_hash = None;
+    for (record, actual) in verified_records {
+        if text(&record, "gate") != Some("interruption_and_cleanup")
+            && text(&record, "gate") != Some(WRITER_GATE)
+        {
+            continue;
+        }
+        match check_record(&record, None, launch_digest, platform) {
+            Ok(()) => {
+                qualified_hash = Some(actual);
+                break;
+            }
+            Err(reason) => last_reason = reason,
+        }
+    }
+    if let Some(actual) = qualified_hash {
+        return M6VerifyOutcome::Qualified(actual);
+    }
+    M6VerifyOutcome::Refused(last_reason)
+}
+
+/// Validates the legacy M3 ledger and returns the SHA-256 of the qualifying evidence record.
+fn verify_m3(
+    ledger_dir: &Path,
+    launch_digest: &str,
+    platform: &Platform,
+) -> Result<String, String> {
     let ledger_path = ledger_dir.join(LEDGER_FILE);
     let bytes = match read_bounded(&ledger_path, MAX_LEDGER_BYTES) {
         Ok(bytes) => bytes,
@@ -398,7 +553,7 @@ fn verify(ledger_dir: &Path, launch_digest: &str, platform: &Platform) -> Result
         if text(&record, "gate") != Some(WRITER_GATE) {
             continue;
         }
-        match check_record(&record, agent, launch_digest, platform) {
+        match check_record(&record, Some(agent), launch_digest, platform) {
             Ok(()) => return Ok(actual),
             Err(reason) => last_reason = reason,
         }
@@ -428,26 +583,41 @@ fn contained(ledger_dir: &Path, root: &Path, relative: &str) -> Result<PathBuf, 
 
 fn check_record(
     record: &Value,
-    agent: &str,
+    expected_agent: Option<&str>,
     launch_digest: &str,
     platform: &Platform,
 ) -> Result<(), String> {
     let fail = |what: &str| Err(format!("the writer-containment record {what}"));
     if text(record, "evidence_kind") != Some("authentic")
         || record.get("fixture_only") != Some(&Value::Bool(false))
-        || text(record, "schema") != Some(EVIDENCE_SCHEMA)
     {
         return fail("is not authentic, non-fixture evidence");
     }
+    let schema = text(record, "schema");
+    if schema != Some("m6-authentic/1") && schema != Some(EVIDENCE_SCHEMA) {
+        return fail("is not authentic evidence of schema m6-authentic/1 or m3-authentic/1");
+    }
     let record_platform = record.get("platform");
+    let record_arch = record_platform.and_then(|p| text(p, "machine").or_else(|| text(p, "arch")));
     if record_platform.and_then(|p| text(p, "system")) != Some(platform.system.as_str())
-        || record_platform.and_then(|p| text(p, "machine")) != Some(platform.machine.as_str())
+        || record_arch != Some(platform.machine.as_str())
     {
         return fail("was measured on another platform");
     }
     let adapter = record.get("adapter");
-    if adapter.and_then(|a| text(a, "agent_name")) != Some(agent)
-        || adapter.and_then(|a| text(a, "launch_identity")) != Some(launch_digest)
+    let record_agent = adapter.and_then(|a| text(a, "agent_name").or_else(|| text(a, "name")));
+    let Some(name) = record_agent else {
+        return fail("adapter identity has no name");
+    };
+    if FIXTURE_AGENT_NAMES.contains(&name.to_ascii_lowercase().as_str()) {
+        return fail("uses a fixture adapter name");
+    }
+    if let Some(expected) = expected_agent
+        && name != expected
+    {
+        return fail("belongs to another adapter launch");
+    }
+    if adapter.and_then(|a| text(a, "launch_identity")) != Some(launch_digest)
         || adapter.and_then(|a| a.get("protocol_version")) != Some(&Value::from(1))
     {
         return fail("belongs to another adapter launch");
@@ -550,6 +720,22 @@ mod tests {
                 {"name": "provider_crash", "escaped_descendants": 0, "group_empty_after": true}
             ]}
         })
+    }
+    #[test]
+    fn record_with_leftover_processes_fails_clean_teardown_check() {
+        let mut rec = record(DIGEST);
+        rec["cleanup"]["owned_processes_after"] = json!(1);
+        let err = check_record(&rec, None, DIGEST, &linux()).unwrap_err();
+        assert!(err.contains("did not measure a clean teardown"));
+    }
+
+    #[test]
+    fn m6_authentic_schema_record_passes_check() {
+        let mut rec = record(DIGEST);
+        rec["schema"] = json!("m6-authentic/1");
+        rec["adapter"]["name"] = json!("real-adapter");
+        rec["platform"]["arch"] = json!("x86_64");
+        assert!(check_record(&rec, None, DIGEST, &linux()).is_ok());
     }
 
     fn ledger(digest: &str, evidence: &[(&str, &str)]) -> Value {

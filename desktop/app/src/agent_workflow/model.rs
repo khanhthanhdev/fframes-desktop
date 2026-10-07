@@ -606,6 +606,33 @@ pub struct ResourceView {
     pub tool_workers: usize,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HandoffChoice {
+    ContinueDraft,
+    RestartFromAccepted,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SwitchPendingView {
+    pub target_provider: String,
+    pub draft_revision: Option<String>,
+    pub source_revision: String,
+    pub accepted_revision: String,
+    pub outgoing_task_brief: Option<String>,
+    pub retained_queue_count: usize,
+    pub handoff_context: super::session_store::BoundedHandoffContext,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionRestoreView {
+    pub provider_id: String,
+    pub redacted_session_id: String,
+    pub is_resumable: bool,
+    pub last_source_revision: String,
+    pub notice: Option<String>,
+}
+
 /// A complete immutable view; a new one is published after every batch of changes.
 #[derive(Debug, Clone)]
 pub struct WorkflowSnapshot {
@@ -620,6 +647,8 @@ pub struct WorkflowSnapshot {
     pub mcp: McpView,
     pub task: Option<TaskView>,
     pub queue: Vec<QueuedBrief>,
+    /// Briefs from an outgoing provider retained across a switch; requires explicit transfer or clear.
+    pub retained_queue: Vec<QueuedBrief>,
     /// Newest `MAX_RESIDENT_ROWS` rows (bounded by bytes too), ordered by id.
     pub rows: Vec<Arc<Row>>,
     /// Older rows exist in the conversation log (`history_page`).
@@ -632,6 +661,8 @@ pub struct WorkflowSnapshot {
     pub history: Vec<HistoryEntry>,
     pub resources: ResourceView,
     pub closed: bool,
+    pub switch_pending: Option<SwitchPendingView>,
+    pub session_restore: Option<SessionRestoreView>,
 }
 
 impl WorkflowSnapshot {

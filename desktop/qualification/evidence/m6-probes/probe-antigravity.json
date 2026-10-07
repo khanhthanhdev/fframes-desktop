@@ -1,0 +1,16 @@
+{
+  "schema": "m6-probe/1",
+  "evidence_kind": "probe",
+  "provider": "antigravity",
+  "observed_unix_seconds": 1791335934,
+  "status": "missing_executable",
+  "detail": "Adapter executable 'antigravity-acp' not found in managed search directories or configured path.",
+  "runtime_available": null,
+  "searched": [
+    "adapters/antigravity-acp"
+  ],
+  "probe_options": {
+    "verify_session": true,
+    "timeout_ms": 30000
+  }
+}

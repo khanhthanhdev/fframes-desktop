@@ -24,8 +24,8 @@ pub use agent_task::{
 };
 pub use canvas_selection::*;
 pub use controller::{
-    CompletionOutcome, Controller, PresetMutation, PresetOutcome, Promotion, RecoveryStatus,
-    UndoPreparation,
+    CompletionOutcome, Controller, DraftPreparationChoice, PresetMutation, PresetOutcome,
+    Promotion, RecoveryStatus, UndoPreparation,
 };
 pub use edit_transaction::{
     ApplyGate, Boundary, ConflictReport, Fault, FileDelta, FileState, NoHooks, PlanError,

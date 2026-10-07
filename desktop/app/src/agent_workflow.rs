@@ -30,6 +30,8 @@ mod jobs;
 pub mod log;
 pub mod model;
 mod present;
+#[path = "agent_workflow/session-store.rs"]
+pub mod session_store;
 mod tools;
 
 pub use jobs::{JobFault, JobFaults, PreviewHandoff, PromotionHandoff};
@@ -141,6 +143,7 @@ pub struct WorkflowConfig {
     /// Failure injection for background jobs (tests only).
     #[doc(hidden)]
     pub job_faults: Option<JobFaults>,
+    pub ownership_policy: Option<crate::conversation_panel::qualification::OwnershipPolicy>,
 }
 
 impl WorkflowConfig {
@@ -159,6 +162,7 @@ impl WorkflowConfig {
             tick: Duration::from_millis(20),
             row_limits: RowLimits::default(),
             job_faults: None,
+            ownership_policy: None,
         }
     }
 }
@@ -308,6 +312,7 @@ pub(crate) struct Shared {
     pub playhead: AtomicUsize,
     pub next_submission: AtomicU64,
     pub tx: Sender<Msg>,
+    pub ownership_policy: crate::conversation_panel::qualification::OwnershipPolicy,
 }
 
 /// The per-project agent workflow. Dropping it closes it.
@@ -359,6 +364,7 @@ impl AgentWorkflow {
             },
             task: None,
             queue: Vec::new(),
+            retained_queue: Vec::new(),
             rows: Vec::new(),
             older_rows: false,
             review_policy: ReviewPolicy::default(),
@@ -370,6 +376,8 @@ impl AgentWorkflow {
             history: Vec::new(),
             resources: ResourceView::default(),
             closed: false,
+            switch_pending: None,
+            session_restore: None,
         });
         let shared = Arc::new(Shared {
             project,
@@ -389,6 +397,9 @@ impl AgentWorkflow {
                 build: config.build,
                 tools: config.tools,
             }),
+            ownership_policy: config
+                .ownership_policy
+                .unwrap_or(crate::conversation_panel::qualification::OwnershipPolicy::Validated),
             snapshot: Mutex::new(empty),
             evidence_images: Mutex::new(EvidenceImageCache::default()),
             changed: Condvar::new(),
@@ -795,6 +806,57 @@ impl AgentWorkflow {
     /// Recomputes Undo/history/recovery from the engine (after external changes).
     pub fn refresh(&self) -> Result<(), WorkflowError> {
         self.send(Msg::Refresh)
+    }
+
+    /// Initiates a controlled handoff to another provider.
+    pub fn initiate_switch(&self, target_provider: &str) -> Result<(), WorkflowError> {
+        self.open_check()?;
+        self.send(Msg::InitiateSwitch {
+            target_provider: target_provider.to_string(),
+        })
+    }
+
+    /// Chooses whether to continue the captured draft or restart fresh from accepted source.
+    pub fn choose_handoff_continuation(&self, choice: HandoffChoice) -> Result<(), WorkflowError> {
+        self.open_check()?;
+        self.send(Msg::ChooseHandoffContinuation(choice))
+    }
+
+    /// Cancels a pending provider switch.
+    pub fn cancel_switch(&self) -> Result<(), WorkflowError> {
+        self.open_check()?;
+        self.send(Msg::CancelSwitch)
+    }
+
+    /// Explicitly transfers retained briefs from an outgoing provider to the incoming provider.
+    pub fn transfer_retained_queue(&self) -> Result<(), WorkflowError> {
+        self.open_check()?;
+        self.send(Msg::TransferRetainedQueue)
+    }
+
+    /// Discards retained briefs from an outgoing provider without executing them.
+    pub fn clear_retained_queue(&self) -> Result<(), WorkflowError> {
+        self.open_check()?;
+        self.send(Msg::ClearRetainedQueue)
+    }
+
+    /// Requests restoration of a previously saved session.
+    pub fn restore_session(&self) -> Result<(), WorkflowError> {
+        self.open_check()?;
+        self.send(Msg::RestoreSession)
+    }
+
+    /// Dismisses a saved session and clears its manifest.
+    pub fn dismiss_restoration(&self) -> Result<(), WorkflowError> {
+        self.open_check()?;
+        self.send(Msg::DismissRestoration)
+    }
+
+    #[doc(hidden)]
+    pub fn test_hold_tools_gate(&self) -> Option<crate::agent_tools::backend::WriterGuard> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = self.send(Msg::TestHoldToolsGate(tx));
+        rx.recv().ok().flatten()
     }
 
     /// Cancels and reaps the task, broker, compiler subscribers and workers, then stops

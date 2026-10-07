@@ -44,6 +44,11 @@ impl From<ProjectId> for String {
         value.0
     }
 }
+impl std::fmt::Display for ProjectId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
 
 pub fn identifier(value: &str) -> bool {
     !value.is_empty()

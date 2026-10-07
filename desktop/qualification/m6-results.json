@@ -1,0 +1,555 @@
+{
+  "kind": "m6",
+  "schema_version": 1,
+  "timestamp": "2026-10-07T07:12:00Z",
+  "environment": {
+    "scope": "M6 provider qualification and controlled handoff baseline across Claude, Codex, Pi, and Antigravity. Authentic provider accounts, platform matrices, and physical hardware remain unexecuted prerequisites.",
+    "os": "linux",
+    "arch": "x86_64",
+    "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+    "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+  },
+  "providers": {
+    "claude": {
+      "id": "claude",
+      "label": "Claude",
+      "distribution": "unresolved (research candidate: @agentclientprotocol/claude-agent-acp)",
+      "upstream_version": "unresolved",
+      "auth_route": "ANTHROPIC_API_KEY environment variable or interactive terminal login",
+      "mcp_route": "stdio",
+      "status": "not_run",
+      "prerequisites": "Authenticated Anthropic account with active API credit and operator verification.",
+      "probe_observation": {
+        "status": "missing_executable",
+        "detail": "Adapter executable 'claude-agent-acp' not found in managed search directories or configured path.",
+        "runtime_available": null,
+        "observed_unix_seconds": 1791335934,
+        "searched": [
+          "adapters/claude-agent-acp"
+        ],
+        "evidence": {
+          "path": "evidence/m6-probes/probe-claude.json",
+          "sha256": "be89f0968c29998cb0a29908332c9f575e65179766f2c3d777b8bbca87d26142"
+        }
+      },
+      "capabilities": null,
+      "gates": {
+        "create_edit_export": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Performs create, selected title edit, inspect/preview, Apply, second edit, Undo, reopen, and CLI backend export from immutable revision.",
+          "notes": "Authentic Claude workflow run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "selected_context_edit": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Applies edits bound to frozen element, rectangle, scene, and range scopes without altering outside code.",
+          "notes": "Authentic Claude scope run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "compiler_error_repair": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Detects compiler diagnostics and completes autonomous repair within a single automatic retry budget.",
+          "notes": "Authentic Claude error repair run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "completion_and_streaming": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Maintains streaming chunk responsiveness, follow-up questions, and clean turn boundary quiescence.",
+          "notes": "Authentic Claude streaming run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "permission_and_errors": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Responds correctly to user approve/decline requests and handles protocol errors without deadlocking.",
+          "notes": "Authentic Claude permission run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "interruption_and_cleanup": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Enforces verified process group termination on user Stop or adapter crash with zero escaped descendants.",
+          "notes": "Authentic Claude process containment run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "restoration_and_fallback": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Resumes eligible session at identical draft cwd with fresh capability grants, falling back to new session when unsupported.",
+          "notes": "Authentic Claude session restoration run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "tool_parity": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Executes all nine Studio tools through advertised stdio MCP route with hash-verified outputs.",
+          "notes": "Authentic Claude MCP tool dispatch run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "image_context": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Verifies bounded PNG image context with hidden visual property check or honest text fallback.",
+          "notes": "Authentic Claude image context run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "twenty_cycle_cleanup": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Survives twenty consecutive edit, cancel, and reopen cycles within RSS and process tree bounds.",
+          "notes": "Authentic Claude multi-cycle stress run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and managed SDK test environment."
+        },
+        "controlled_handoff": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Demonstrates safe stopped-writer handoff to peer provider preserving accepted and unsaved draft variants.",
+          "notes": "Authentic Claude handoff run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account and passing peer provider."
+        },
+        "platform_linux": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Authentic execution verified on Linux x86_64 platform.",
+          "notes": "Authentic Claude Linux run not yet executed.",
+          "prerequisite": "Operator authenticated Claude account on native Linux host."
+        },
+        "platform_windows": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on Windows platform.",
+          "notes": "No Windows test host configured in current environment.",
+          "prerequisite": "Windows physical or virtual machine runner with native adapter runtime."
+        },
+        "platform_macos": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on macOS platform.",
+          "notes": "No macOS test host configured in current environment.",
+          "prerequisite": "macOS physical or virtual machine runner with native adapter runtime."
+        },
+        "platform_physical_device": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on physical display, audio, and input devices.",
+          "notes": "Headless CI environment without physical display/audio hardware.",
+          "prerequisite": "Physical hardware test bench with display, audio, and input devices."
+        }
+      }
+    },
+    "codex": {
+      "id": "codex",
+      "label": "Codex",
+      "distribution": "unresolved (research candidate: @agentclientprotocol/codex-acp)",
+      "upstream_version": "unresolved",
+      "auth_route": "OPENAI_API_KEY / CODEX_API_KEY environment variables or ChatGPT browser login",
+      "mcp_route": "stdio",
+      "status": "not_run",
+      "prerequisites": "Authenticated OpenAI Codex account with active API credit and server verification.",
+      "probe_observation": {
+        "status": "missing_executable",
+        "detail": "Adapter executable 'codex-acp' not found in managed search directories or configured path.",
+        "runtime_available": null,
+        "observed_unix_seconds": 1791335934,
+        "searched": [
+          "adapters/codex-acp"
+        ],
+        "evidence": {
+          "path": "evidence/m6-probes/probe-codex.json",
+          "sha256": "e0f70b2a92439ff57f589e3fef600ddd93b776c74766fdcead52eae44d1b6497"
+        }
+      },
+      "capabilities": null,
+      "gates": {
+        "create_edit_export": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Performs create, selected title edit, inspect/preview, Apply, second edit, Undo, reopen, and CLI backend export from immutable revision.",
+          "notes": "Authentic Codex workflow run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "selected_context_edit": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Applies edits bound to frozen element, rectangle, scene, and range scopes without altering outside code.",
+          "notes": "Authentic Codex scope run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "compiler_error_repair": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Detects compiler diagnostics and completes autonomous repair within a single automatic retry budget.",
+          "notes": "Authentic Codex error repair run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "completion_and_streaming": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Maintains streaming chunk responsiveness, follow-up questions, and clean turn boundary quiescence.",
+          "notes": "Authentic Codex streaming run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "permission_and_errors": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Responds correctly to user approve/decline requests and handles protocol errors without deadlocking.",
+          "notes": "Authentic Codex permission run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "interruption_and_cleanup": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Enforces verified process group termination on user Stop or adapter crash with zero escaped descendants.",
+          "notes": "Authentic Codex process containment run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "restoration_and_fallback": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Resumes eligible session at identical draft cwd with fresh capability grants, falling back to new session when unsupported.",
+          "notes": "Authentic Codex session restoration run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "tool_parity": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Executes all nine Studio tools through advertised stdio MCP route with hash-verified outputs.",
+          "notes": "Authentic Codex MCP tool dispatch run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "image_context": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Verifies bounded PNG image context with hidden visual property check or honest text fallback.",
+          "notes": "Authentic Codex image context run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "twenty_cycle_cleanup": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Survives twenty consecutive edit, cancel, and reopen cycles within RSS and process tree bounds.",
+          "notes": "Authentic Codex multi-cycle stress run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and managed SDK test environment."
+        },
+        "controlled_handoff": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Demonstrates safe stopped-writer handoff to peer provider preserving accepted and unsaved draft variants.",
+          "notes": "Authentic Codex handoff run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account and passing peer provider."
+        },
+        "platform_linux": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Authentic execution verified on Linux x86_64 platform.",
+          "notes": "Authentic Codex Linux run not yet executed.",
+          "prerequisite": "Operator authenticated Codex account on native Linux host."
+        },
+        "platform_windows": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on Windows platform.",
+          "notes": "No Windows test host configured in current environment.",
+          "prerequisite": "Windows physical or virtual machine runner with native adapter runtime."
+        },
+        "platform_macos": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on macOS platform.",
+          "notes": "No macOS test host configured in current environment.",
+          "prerequisite": "macOS physical or virtual machine runner with native adapter runtime."
+        },
+        "platform_physical_device": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on physical display, audio, and input devices.",
+          "notes": "Headless CI environment without physical display/audio hardware.",
+          "prerequisite": "Physical hardware test bench with display, audio, and input devices."
+        }
+      }
+    },
+    "pi": {
+      "id": "pi",
+      "label": "Pi",
+      "distribution": "unresolved (research candidate: pi-acp)",
+      "upstream_version": "unresolved",
+      "auth_route": "Interactive CLI login via pi-acp --terminal-login",
+      "mcp_route": "cli_fallback",
+      "status": "not_run",
+      "prerequisites": "Configured Pi environment with Node 22+ and verified CLI tool fallback.",
+      "probe_observation": {
+        "status": "missing_executable",
+        "detail": "Adapter executable 'pi-acp' not found in managed search directories or configured path.",
+        "runtime_available": null,
+        "observed_unix_seconds": 1791335934,
+        "searched": [
+          "adapters/pi-acp"
+        ],
+        "evidence": {
+          "path": "evidence/m6-probes/probe-pi.json",
+          "sha256": "76d8313b1178ab3e064c6d5239dec8f98f3516127d1195921a922182dbf38174"
+        }
+      },
+      "capabilities": null,
+      "gates": {
+        "create_edit_export": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Performs create, selected title edit, inspect/preview, Apply, second edit, Undo, reopen, and CLI backend export from immutable revision.",
+          "notes": "Authentic Pi workflow run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "selected_context_edit": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Applies edits bound to frozen element, rectangle, scene, and range scopes without altering outside code.",
+          "notes": "Authentic Pi scope run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "compiler_error_repair": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Detects compiler diagnostics and completes autonomous repair within a single automatic retry budget.",
+          "notes": "Authentic Pi error repair run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "completion_and_streaming": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Maintains streaming chunk responsiveness, follow-up questions, and clean turn boundary quiescence.",
+          "notes": "Authentic Pi streaming run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "permission_and_errors": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Responds correctly to user approve/decline requests and handles protocol errors without deadlocking.",
+          "notes": "Authentic Pi permission run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "interruption_and_cleanup": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Enforces verified process group termination on user Stop or adapter crash with zero escaped descendants.",
+          "notes": "Authentic Pi process containment run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "restoration_and_fallback": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Resumes eligible session at identical draft cwd with fresh capability grants, falling back to new session when unsupported.",
+          "notes": "Authentic Pi session restoration run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "tool_parity": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Executes all nine Studio tools through verified CLI tool fallback route with hash-verified outputs.",
+          "notes": "Authentic Pi CLI tool dispatch run not yet executed.",
+          "prerequisite": "Operator configured Pi environment with verified CLI tool fallback."
+        },
+        "image_context": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Verifies bounded PNG image context with hidden visual property check or honest text fallback.",
+          "notes": "Authentic Pi image context run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "twenty_cycle_cleanup": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Survives twenty consecutive edit, cancel, and reopen cycles within RSS and process tree bounds.",
+          "notes": "Authentic Pi multi-cycle stress run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and managed SDK test environment."
+        },
+        "controlled_handoff": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Demonstrates safe stopped-writer handoff to peer provider preserving accepted and unsaved draft variants.",
+          "notes": "Authentic Pi handoff run not yet executed.",
+          "prerequisite": "Operator configured Pi environment and passing peer provider."
+        },
+        "platform_linux": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Authentic execution verified on Linux x86_64 platform.",
+          "notes": "Authentic Pi Linux run not yet executed.",
+          "prerequisite": "Operator configured Pi environment on native Linux host."
+        },
+        "platform_windows": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on Windows platform.",
+          "notes": "No Windows test host configured in current environment.",
+          "prerequisite": "Windows physical or virtual machine runner with native adapter runtime."
+        },
+        "platform_macos": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on macOS platform.",
+          "notes": "No macOS test host configured in current environment.",
+          "prerequisite": "macOS physical or virtual machine runner with native adapter runtime."
+        },
+        "platform_physical_device": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on physical display, audio, and input devices.",
+          "notes": "Headless CI environment without physical display/audio hardware.",
+          "prerequisite": "Physical hardware test bench with display, audio, and input devices."
+        }
+      }
+    },
+    "antigravity": {
+      "id": "antigravity",
+      "label": "Antigravity",
+      "distribution": "unresolved (research candidate: antigravity-acp)",
+      "upstream_version": "unresolved",
+      "auth_route": "GEMINI_API_KEY / GOOGLE_API_KEY environment variables or Google OAuth",
+      "mcp_route": "stdio",
+      "status": "not_run",
+      "prerequisites": "Official Google Antigravity binary download, authentication setup and live probe.",
+      "probe_observation": {
+        "status": "missing_executable",
+        "detail": "Adapter executable 'antigravity-acp' not found in managed search directories or configured path.",
+        "runtime_available": null,
+        "observed_unix_seconds": 1791335934,
+        "searched": [
+          "adapters/antigravity-acp"
+        ],
+        "evidence": {
+          "path": "evidence/m6-probes/probe-antigravity.json",
+          "sha256": "72cdbd6646b35b8fe6456c3b9672f71f3fb1238acc42768a1bd7326e2fe35e0f"
+        }
+      },
+      "capabilities": null,
+      "gates": {
+        "create_edit_export": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Performs create, selected title edit, inspect/preview, Apply, second edit, Undo, reopen, and CLI backend export from immutable revision.",
+          "notes": "Authentic Antigravity workflow run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "selected_context_edit": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Applies edits bound to frozen element, rectangle, scene, and range scopes without altering outside code.",
+          "notes": "Authentic Antigravity scope run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "compiler_error_repair": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Detects compiler diagnostics and completes autonomous repair within a single automatic retry budget.",
+          "notes": "Authentic Antigravity error repair run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "completion_and_streaming": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Maintains streaming chunk responsiveness, follow-up questions, and clean turn boundary quiescence.",
+          "notes": "Authentic Antigravity streaming run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "permission_and_errors": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Responds correctly to user approve/decline requests and handles protocol errors without deadlocking.",
+          "notes": "Authentic Antigravity permission run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "interruption_and_cleanup": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Enforces verified process group termination on user Stop or adapter crash with zero escaped descendants.",
+          "notes": "Authentic Antigravity process containment run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "restoration_and_fallback": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Resumes eligible session at identical draft cwd with fresh capability grants, falling back to new session when unsupported.",
+          "notes": "Authentic Antigravity session restoration run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "tool_parity": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Executes all nine Studio tools through advertised stdio MCP route with hash-verified outputs.",
+          "notes": "Authentic Antigravity MCP tool dispatch run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "image_context": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Verifies bounded PNG image context with hidden visual property check or honest text fallback.",
+          "notes": "Authentic Antigravity image context run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "twenty_cycle_cleanup": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Survives twenty consecutive edit, cancel, and reopen cycles within RSS and process tree bounds.",
+          "notes": "Authentic Antigravity multi-cycle stress run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and managed SDK test environment."
+        },
+        "controlled_handoff": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Demonstrates safe stopped-writer handoff to peer provider preserving accepted and unsaved draft variants.",
+          "notes": "Authentic Antigravity handoff run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment and passing peer provider."
+        },
+        "platform_linux": {
+          "kind": "authentic",
+          "status": "not_run",
+          "criteria": "Authentic execution verified on Linux x86_64 platform.",
+          "notes": "Authentic Antigravity Linux run not yet executed.",
+          "prerequisite": "Operator configured Antigravity environment on native Linux host."
+        },
+        "platform_windows": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on Windows platform.",
+          "notes": "No Windows test host configured in current environment.",
+          "prerequisite": "Windows physical or virtual machine runner with native adapter runtime."
+        },
+        "platform_macos": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on macOS platform.",
+          "notes": "No macOS test host configured in current environment.",
+          "prerequisite": "macOS physical or virtual machine runner with native adapter runtime."
+        },
+        "platform_physical_device": {
+          "kind": "authentic",
+          "status": "blocked",
+          "criteria": "Authentic execution verified on physical display, audio, and input devices.",
+          "notes": "Headless CI environment without physical display/audio hardware.",
+          "prerequisite": "Physical hardware test bench with display, audio, and input devices."
+        }
+      }
+    }
+  },
+  "ranking": {
+    "status": "insufficient_evidence",
+    "recommended": [],
+    "experimental": [
+      "claude",
+      "codex",
+      "pi",
+      "antigravity"
+    ],
+    "notes": "All four providers remain unqualified pending authentic execution evidence; at least two passing providers required for recommendation."
+  },
+  "acceptance": {
+    "development": "not_run",
+    "authentic": "not_run",
+    "full": "not_run",
+    "reason": "Provider qualification and authentic handoff runs have not been executed."
+  }
+}

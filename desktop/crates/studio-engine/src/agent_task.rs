@@ -1179,9 +1179,15 @@ impl DraftStore {
     ///
     /// Never runs under a live provider session or while an unknown writer may
     /// survive; a retained failed draft is archived first, not overwritten.
-    pub fn prepare(
+    /// Materializes the stable draft from `content_revision` for `task`, setting its
+    /// source base to `base`.
+    ///
+    /// Never runs under a live provider session or while an unknown writer may
+    /// survive; a retained failed draft is archived first, not overwritten.
+    pub fn prepare_from(
         &self,
         checkpoints: &Checkpoints,
+        content_revision: &studio_project::SourceRevision,
         base: &TaskSourceBase,
         task: &AgentTaskId,
         session_live: bool,
@@ -1216,7 +1222,7 @@ impl DraftStore {
         fs::create_dir_all(parent).map_err(storage)?;
         let staging = format!("agent-{}", task.0);
         let staged = checkpoints
-            .draft(base.revision(), &staging)
+            .draft(content_revision, &staging)
             .map_err(storage)?;
         if let Err(error) = fs::rename(&staged, &self.dir) {
             let _ = fs::remove_dir_all(&staged);
@@ -1233,6 +1239,17 @@ impl DraftStore {
             path: self.dir.clone(),
             archived,
         })
+    }
+
+    /// Materializes the stable draft from `base` for `task`.
+    pub fn prepare(
+        &self,
+        checkpoints: &Checkpoints,
+        base: &TaskSourceBase,
+        task: &AgentTaskId,
+        session_live: bool,
+    ) -> Result<PreparedDraft, TaskError> {
+        self.prepare_from(checkpoints, base.revision(), base, task, session_live)
     }
 
     fn archive_current(&self, owner: &str) -> Result<PathBuf, TaskError> {

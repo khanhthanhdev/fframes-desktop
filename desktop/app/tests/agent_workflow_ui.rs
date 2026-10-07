@@ -756,3 +756,61 @@ fn the_ui_sink_queues_the_promotion_and_the_shell_acknowledgement_reaches_the_sn
     assert_eq!(inbox.pending_handoffs(), 0);
     drop(queued);
 }
+
+#[test]
+fn controls_derive_switch_choice_and_block_new_submissions() {
+    let (world, _inbox) = World::new();
+    world.wf().initiate_switch("codex").unwrap();
+    let s = world.wait("switch pending", |s| s.switch_pending.is_some());
+
+    let controls = fframes_studio::conversation_panel::controls::derive_controls(&s, false, true);
+    assert!(
+        controls.switch_choice.is_some(),
+        "switch_choice control must be derived when switch_pending is present"
+    );
+    let choice = controls.switch_choice.unwrap();
+    assert_eq!(choice.target_provider, "codex");
+    assert!(
+        !controls.can_switch_provider,
+        "cannot initiate another switch while one is pending"
+    );
+    assert!(
+        controls.submit.blocked.is_some(),
+        "submit must be blocked while switch is pending"
+    );
+    assert!(
+        controls
+            .submit
+            .blocked
+            .unwrap()
+            .contains("switch is pending"),
+        "blocked reason must explain pending switch"
+    );
+}
+
+#[test]
+fn controls_derive_session_restore_and_retained_queue() {
+    let (world, _inbox) = World::new();
+
+    // Submit two queued briefs
+    world.wf().submit("first").unwrap();
+    world.wait("first starts", |s| s.task.is_some());
+    world.wf().submit("queued 1").unwrap();
+    world.wf().submit("queued 2").unwrap();
+    world.wait("queued", |s| s.queue.len() == 2);
+
+    // Switch retains queue
+    world.wf().initiate_switch("pi").unwrap();
+    let s = world.wait("switch pending with retained queue", |s| {
+        s.switch_pending.is_some() && s.retained_queue.len() == 2
+    });
+
+    let controls = fframes_studio::conversation_panel::controls::derive_controls(&s, false, true);
+    assert!(
+        controls.retained_queue.is_some(),
+        "retained_queue control must be derived"
+    );
+    let retained = controls.retained_queue.unwrap();
+    assert_eq!(retained.count, 2);
+    assert_eq!(retained.summaries.len(), 2);
+}

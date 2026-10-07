@@ -57,6 +57,7 @@ PID = os.getpid()
 SESSION_ID = f"sess-{PID}"
 INIT_MODE = os.environ.get("SCRIPTED_AGENT_INIT", "")
 PROMPT_IMAGE = os.environ.get("SCRIPTED_PROMPT_IMAGE") == "1" or (root / "prompt-image").is_file()
+LOAD_SESSION = os.environ.get("SCRIPTED_LOAD_SESSION") == "1" or (root / "load-session").is_file()
 HARD_CAP_SECONDS = 120
 DEFAULT_SCRIPT = {"text": "done", "write": {"edit.txt": "edited"}}
 
@@ -186,7 +187,7 @@ def handle(line):
         send({"id": rid, "result": {
             "protocolVersion": 1,
             "agentInfo": {"name": "scripted-agent", "version": "test"},
-            "agentCapabilities": {"loadSession": False, "promptCapabilities": {"image": PROMPT_IMAGE}},
+            "agentCapabilities": {"loadSession": LOAD_SESSION, "promptCapabilities": {"image": PROMPT_IMAGE}},
             "authMethods": [],
         }})
     elif method == "session/new":
@@ -203,6 +204,12 @@ def handle(line):
             while hold.exists() and not (root / "release-session").exists() and time.time() < deadline:
                 time.sleep(0.01)
             send({"id": rid, "result": {"sessionId": SESSION_ID, **OPTIONS}})
+    elif method in ("session/load", "session/resume"):
+        record("session-load.json", params)
+        if (root / "fail-load").is_file() or INIT_MODE == "fail_load":
+            send({"id": rid, "error": {"code": -32002, "message": "Failed to load session"}})
+        else:
+            send({"id": rid, "result": {"sessionId": params.get("sessionId", SESSION_ID), **OPTIONS}})
     elif method == "session/set_mode":
         record("set-mode.json", params)
         if params.get("modeId") in ("code", "plan"):
@@ -364,6 +371,9 @@ def run_script(script):
                 for _ in range(extra):
                     update({"sessionUpdate": "tool_call_update", "toolCallId": card["id"], "status": "in_progress"})
                 update({"sessionUpdate": "tool_call_update", "toolCallId": card["id"], "status": "completed"})
+
+    for path, data in script.get("write_early", {}).items():
+        write_text(path, data)
 
     allowed = True
     if "permission" in script:

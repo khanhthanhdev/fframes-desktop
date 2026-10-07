@@ -169,6 +169,30 @@ pub enum UndoControl {
     Disabled(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwitchChoiceControl {
+    pub target_provider: String,
+    pub draft_revision: Option<String>,
+    pub source_revision: String,
+    pub accepted_revision: String,
+    pub retained_queue_count: usize,
+    pub note: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRestoreControl {
+    pub provider_id: String,
+    pub redacted_session_id: String,
+    pub is_resumable: bool,
+    pub notice: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RetainedQueueControl {
+    pub count: usize,
+    pub summaries: Vec<String>,
+}
+
 /// Which controls exist and are enabled for one snapshot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Controls {
@@ -187,6 +211,10 @@ pub struct Controls {
     /// Controls the adapter did not advertise are not shown; this explains why when a
     /// session is live.
     pub options_note: Option<String>,
+    pub switch_choice: Option<SwitchChoiceControl>,
+    pub session_restore: Option<SessionRestoreControl>,
+    pub retained_queue: Option<RetainedQueueControl>,
+    pub can_switch_provider: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,6 +229,9 @@ fn live(task: &TaskView) -> bool {
 
 /// Something that excludes a new task: editing is suspended or a writer may still run.
 fn blocked_reason(snapshot: &WorkflowSnapshot, sdk_ready: bool) -> Option<String> {
+    if snapshot.switch_pending.is_some() {
+        return Some("A provider switch is pending. Choose continuation or cancel before sending a new brief.".into());
+    }
     if matches!(snapshot.adapter.readiness, AdapterReadiness::NotConfigured)
         && snapshot.adapter.provider.is_none()
     {
@@ -330,6 +361,42 @@ pub fn derive_controls(
     let options_note = (active_task.is_some() && !modes && !config_options).then(|| {
         "This agent did not advertise model or mode options, so none are offered.".to_owned()
     });
+    let switch_choice = snapshot.switch_pending.as_ref().map(|p| SwitchChoiceControl {
+        target_provider: p.target_provider.clone(),
+        draft_revision: p.draft_revision.clone(),
+        source_revision: p.source_revision.clone(),
+        accepted_revision: p.accepted_revision.clone(),
+        retained_queue_count: p.retained_queue_count,
+        note: format!(
+            "Provider switch ready for {}. Choose whether to continue draft or restart from accepted.",
+            p.target_provider
+        ),
+    });
+
+    let session_restore = snapshot
+        .session_restore
+        .as_ref()
+        .map(|r| SessionRestoreControl {
+            provider_id: r.provider_id.clone(),
+            redacted_session_id: r.redacted_session_id.clone(),
+            is_resumable: r.is_resumable,
+            notice: r.notice.clone(),
+        });
+
+    let retained_queue = if !snapshot.retained_queue.is_empty() {
+        Some(RetainedQueueControl {
+            count: snapshot.retained_queue.len(),
+            summaries: snapshot
+                .retained_queue
+                .iter()
+                .map(|q| q.summary.clone())
+                .collect(),
+        })
+    } else {
+        None
+    };
+
+    let can_switch_provider = !busy && snapshot.switch_pending.is_none();
 
     Controls {
         submit,
@@ -349,6 +416,10 @@ pub fn derive_controls(
         modes,
         config_options,
         options_note,
+        switch_choice,
+        session_restore,
+        retained_queue,
+        can_switch_provider,
     }
 }
 
@@ -624,6 +695,9 @@ mod tests {
             handoff: None,
             history: Vec::new(),
             resources: ResourceView::default(),
+            switch_pending: None,
+            session_restore: None,
+            retained_queue: Vec::new(),
             closed: false,
         }
     }

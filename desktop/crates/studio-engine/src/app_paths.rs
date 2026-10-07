@@ -59,6 +59,10 @@ impl AppPaths {
     pub fn agent_draft_state(&self, id: &studio_project::ProjectId) -> PathBuf {
         self.agent(id).join("draft-state.json")
     }
+    /// Durable session restoration manifest, kept beside (never inside) the draft.
+    pub fn agent_session_manifest(&self, id: &studio_project::ProjectId) -> PathBuf {
+        self.agent(id).join("session-manifest.json")
+    }
     /// Retained failed drafts are moved here before the stable draft is refreshed.
     pub fn agent_archive(&self, id: &studio_project::ProjectId) -> PathBuf {
         self.agent(id).join("archive")

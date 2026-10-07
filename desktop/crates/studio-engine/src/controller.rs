@@ -94,6 +94,20 @@ struct AgentScope {
     owner: AgentTaskId,
     processes: studio_bootstrap::ProcessTreeManager,
 }
+/// How the stable draft working copy is prepared when starting a task.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum DraftPreparationChoice {
+    /// Fresh draft staged from the live source base (default).
+    #[default]
+    FreshFromBase,
+    /// Uses an immutable user-selected revision while retaining the live source as the
+    /// publication fence. Both identities are rechecked after source reconciliation.
+    FromHandoff {
+        content_revision: studio_project::SourceRevision,
+        expected_source_revision: studio_project::SourceRevision,
+        expected_accepted_revision: studio_project::SourceRevision,
+    },
+}
 
 impl Controller {
     pub fn open(root: &Path, paths: &AppPaths) -> Result<Self, EngineError> {
@@ -404,6 +418,10 @@ impl Controller {
 
     pub fn state(&self) -> &ProjectState {
         &self.record.state
+    }
+
+    pub fn current_source_revision(&self) -> studio_project::SourceRevision {
+        self.project.inventory.revision.clone()
     }
     /// Compiler/candidate work is cancellable without terminating displayed workers.
     pub fn operation_processes(&self) -> studio_bootstrap::ProcessTreeManager {
@@ -754,11 +772,37 @@ impl Controller {
         submitted_scope: Option<crate::TaskScope>,
         observe: impl Fn(&str),
     ) -> Result<AgentTaskContext, EngineError> {
+        self.begin_agent_task_scoped_observed_with_choice(
+            brief,
+            submitted_scope,
+            DraftPreparationChoice::FreshFromBase,
+            observe,
+        )
+    }
+
+    /// Starts an agent task with an explicit draft preparation choice.
+    pub fn begin_agent_task_scoped_observed_with_choice(
+        &mut self,
+        brief: &str,
+        submitted_scope: Option<crate::TaskScope>,
+        draft_choice: DraftPreparationChoice,
+        observe: impl Fn(&str),
+    ) -> Result<AgentTaskContext, EngineError> {
         let brief = validate_brief(brief)?;
         self.reconcile()?;
         let base = self.checkpoints.capture(&self.project.root)?;
         if base != self.project.inventory.revision {
             // The source moved between the scan and the capture; retry.
+            return Err(crate::StateError::StaleResult.into());
+        }
+        if let DraftPreparationChoice::FromHandoff {
+            expected_source_revision,
+            expected_accepted_revision,
+            ..
+        } = &draft_choice
+            && (base != *expected_source_revision
+                || self.record.state.accepted() != expected_accepted_revision)
+        {
             return Err(crate::StateError::StaleResult.into());
         }
         let source_base = TaskSourceBase::new(base);
@@ -798,12 +842,23 @@ impl Controller {
             None => false,
         };
         observe("agent_scope_checked");
-        let prepared = self.drafts.prepare(
-            &self.checkpoints,
-            &source_base,
-            &reservation.identity.task,
-            live,
-        )?;
+        let prepared = match &draft_choice {
+            DraftPreparationChoice::FreshFromBase => self.drafts.prepare(
+                &self.checkpoints,
+                &source_base,
+                &reservation.identity.task,
+                live,
+            )?,
+            DraftPreparationChoice::FromHandoff {
+                content_revision, ..
+            } => self.drafts.prepare_from(
+                &self.checkpoints,
+                content_revision,
+                &source_base,
+                &reservation.identity.task,
+                live,
+            )?,
+        };
         let files = &self.project.inventory.files;
         let context = AgentTaskContext {
             identity: reservation.identity,
@@ -842,6 +897,40 @@ impl Controller {
             processes: self.processes.sub_manager(),
         });
         Ok(context)
+    }
+
+    /// Captures the outgoing draft directory immutably into checkpoints once the writer is gone.
+    ///
+    /// Refuses to capture if the draft directory does not exist, if a writer is still active,
+    /// or if the draft is marked with an unsafe writer.
+    pub fn capture_outgoing_draft(
+        &mut self,
+    ) -> Result<studio_project::SourceRevision, EngineError> {
+        let draft_dir = self.drafts.path();
+        if !draft_dir.exists() {
+            return Err(
+                crate::TaskError::DraftUnsafe("draft directory does not exist".into()).into(),
+            );
+        }
+        let snap = self.drafts.snapshot()?;
+        match snap.as_ref().map(|s| &s.state) {
+            Some(DraftState::Retained { .. }) | None => {}
+            Some(DraftState::Active { task }) => {
+                return Err(crate::TaskError::DraftUnsafe(format!(
+                    "cannot capture while task {task} writer is active"
+                ))
+                .into());
+            }
+            Some(DraftState::UnsafeWriter { reason, .. }) => {
+                return Err(crate::TaskError::DraftUnsafe(format!(
+                    "cannot capture draft with unsafe writer: {reason}"
+                ))
+                .into());
+            }
+            _ => {}
+        }
+        let rev = self.checkpoints.capture(draft_dir)?;
+        Ok(rev)
     }
 
     /// Records that the provider writer started and which writer-ownership model applies.

@@ -219,6 +219,11 @@ impl RowStore {
         id
     }
 
+    /// Monotonic sequence boundary for session restoration tracking.
+    pub fn sequence_boundary(&self) -> usize {
+        self.next as usize
+    }
+
     /// Inserts a new id or replaces an existing id's content in place (the position is
     /// defined by the id, not by call order). Replacing an id that was already evicted
     /// from the resident window is accepted: the new version is persisted by the next

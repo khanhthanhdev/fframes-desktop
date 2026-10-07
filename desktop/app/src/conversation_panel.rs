@@ -11,6 +11,8 @@
 //! * [`host`] holds the app-local adapter description and the workflow inbox.
 pub mod controls;
 pub mod host;
+#[path = "conversation_panel/provider-profiles.rs"]
+pub mod provider_profiles;
 pub mod qualification;
 pub mod rows;
 
@@ -149,6 +151,10 @@ pub struct Attachment {
     pub serial: u64,
     /// The saved adapter description (what the Setup tab starts with).
     pub adapter: Option<AdapterFile>,
+    /// The app-local provider registry; defaults are shown when no registry exists yet.
+    pub registry: Option<provider_profiles::ProviderRegistry>,
+    /// Display-only provider statuses read from the installed M6 ledger.
+    pub qualification: provider_profiles::QualificationSnapshot,
     pub settings_error: Option<String>,
     /// How the saved adapter's writer containment was derived.
     pub resolution: Option<Resolution>,
@@ -178,6 +184,8 @@ pub struct ConversationPanel {
     prompt_kind: Option<SubmitKind>,
     setup: SetupForm,
     saved_adapter: Option<AdapterFile>,
+    registry: provider_profiles::ProviderRegistry,
+    qualification: provider_profiles::QualificationSnapshot,
     settings_error: Option<String>,
     /// How the saved adapter's writer containment was derived (shown read-only).
     containment: Option<Resolution>,
@@ -235,9 +243,11 @@ impl ConversationPanel {
                 provider: input("Label, for example my-adapter", cx),
                 executable: input("Absolute path of the ACP adapter", cx),
                 args: input("Arguments, for example --acp", cx),
-                env_names: input("Sign-in variable NAMES, for example PROVIDER_API_KEY", cx),
+                env_names: input("e.g. ANTHROPIC_API_KEY", cx),
             },
             saved_adapter: None,
+            registry: provider_profiles::ProviderRegistry::default(),
+            qualification: provider_profiles::QualificationSnapshot::default(),
             settings_error: None,
             containment: None,
             policy: OwnershipPolicy::Validated,
@@ -272,6 +282,8 @@ impl ConversationPanel {
             paths,
             serial,
             adapter,
+            registry,
+            qualification,
             settings_error,
             resolution,
             policy,
@@ -283,6 +295,8 @@ impl ConversationPanel {
             serial,
         });
         self.mcp_choice = adapter.as_ref().map_or(McpChoice::Baseline, |a| a.mcp);
+        self.registry = registry.unwrap_or_default();
+        self.qualification = qualification;
         self.fill_setup(adapter.as_ref(), cx);
         self.saved_adapter = adapter;
         self.settings_error = settings_error;
@@ -297,6 +311,7 @@ impl ConversationPanel {
     pub fn detach(&mut self, cx: &mut Context<Self>) {
         self.attached = None;
         self.snapshot = None;
+        self.qualification = provider_profiles::QualificationSnapshot::default();
         self.task_scope = None;
         self.scope_error = None;
         self.older.clear();
@@ -619,6 +634,125 @@ impl ConversationPanel {
             args: text(&self.setup.args),
             env_names: text(&self.setup.env_names),
         }
+    }
+
+    fn select_provider(&mut self, profile_id: &str, cx: &mut Context<Self>) {
+        if self.attached.is_none() {
+            return;
+        }
+        if self
+            .snapshot
+            .as_ref()
+            .is_some_and(|snapshot| snapshot.switch_pending.is_some())
+        {
+            self.say("Resolve or cancel the pending provider handoff first.", cx);
+            return;
+        }
+        let Some(profile) = self
+            .registry
+            .profiles
+            .iter()
+            .find(|profile| profile.id == profile_id)
+            .cloned()
+        else {
+            self.say("That provider profile is no longer available.", cx);
+            return;
+        };
+        let busy = self.snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot
+                .task
+                .as_ref()
+                .is_some_and(|task| !task.phase.is_terminal())
+                || matches!(snapshot.undo, UndoView::InProgress { .. })
+        });
+        if busy {
+            if let Some(workflow) = self.workflow().cloned() {
+                self.command(workflow.initiate_switch(&profile.id), cx);
+            }
+            return;
+        }
+        if self.registry.selected_profile_id.as_deref() == Some(profile_id) {
+            self.say(format!("{} is already selected.", profile.label), cx);
+            return;
+        }
+
+        let mut registry = self.registry.clone();
+        if let Err(error) = registry.select_profile(profile_id) {
+            self.say(error, cx);
+            return;
+        }
+        let Some(attached) = &self.attached else {
+            return;
+        };
+        let paths = attached.paths.clone();
+        let ticket = match self.saves.begin() {
+            Ok(ticket) => ticket,
+            Err(refusal) => {
+                self.say(refusal, cx);
+                return;
+            }
+        };
+        let adapter = profile.adapter.clone();
+        let policy = self.policy.clone();
+        let resolving = {
+            let (adapter, paths) = (adapter.clone(), paths.clone());
+            cx.background_executor()
+                .spawn(async move { adapter.resolve(&paths, &policy) })
+        };
+        cx.spawn(async move |this, cx| {
+            let resolved = resolving.await;
+            let _ = this.update(cx, |panel, cx| {
+                panel.apply_selected_provider(ticket, registry, adapter, resolved, paths, cx)
+            });
+        })
+        .detach();
+        self.say(format!("Selecting {}…", profile.label), cx);
+    }
+
+    fn apply_selected_provider(
+        &mut self,
+        ticket: u64,
+        registry: provider_profiles::ProviderRegistry,
+        adapter: AdapterFile,
+        resolved: (crate::agent_workflow::AdapterSettings, Resolution),
+        paths: AppPaths,
+        cx: &mut Context<Self>,
+    ) {
+        if !self.saves.is_current(ticket) {
+            return;
+        }
+        let Some(attached) = &self.attached else {
+            self.saves.finish(ticket);
+            return;
+        };
+        if let Err(error) = attached.workflow.set_adapter(Some(resolved.0)) {
+            self.saves.finish(ticket);
+            self.say(error.to_string(), cx);
+            return;
+        }
+        self.registry = registry.clone();
+        self.fill_setup(Some(&adapter), cx);
+        self.mcp_choice = adapter.mcp;
+        self.saved_adapter = Some(adapter);
+        self.containment = Some(resolved.1);
+        self.settings_error = None;
+        let save = cx
+            .background_executor()
+            .spawn(async move { host::save_registry(&paths, &registry) });
+        cx.spawn(async move |this, cx| {
+            let result = save.await;
+            let _ = this.update(cx, |panel, cx| {
+                if panel.saves.finish(ticket) {
+                    panel.notice = Some(match result {
+                        Ok(()) => "Provider selected. It remains experimental until authentic qualification passes.".into(),
+                        Err(error) => format!("Provider selected for this session, but its registry could not be saved: {error}"),
+                    });
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
     }
 
     // ---- commands ------------------------------------------------------------------------------
@@ -2131,6 +2265,236 @@ impl ConversationPanel {
                     .text_xs()
                     .child(error.clone()),
             );
+        }
+        let switch_pending = snapshot.switch_pending.is_some();
+        let selection_busy = snapshot
+            .task
+            .as_ref()
+            .is_some_and(|task| !task.phase.is_terminal())
+            || matches!(&snapshot.undo, UndoView::InProgress { .. });
+        let ranking_note = match self.qualification.ranking {
+            provider_profiles::QualificationRankingStatus::Recommended => format!(
+                "The M6 ledger recommends {}. Statuses below are reported by the installed ledger; writer containment is independently checked for the selected launch.",
+                self.qualification.recommended.join(" and ")
+            ),
+            provider_profiles::QualificationRankingStatus::InsufficientEvidence => {
+                "The M6 ledger reports insufficient evidence for a recommendation. Provider statuses below are ledger-reported; writer containment is independently checked for the selected launch.".to_owned()
+            }
+            provider_profiles::QualificationRankingStatus::Invalid => {
+                "The M6 ledger is invalid. No provider recommendation is shown; writer containment remains independently checked for the selected launch.".to_owned()
+            }
+        };
+        let mut providers = Self::section("Providers")
+            .child(Self::line(
+                "Select a configured ACP provider, or start a stopped-writer handoff.",
+            ))
+            .child(Self::line(ranking_note));
+        if let Some(notice) = &self.qualification.notice {
+            providers = providers.child(Self::line(notice.clone()));
+        }
+        for profile in &self.registry.profiles {
+            let selected =
+                self.registry.selected_profile_id.as_deref() == Some(profile.id.as_str());
+            let button_label = if switch_pending {
+                "Handoff pending"
+            } else if selected {
+                "Selected"
+            } else if selection_busy {
+                "Switch & stop"
+            } else {
+                "Use provider"
+            };
+            let enabled =
+                !switch_pending && !self.saves.is_pending() && !(selected && !selection_busy);
+            let profile_id = profile.id.clone();
+            providers = providers.child(
+                div()
+                    .flex()
+                    .justify_between()
+                    .items_center()
+                    .gap_2()
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .flex_col()
+                            .child(div().text_xs().child(profile.label.clone()))
+                            .child(div().text_xs().text_color(rgb(MUTED)).child(format!(
+                                "{} · {} · {}",
+                                self.qualification.status_for(&profile.id).label(),
+                                profile.id,
+                                profile.description,
+                            ))),
+                    )
+                    .child(self.button(
+                        format!("agent-provider-{}", profile.id),
+                        button_label,
+                        enabled,
+                        if selected {
+                            Tone::Primary
+                        } else {
+                            Tone::Normal
+                        },
+                        cx,
+                        move |this, _, cx| this.select_provider(&profile_id, cx),
+                    )),
+            );
+        }
+        column = column.child(providers);
+
+        if let Some(choice) = &controls.switch_choice {
+            let mut handoff = Self::section("Stopped-writer handoff")
+                .child(Self::line(choice.note.clone()))
+                .child(Self::line(format!(
+                    "Outgoing task: {}",
+                    snapshot
+                        .task
+                        .as_ref()
+                        .map(|task| task.brief.as_str())
+                        .unwrap_or("no active task")
+                )))
+                .child(Self::line(format!(
+                    "Draft revision: {} · current source: {} · accepted: {}",
+                    choice.draft_revision.as_deref().unwrap_or("unavailable"),
+                    choice.source_revision,
+                    choice.accepted_revision
+                )));
+            if choice.retained_queue_count > 0 {
+                handoff = handoff.child(Self::line(format!(
+                    "{} queued brief(s) remain with the outgoing provider until you explicitly transfer or clear them.",
+                    choice.retained_queue_count
+                )));
+            }
+            handoff = handoff.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(self.button(
+                        "agent-handoff-continue-draft",
+                        "Continue captured draft",
+                        true,
+                        Tone::Primary,
+                        cx,
+                        |this, _, cx| {
+                            if let Some(workflow) = this.workflow().cloned() {
+                                this.command(
+                                    workflow.choose_handoff_continuation(
+                                        crate::agent_workflow::model::HandoffChoice::ContinueDraft,
+                                    ),
+                                    cx,
+                                );
+                            }
+                        },
+                    ))
+                    .child(self.button(
+                        "agent-handoff-restart-accepted",
+                        "Restart from accepted",
+                        true,
+                        Tone::Normal,
+                        cx,
+                        |this, _, cx| {
+                            if let Some(workflow) = this.workflow().cloned() {
+                                this.command(
+                                    workflow.choose_handoff_continuation(
+                                        crate::agent_workflow::model::HandoffChoice::RestartFromAccepted,
+                                    ),
+                                    cx,
+                                );
+                            }
+                        },
+                    ))
+                    .child(self.button(
+                        "agent-handoff-cancel",
+                        "Cancel switch",
+                        true,
+                        Tone::Normal,
+                        cx,
+                        |this, _, cx| {
+                            if let Some(workflow) = this.workflow().cloned() {
+                                this.command(workflow.cancel_switch(), cx);
+                            }
+                        },
+                    )),
+            );
+            column = column.child(handoff);
+        }
+        if controls.retained_queue.is_some() {
+            let mut retained = Self::section("Queued work held for the previous provider");
+            for brief in &snapshot.retained_queue {
+                retained = retained.child(Self::line(format!("• {}", brief.summary)));
+            }
+            retained = retained.child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .gap_1()
+                    .child(self.button(
+                        "agent-transfer-retained-queue",
+                        "Explicitly transfer queued briefs",
+                        !selection_busy && !switch_pending,
+                        Tone::Normal,
+                        cx,
+                        |this, _, cx| {
+                            if let Some(workflow) = this.workflow().cloned() {
+                                this.command(workflow.transfer_retained_queue(), cx);
+                            }
+                        },
+                    ))
+                    .child(self.button(
+                        "agent-clear-retained-queue",
+                        "Clear held briefs",
+                        !selection_busy && !switch_pending,
+                        Tone::Normal,
+                        cx,
+                        |this, _, cx| {
+                            if let Some(workflow) = this.workflow().cloned() {
+                                this.command(workflow.clear_retained_queue(), cx);
+                            }
+                        },
+                    )),
+            );
+            column = column.child(retained);
+        }
+        if let Some(restore) = &controls.session_restore {
+            let mut session =
+                Self::section("Previous provider session").child(Self::line(format!(
+                    "{} · session {} · {}",
+                    restore.provider_id,
+                    restore.redacted_session_id,
+                    restore
+                        .notice
+                        .as_deref()
+                        .unwrap_or("Native conversation memory stays with its provider.")
+                )));
+            if restore.is_resumable {
+                session = session.child(self.button(
+                    "agent-restore-session",
+                    "Use restored session for next task",
+                    !selection_busy && !switch_pending,
+                    Tone::Normal,
+                    cx,
+                    |this, _, cx| {
+                        if let Some(workflow) = this.workflow().cloned() {
+                            this.command(workflow.restore_session(), cx);
+                        }
+                    },
+                ));
+            }
+            session = session.child(self.button(
+                "agent-dismiss-session",
+                "Dismiss saved session",
+                !selection_busy && !switch_pending,
+                Tone::Normal,
+                cx,
+                |this, _, cx| {
+                    if let Some(workflow) = this.workflow().cloned() {
+                        this.command(workflow.dismiss_restoration(), cx);
+                    }
+                },
+            ));
+            column = column.child(session);
         }
         let field = |this: &Self,
                      label: &'static str,

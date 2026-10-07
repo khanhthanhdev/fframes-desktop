@@ -26,6 +26,10 @@ use studio_engine::{Controller, app_paths::AppPaths};
 
 /// File name of the app-local adapter description inside the app data directory.
 pub const SETTINGS_FILE: &str = "agent-adapter.json";
+/// File name of the app-local provider registry inside the app data directory.
+pub const REGISTRY_FILE: &str = "provider-registry.json";
+/// Suffix for migration backup rollback files.
+pub const REGISTRY_BACKUP_SUFFIX: &str = ".migration-bak";
 
 /// How an adapter's stdio MCP support is treated (host policy; ACP v1 has no flag).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -265,13 +269,111 @@ pub fn settings_path(paths: &AppPaths) -> PathBuf {
     paths.data.join(SETTINGS_FILE)
 }
 
+pub fn registry_path(paths: &AppPaths) -> PathBuf {
+    paths.data.join(REGISTRY_FILE)
+}
+
+fn load_qualification_snapshot(
+    paths: &AppPaths,
+) -> super::provider_profiles::QualificationSnapshot {
+    let path = paths
+        .data
+        .join(super::qualification::LEDGER_DIR)
+        .join(super::qualification::LEDGER_FILE_M6);
+    match std::fs::read_to_string(path) {
+        Ok(text) => super::provider_profiles::QualificationSnapshot::parse(&text)
+            .unwrap_or_else(|_| super::provider_profiles::QualificationSnapshot::invalid()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Default::default(),
+        Err(_) => super::provider_profiles::QualificationSnapshot::invalid(),
+    }
+}
+
+/// Reads the provider registry; migrates from `agent-adapter.json` if needed.
+/// Runs on a background thread.
+pub fn load_registry(
+    paths: &AppPaths,
+) -> Result<Option<super::provider_profiles::ProviderRegistry>, String> {
+    let reg_path = registry_path(paths);
+    if reg_path.exists() {
+        let text = std::fs::read_to_string(&reg_path)
+            .map_err(|e| format!("Cannot read the provider registry: {e}"))?;
+        let registry = super::provider_profiles::ProviderRegistry::parse(&text)?;
+        return Ok(Some(registry));
+    }
+
+    // If provider-registry.json does not exist, check for legacy agent-adapter.json to migrate
+    let legacy_path = settings_path(paths);
+    if legacy_path.exists() {
+        let text = std::fs::read_to_string(&legacy_path)
+            .map_err(|e| format!("Cannot read legacy adapter settings for migration: {e}"))?;
+        let legacy = match AdapterFile::parse(&text)? {
+            Some(f) => f,
+            None => return Ok(None),
+        };
+        // Save rollback backup copy before writing new registry, keeping old file intact
+        let backup_path = legacy_path.with_extension(format!("json{REGISTRY_BACKUP_SUFFIX}"));
+        let _serialized = SETTINGS_WRITES.lock();
+        backup_before_write(&legacy_path, &backup_path)?;
+        let registry =
+            super::provider_profiles::ProviderRegistry::migrate_from_adapter_file(&legacy);
+        // Save migrated registry atomically
+        write_atomic(&reg_path, registry.to_pretty().as_bytes())?;
+        return Ok(Some(registry));
+    }
+
+    Ok(None)
+}
+
+/// Saves the provider registry atomically with owner-only permissions.
+/// Legacy `agent-adapter.json` remains intact and is never overwritten.
+pub fn save_registry(
+    paths: &AppPaths,
+    registry: &super::provider_profiles::ProviderRegistry,
+) -> Result<(), String> {
+    registry.validate()?;
+    let _serialized = SETTINGS_WRITES.lock();
+    let reg_path = registry_path(paths);
+    if reg_path.exists() {
+        let backup_path = reg_path.with_extension(format!("json{REGISTRY_BACKUP_SUFFIX}"));
+        backup_before_write(&reg_path, &backup_path)?;
+    }
+    write_atomic(&reg_path, registry.to_pretty().as_bytes())
+}
+
+fn backup_before_write(source: &Path, backup: &Path) -> Result<(), String> {
+    std::fs::copy(source, backup).map(|_| ()).map_err(|error| {
+        format!(
+            "Cannot create rollback backup {}: {error}",
+            backup.display()
+        )
+    })
+}
+
+/// Removes the provider registry and legacy settings.
+pub fn clear_registry(paths: &AppPaths) -> Result<(), String> {
+    let _serialized = SETTINGS_WRITES.lock();
+    let _ = std::fs::remove_file(registry_path(paths));
+    match std::fs::remove_file(settings_path(paths)) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(format!("Cannot remove the adapter settings: {e}")),
+    }
+}
+
 /// Reads the saved description; `Ok(None)` when none was ever saved. Runs on a
 /// background thread.
 pub fn load_settings(paths: &AppPaths) -> Result<Option<AdapterFile>, String> {
-    match std::fs::read_to_string(settings_path(paths)) {
-        Ok(text) => AdapterFile::parse(&text),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(format!("Cannot read the adapter settings: {e}")),
+    if registry_path(paths).exists() {
+        match load_registry(paths)? {
+            Some(reg) => Ok(reg.selected_adapter().cloned()),
+            None => Ok(None),
+        }
+    } else {
+        match std::fs::read_to_string(settings_path(paths)) {
+            Ok(text) => AdapterFile::parse(&text),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(e) => Err(format!("Cannot read the adapter settings: {e}")),
+        }
     }
 }
 
@@ -282,8 +384,20 @@ static SETTINGS_WRITES: Mutex<()> = Mutex::new(());
 static TEMPORARY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Writes the description atomically with owner-only permissions. Runs off the UI thread.
+/// When the provider registry exists, saves as custom profile configuration without corrupting
+/// builtin defaults or mutating legacy files.
 pub fn save_settings(paths: &AppPaths, file: &AdapterFile) -> Result<(), String> {
+    file.validate()?;
     let _serialized = SETTINGS_WRITES.lock();
+    let reg_path = registry_path(paths);
+    if reg_path.exists() {
+        let text = std::fs::read_to_string(&reg_path)
+            .map_err(|e| format!("Cannot read the provider registry: {e}"))?;
+        let mut registry = super::provider_profiles::ProviderRegistry::parse(&text)
+            .map_err(|e| format!("Cannot parse the provider registry: {e}"))?;
+        registry.save_custom_adapter(file.clone());
+        return write_atomic(&reg_path, registry.to_pretty().as_bytes());
+    }
     write_atomic(&settings_path(paths), file.to_pretty().as_bytes())
 }
 
@@ -323,6 +437,7 @@ fn write_atomic(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// Removes the saved description (blank Setup text).
 pub fn clear_settings(paths: &AppPaths) -> Result<(), String> {
     let _serialized = SETTINGS_WRITES.lock();
+    let _ = std::fs::remove_file(registry_path(paths));
     match std::fs::remove_file(settings_path(paths)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -339,6 +454,10 @@ pub struct Opened {
     pub result: Result<AgentWorkflow, WorkflowError>,
     /// The saved adapter description (what the Setup tab starts with).
     pub adapter: Option<AdapterFile>,
+    /// The provider registry with first-party profiles.
+    pub registry: Option<super::provider_profiles::ProviderRegistry>,
+    /// Display-only qualification states read from the installed M6 ledger.
+    pub qualification: super::provider_profiles::QualificationSnapshot,
     /// The saved description could not be read or is invalid.
     pub settings_error: Option<String>,
     /// How the saved adapter's writer containment was resolved (`None` without an adapter).
@@ -346,7 +465,6 @@ pub struct Opened {
     /// The ownership policy this workflow was opened under (saving reuses it).
     pub policy: OwnershipPolicy,
 }
-
 /// A post-commit hand-off tagged with the workflow it came from.
 pub struct QueuedHandoff {
     pub serial: u64,
@@ -454,9 +572,17 @@ pub fn open_workflow(
     inbox: Arc<HostInbox>,
     policy: OwnershipPolicy,
 ) -> Opened {
-    let (adapter, settings_error) = match load_settings(&paths) {
-        Ok(adapter) => (adapter, None),
-        Err(e) => (None, Some(e)),
+    let qualification = load_qualification_snapshot(&paths);
+    let (registry, adapter, settings_error) = match load_registry(&paths) {
+        Ok(Some(reg)) => {
+            let adapter = reg.selected_adapter().cloned();
+            (Some(reg), adapter, None)
+        }
+        Ok(None) => match load_settings(&paths) {
+            Ok(adapter) => (None, adapter, None),
+            Err(e) => (None, None, Some(e)),
+        },
+        Err(e) => (None, None, Some(e)),
     };
     // Hashing the adapter executable and reading the qualification ledger happen here, on
     // the opening thread.
@@ -476,6 +602,8 @@ pub fn open_workflow(
         serial,
         result: AgentWorkflow::open(config, controller),
         adapter,
+        registry,
+        qualification,
         settings_error,
         resolution,
         policy,
@@ -502,6 +630,42 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let paths = AppPaths::new(temp.path().join("data")).unwrap();
         (temp, paths)
+    }
+
+    #[test]
+    fn migration_stops_before_writing_when_rollback_backup_fails() {
+        let (_temp, paths) = data();
+        let legacy_path = settings_path(&paths);
+        std::fs::write(
+            &legacy_path,
+            r#"{"provider":"Custom","executable":"/opt/agent"}"#,
+        )
+        .unwrap();
+        let backup_path = legacy_path.with_extension(format!("json{REGISTRY_BACKUP_SUFFIX}"));
+        std::fs::create_dir(&backup_path).unwrap();
+
+        let error = load_registry(&paths).unwrap_err();
+
+        assert!(error.contains("rollback backup"), "{error}");
+        assert!(!registry_path(&paths).exists());
+        assert!(legacy_path.is_file());
+    }
+
+    #[test]
+    fn registry_save_preserves_the_current_file_when_rollback_backup_fails() {
+        let (_temp, paths) = data();
+        let registry_path = registry_path(&paths);
+        let original = super::super::provider_profiles::ProviderRegistry::default().to_pretty();
+        std::fs::write(&registry_path, &original).unwrap();
+        let backup_path = registry_path.with_extension(format!("json{REGISTRY_BACKUP_SUFFIX}"));
+        std::fs::create_dir(&backup_path).unwrap();
+        let mut updated = super::super::provider_profiles::ProviderRegistry::default();
+        updated.select_profile("claude").unwrap();
+
+        let error = save_registry(&paths, &updated).unwrap_err();
+
+        assert!(error.contains("rollback backup"), "{error}");
+        assert_eq!(std::fs::read_to_string(registry_path).unwrap(), original);
     }
 
     #[test]

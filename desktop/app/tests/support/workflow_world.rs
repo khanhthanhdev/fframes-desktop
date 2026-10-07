@@ -265,6 +265,11 @@ impl World {
         if self.options.adapter {
             config.adapter = Some(self.adapter_settings());
         }
+        config.ownership_policy = Some(
+            fframes_studio::conversation_panel::qualification::OwnershipPolicy::TestInjected(
+                self.options.ownership.clone(),
+            ),
+        );
         config
     }
 

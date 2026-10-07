@@ -253,6 +253,48 @@ pub struct DiscoveryReport {
     pub executable: Option<PathBuf>,
     pub initialized: Option<InitializedInfo>,
 }
+impl DiscoveryReport {
+    /// Returns the negotiated capabilities if the adapter initialized.
+    pub fn capabilities(&self) -> Option<&crate::driver::AgentCapabilityInfo> {
+        self.initialized.as_ref().map(|i| &i.capabilities)
+    }
+
+    /// Whether session restoration (load or resume) was negotiated.
+    pub fn supports_restoration(&self) -> bool {
+        self.capabilities()
+            .is_some_and(|c| c.load_session || c.resume_session)
+    }
+
+    /// Whether image prompts were negotiated.
+    pub fn supports_images(&self) -> bool {
+        self.capabilities().is_some_and(|c| c.prompt_image)
+    }
+
+    /// Whether MCP stdio support is active.
+    pub fn supports_mcp_stdio(&self) -> bool {
+        self.capabilities().is_some_and(|c| c.mcp_stdio)
+    }
+
+    /// Summary of available capabilities and limitations for UI display.
+    pub fn capability_summary(&self) -> Option<String> {
+        let caps = self.capabilities()?;
+        let mut parts = Vec::new();
+        if caps.load_session || caps.resume_session {
+            parts.push("session restore");
+        } else {
+            parts.push("fresh sessions only");
+        }
+        if caps.prompt_image {
+            parts.push("visual context");
+        }
+        if caps.mcp_stdio {
+            parts.push("stdio MCP");
+        } else {
+            parts.push("CLI fallback");
+        }
+        Some(parts.join(", "))
+    }
+}
 
 /// What a probe may do.
 #[derive(Debug, Clone)]

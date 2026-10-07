@@ -38,6 +38,7 @@ DEFAULT_LEDGERS = [
     QUALIFICATION / "m3-results.json",
     QUALIFICATION / "m4-results.json",
     QUALIFICATION / "m5-results.json",
+    QUALIFICATION / "m6-results.json",
 ]
 
 M0_GATES = {"managed_compilation", "gpui_startup", "renderer_worker", "acp_task", "selection_anchor"}
@@ -113,6 +114,102 @@ M5_GATES = {
     "auth_macos": "authentic",
 }
 M5_STATUSES = {"pass", "fail", "blocked", "not_run"}
+M6_PROVIDERS = {"claude", "codex", "pi", "antigravity"}
+M6_GATES = {
+    "create_edit_export",
+    "selected_context_edit",
+    "compiler_error_repair",
+    "completion_and_streaming",
+    "permission_and_errors",
+    "interruption_and_cleanup",
+    "restoration_and_fallback",
+    "tool_parity",
+    "image_context",
+    "twenty_cycle_cleanup",
+    "controlled_handoff",
+    "platform_linux",
+    "platform_windows",
+    "platform_macos",
+    "platform_physical_device",
+}
+M6_MANDATORY_SCENARIO_GATES = {
+    "create_edit_export",
+    "selected_context_edit",
+    "compiler_error_repair",
+    "completion_and_streaming",
+    "permission_and_errors",
+    "interruption_and_cleanup",
+    "restoration_and_fallback",
+    "tool_parity",
+    "image_context",
+    "twenty_cycle_cleanup",
+    "controlled_handoff",
+    "platform_linux",
+}
+M6_STATUSES = {"pass", "fail", "blocked", "not_run"}
+M6_CAPABILITIES = {
+    "load_session",
+    "resume_session",
+    "prompt_image",
+    "prompt_audio",
+    "prompt_embedded_context",
+    "mcp_stdio",
+    "mcp_http",
+    "mcp_sse",
+}
+M6_GATE_BOOLEAN_MEASUREMENTS = {
+    "create_edit_export": {
+        "create_completed",
+        "selected_title_edit_completed",
+        "inspect_passed",
+        "preview_verified",
+        "apply_undo_reopen_passed",
+        "cli_export_passed",
+    },
+    "selected_context_edit": {"frozen_scope_verified", "out_of_scope_unchanged"},
+    "compiler_error_repair": {"repair_succeeded"},
+    "completion_and_streaming": {
+        "stream_responsive",
+        "follow_up_completed",
+        "quiet_turn_quiescent",
+    },
+    "permission_and_errors": {
+        "approve_handled",
+        "decline_handled",
+        "protocol_error_recovered",
+    },
+    "restoration_and_fallback": {
+        "resume_same_cwd",
+        "fresh_grants",
+        "unsupported_fallback",
+        "interrupted_prompt_not_replayed",
+    },
+    "image_context": {"visual_verified", "image_disabled_fallback_verified"},
+    "controlled_handoff": {
+        "draft_retained",
+        "source_fence_passed",
+        "queue_transfer_explicit",
+    },
+    "platform_linux": {"platform_workflow_passed"},
+    "platform_windows": {"platform_workflow_passed"},
+    "platform_macos": {"platform_workflow_passed"},
+    "platform_physical_device": {
+        "physical_device",
+        "display_input_exercised",
+        "audio_device_exercised",
+    },
+}
+M6_TOOL_NAMES = {
+    "project_context",
+    "timeline",
+    "render_frame",
+    "render_strip",
+    "inspect",
+    "build_status",
+    "selection_context",
+    "source_lookup",
+    "style_context",
+}
 MAX_M5_METADATA_BYTES = 1024 * 1024
 # Agent names of the repository's scripted fixtures: they can never be an authentic adapter.
 FIXTURE_AGENT_NAMES = {"scripted-agent", "protocol-peer", "acp-peer", "fixture", "test-agent"}
@@ -1059,6 +1156,382 @@ def validate_m5(path, record):
     if (acceptance["full"] == "pass") != all_gates:
         raise ValueError("M5 full acceptance must pass exactly when every development and authentic gate passes")
 
+def _extract_provider_qualification_summary(path, provider_id, provider):
+    p_id = provider["id"]
+    gates = provider.get("gates", {})
+
+    proofs = {}
+    for gate_name, gate in gates.items():
+        if gate.get("status") == "pass" and gate.get("evidence"):
+            files = [evidence_json((path.parent / ev["path"]).resolve()) for ev in gate["evidence"]]
+            proofs[gate_name] = [p for p in files if p is not None]
+
+    env_name = None
+    for p_list in proofs.values():
+        for proof in p_list:
+            m = proof.get("measurements", {})
+            if "environment_name" in m and type(m["environment_name"]) is str and m["environment_name"].strip():
+                env_name = m["environment_name"].strip()
+                break
+        if env_name:
+            break
+
+    if not env_name:
+        raise ValueError(f"Provider {provider_id} lacks a named measured environment in qualification evidence")
+
+    export_proof = (proofs.get("create_edit_export") or [{}])[0]
+    export_m = export_proof.get("measurements", {})
+    latency_p95 = export_m.get("latency_p95_ms")
+    if type(latency_p95) not in (int, float) or latency_p95 <= 0:
+        raise ValueError(f"Provider {provider_id} lacks measured latency_p95_ms in create_edit_export")
+
+    repair_proof = (proofs.get("compiler_error_repair") or [{}])[0]
+    repair_m = repair_proof.get("measurements", {})
+    repair_succeeded = 1.0 if repair_m.get("repair_succeeded") is True else 0.0
+
+    tool_proof = (proofs.get("tool_parity") or [{}])[0]
+    tool_m = tool_proof.get("measurements", {})
+    tools_succeeded = tool_m.get("tools_succeeded")
+    if type(tools_succeeded) is not int or tools_succeeded < 0:
+        raise ValueError(f"Provider {provider_id} lacks measured tools_succeeded in tool_parity")
+
+    visual_proof = (proofs.get("image_context") or [{}])[0]
+    visual_m = visual_proof.get("measurements", {})
+    visual_verified = 1.0 if visual_m.get("visual_verified") is True else 0.0
+
+    stress_proof = (proofs.get("twenty_cycle_cleanup") or [{}])[0]
+    stress_m = stress_proof.get("measurements", {})
+    peak_rss_kib = stress_m.get("peak_rss_kib")
+    if type(peak_rss_kib) not in (int, float) or peak_rss_kib <= 0:
+        raise ValueError(f"Provider {provider_id} lacks measured peak_rss_kib in twenty_cycle_cleanup")
+
+    failures = 0
+    return {
+        "provider_id": p_id,
+        "environment_name": env_name,
+        "failures": failures,
+        "repair_success": repair_succeeded,
+        "tools_succeeded": tools_succeeded,
+        "visual_verified": visual_verified,
+        "latency_p95_ms": float(latency_p95),
+        "peak_rss_kib": float(peak_rss_kib),
+    }
+
+
+def _validate_m6_gate_measurements(provider_id, gate_name, proof):
+    measurements = proof.get("measurements")
+    if type(measurements) is not dict:
+        raise ValueError(f"{provider_id}.{gate_name} authentic evidence has no measurements object")
+
+    required_booleans = M6_GATE_BOOLEAN_MEASUREMENTS.get(gate_name, set())
+    for name in required_booleans:
+        if measurements.get(name) is not True:
+            raise ValueError(f"{provider_id}.{gate_name} evidence is missing passing measurement {name}")
+
+    if gate_name == "create_edit_export":
+        revision_digest = measurements.get("export_revision_sha256")
+        latency = measurements.get("latency_p95_ms")
+        if type(revision_digest) is not str or HEX64.fullmatch(revision_digest) is None:
+            raise ValueError(f"{provider_id}.{gate_name} evidence lacks an immutable export revision digest")
+        if type(latency) not in (int, float) or latency <= 0:
+            raise ValueError(f"{provider_id}.{gate_name} evidence lacks measured latency_p95_ms")
+        if measurements.get("claimed_native_app_export") is True:
+            raise ValueError(f"{provider_id} claims native app export in M6; export UI remains M7")
+    elif gate_name == "compiler_error_repair":
+        attempts = measurements.get("repair_attempts")
+        if type(attempts) is not int or not 0 <= attempts <= 1:
+            raise ValueError(f"{provider_id}.{gate_name} evidence exceeds the one-repair budget")
+    elif gate_name == "tool_parity":
+        results = measurements.get("tool_results")
+        route = measurements.get("tool_route")
+        if type(results) is not dict or set(results) != M6_TOOL_NAMES or any(value != "pass" for value in results.values()):
+            raise ValueError(f"{provider_id}.{gate_name} evidence must pass all nine Studio tools")
+        if measurements.get("tools_succeeded") != len(M6_TOOL_NAMES):
+            raise ValueError(f"{provider_id}.{gate_name} evidence has an incorrect successful tool count")
+        if route not in {"mcp", "cli"}:
+            raise ValueError(f"{provider_id}.{gate_name} evidence must name its measured MCP or CLI route")
+    elif gate_name == "interruption_and_cleanup":
+        _writer_contract(measurements)
+    elif gate_name == "twenty_cycle_cleanup":
+        cycles = measurements.get("cycles_completed")
+        peak_rss = measurements.get("peak_rss_kib")
+        if type(cycles) is not int or cycles < 20:
+            raise ValueError(f"{provider_id}.{gate_name} evidence must measure at least twenty cycles")
+        if type(peak_rss) not in (int, float) or peak_rss <= 0:
+            raise ValueError(f"{provider_id}.{gate_name} evidence lacks measured peak_rss_kib")
+    elif gate_name == "controlled_handoff":
+        if measurements.get("writer_overlap_count") != 0 or measurements.get("post_stop_writes") != 0:
+            raise ValueError(f"{provider_id}.{gate_name} evidence records writer overlap or post-stop writes")
+
+
+def validate_m6(path, record):
+    required = {"kind", "schema_version", "timestamp", "environment", "providers", "ranking", "acceptance"}
+    if set(record) != required or record.get("kind") != "m6" or record.get("schema_version") != 1:
+        raise ValueError("Invalid M6 qualification schema")
+    if type(record["timestamp"]) is not str or not record["timestamp"].strip():
+        raise ValueError("Invalid M6 timestamp")
+    try:
+        datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("Invalid M6 timestamp") from error
+    environment = record["environment"]
+    if type(environment) is not dict or set(environment) != {
+        "scope", "os", "arch", "sdk_id", "sdk_manifest_sha256"
+    }:
+        raise ValueError("Invalid M6 environment")
+    if any(type(environment.get(key)) is not str or not environment[key].strip() for key in ("scope", "os", "arch", "sdk_id")):
+        raise ValueError("Invalid M6 environment identity")
+    if HEX64.fullmatch(environment["sdk_manifest_sha256"]) is None:
+        raise ValueError("Invalid M6 SDK manifest digest")
+    if type(record["providers"]) is not dict or set(record["providers"]) != set(M6_PROVIDERS):
+        raise ValueError("Invalid M6 providers matrix: must contain claude, codex, pi, and antigravity")
+
+    scan_for_secrets(path, "ledger")
+
+    all_cited_evidence = set()
+    qualified_providers = set()
+    for provider_id, provider in record["providers"].items():
+        if type(provider) is not dict:
+            raise ValueError(f"Provider {provider_id} is not an object")
+        prov_required = {
+            "id", "label", "distribution", "upstream_version", "auth_route",
+            "mcp_route", "status", "prerequisites", "probe_observation", "capabilities", "gates"
+        }
+        prov_optional = {"launch_identity", "adapter_name"}
+        if not prov_required.issubset(set(provider)) or set(provider) - (prov_required | prov_optional):
+            raise ValueError(f"Provider {provider_id} has invalid fields")
+        if provider["id"] != provider_id:
+            raise ValueError(f"Provider {provider_id} id mismatch: {provider['id']}")
+        if provider["status"] not in {"qualified", "experimental", "blocked", "not_run"}:
+            raise ValueError(f"Invalid provider status for {provider_id}: {provider['status']}")
+        if type(provider["prerequisites"]) is not str or len(provider["prerequisites"].strip()) < 20:
+            raise ValueError(f"Provider {provider_id} missing explicit prerequisites")
+        probe_obs = provider["probe_observation"]
+        probe_required = {"status", "detail", "runtime_available", "observed_unix_seconds", "evidence"}
+        if (
+            type(probe_obs) is not dict
+            or not probe_required.issubset(set(probe_obs))
+            or set(probe_obs) - (probe_required | {"searched"})
+        ):
+            raise ValueError(f"Provider {provider_id} invalid probe_observation")
+        if (
+            type(probe_obs["status"]) is not str
+            or not probe_obs["status"].strip()
+            or type(probe_obs["detail"]) is not str
+            or not probe_obs["detail"].strip()
+        ):
+            raise ValueError(f"Provider {provider_id} invalid probe status or detail")
+        if "searched" in probe_obs and (
+            type(probe_obs["searched"]) is not list
+            or any(type(item) is not str for item in probe_obs["searched"])
+        ):
+            raise ValueError(f"Provider {provider_id} probe searched must be an array of strings")
+        if probe_obs["runtime_available"] is not None and type(probe_obs["runtime_available"]) is not bool:
+            raise ValueError(f"Provider {provider_id} probe runtime_available must be boolean or null")
+        if type(probe_obs["observed_unix_seconds"]) is not int or probe_obs["observed_unix_seconds"] < 1700000000:
+            raise ValueError(f"Provider {provider_id} invalid observed_unix_seconds")
+        probe_ev = probe_obs["evidence"]
+        if type(probe_ev) is not dict or set(probe_ev) != {"path", "sha256"}:
+            raise ValueError(f"Provider {provider_id} invalid probe evidence shape")
+        validate_evidence(path, f"{provider_id}.probe", {"evidence": [probe_ev]})
+        probe_file = (path.parent / probe_ev["path"]).resolve()
+        scan_for_secrets(probe_file, f"probe evidence of {provider_id}")
+        probe_record = evidence_json(probe_file)
+        if (
+            probe_record is None
+            or probe_record.get("schema") != "m6-probe/1"
+            or probe_record.get("evidence_kind") != "probe"
+            or probe_record.get("provider") != provider_id
+            or type(probe_record.get("observed_unix_seconds")) is not int
+            or probe_record["observed_unix_seconds"] < 1700000000
+        ):
+            raise ValueError(f"Provider {provider_id} probe evidence record invalid")
+        capabilities = provider["capabilities"]
+        if capabilities is not None and (
+            type(capabilities) is not dict
+            or set(capabilities) != M6_CAPABILITIES
+            or any(type(value) is not bool for value in capabilities.values())
+        ):
+            raise ValueError(f"Provider {provider_id} capabilities must be null or the complete boolean capability set")
+        launch_identity = provider.get("launch_identity")
+        if launch_identity is not None:
+            if type(launch_identity) is not str or HEX64.fullmatch(launch_identity) is None:
+                raise ValueError(f"Invalid launch identity digest for {provider_id}")
+        adapter_name = provider.get("adapter_name")
+        if adapter_name is not None and (type(adapter_name) is not str or not adapter_name.strip()):
+            raise ValueError(f"Invalid adapter name for {provider_id}")
+
+        gates = provider.get("gates")
+        if type(gates) is not dict or set(gates) != set(M6_GATES):
+            raise ValueError(f"Invalid gates for provider {provider_id}")
+
+        provider_all_mandatory_passed = True
+        for gate_name, gate in gates.items():
+            if type(gate) is not dict:
+                raise ValueError(f"Gate {provider_id}.{gate_name} is not an object")
+            gate_required = {"kind", "status", "criteria", "notes"}
+            gate_optional = {"evidence", "prerequisite"}
+            if not gate_required.issubset(set(gate)) or set(gate) - (gate_required | gate_optional):
+                raise ValueError(f"Gate {provider_id}.{gate_name} missing required fields")
+            status = gate.get("status")
+            kind = gate.get("kind")
+            if status not in M6_STATUSES:
+                raise ValueError(f"Invalid gate status for {provider_id}.{gate_name}: {status}")
+            if kind != "authentic":
+                raise ValueError(f"{provider_id}.{gate_name} must be of kind authentic (provider gates are authentic-only)")
+            if (
+                type(gate["criteria"]) is not str
+                or not gate["criteria"].strip()
+                or type(gate["notes"]) is not str
+                or not gate["notes"].strip()
+            ):
+                raise ValueError(f"{provider_id}.{gate_name} criteria and notes must be non-empty strings")
+
+            if status in {"not_run", "blocked"}:
+                prereq = gate.get("prerequisite")
+                if type(prereq) is not str or len(prereq.strip()) < 20:
+                    raise ValueError(f"{provider_id}.{gate_name} is {status} without prerequisite")
+                if gate.get("evidence"):
+                    raise ValueError(f"{provider_id}.{gate_name} is {status} but cites evidence")
+            elif status == "pass":
+                files = evidence_files(path, f"{provider_id}.{gate_name}", gate.get("evidence", []))
+                for source in files:
+                    if source in all_cited_evidence:
+                        raise ValueError(f"Evidence file cited by multiple gates: {source.name}")
+                    all_cited_evidence.add(source)
+                    scan_for_secrets(source, f"evidence of {provider_id}.{gate_name}")
+                if not files:
+                    raise ValueError(f"{provider_id}.{gate_name} claims a pass without evidence")
+                if launch_identity is None or adapter_name is None:
+                    raise ValueError(f"{provider_id}.{gate_name} pass requires a launch identity and observed adapter name")
+                if "prerequisite" in gate:
+                    raise ValueError(f"{provider_id}.{gate_name} states a prerequisite although it passed")
+                if kind == "authentic":
+                    proofs = [evidence_json(source) for source in files]
+                    for proof in proofs:
+                        if proof is None:
+                            raise ValueError(f"{provider_id}.{gate_name} has invalid JSON evidence")
+                        if proof.get("evidence_kind") != "authentic" or proof.get("fixture_only") is not False:
+                            raise ValueError(f"{provider_id}.{gate_name} authentic gate cites development or fixture evidence")
+                        if proof.get("result") != "pass":
+                            raise ValueError(f"{provider_id}.{gate_name} authentic evidence is not a pass")
+                        if proof.get("provider_id") != provider_id or proof.get("gate") != gate_name:
+                            raise ValueError(f"{provider_id}.{gate_name} evidence is bound to another provider or gate")
+                        adapter = proof.get("adapter")
+                        if type(adapter) is not dict:
+                            raise ValueError(f"{provider_id}.{gate_name} authentic evidence missing adapter object")
+                        raw_agent_name = adapter.get("agent_name") or adapter.get("name") or ""
+                        if type(raw_agent_name) is not str or not raw_agent_name.strip():
+                            raise ValueError(f"{provider_id}.{gate_name} adapter identity has no name")
+                        agent_name = raw_agent_name.strip().lower()
+                        if agent_name in FIXTURE_AGENT_NAMES:
+                            raise ValueError(f"{provider_id}.{gate_name} authentic evidence uses fixture adapter")
+                        if agent_name != adapter_name.lower():
+                            raise ValueError(f"{provider_id}.{gate_name} evidence adapter does not match the observed provider adapter")
+                        if adapter.get("protocol_version") != 1:
+                            raise ValueError(f"{provider_id}.{gate_name} evidence did not negotiate ACP v1")
+                        if proof.get("cleanup_empty") is not True:
+                            raise ValueError(f"{provider_id}.{gate_name} authentic evidence lacks clean teardown")
+                        cleanup = proof.get("cleanup")
+                        if type(cleanup) is not dict or cleanup.get("owned_processes_after") != 0:
+                            raise ValueError(f"{provider_id}.{gate_name} authentic evidence did not measure clean teardown (owned_processes_after != 0)")
+                        if adapter.get("launch_identity") != launch_identity:
+                            raise ValueError(f"{provider_id}.{gate_name} launch identity does not match provider")
+                        expected_platform = "Windows" if gate_name == "platform_windows" else ("Darwin" if gate_name == "platform_macos" else "Linux")
+                        proof_platform = proof.get("platform", {})
+                        if type(proof_platform) is not dict or proof_platform.get("system") != expected_platform:
+                            raise ValueError(f"{provider_id}.{gate_name} authentic evidence records wrong platform: {proof_platform.get('system')}")
+                        _validate_m6_gate_measurements(provider_id, gate_name, proof)
+            else:
+                files = evidence_files(path, f"{provider_id}.{gate_name}", gate.get("evidence", []))
+                for source in files:
+                    scan_for_secrets(source, f"evidence of {provider_id}.{gate_name}")
+                if not files:
+                    raise ValueError(f"{provider_id}.{gate_name} failed without evidence")
+
+            if gate_name in M6_MANDATORY_SCENARIO_GATES:
+                if kind != "authentic" or status != "pass":
+                    provider_all_mandatory_passed = False
+
+        if provider_all_mandatory_passed:
+            if provider["status"] != "qualified":
+                raise ValueError(f"Provider {provider_id} passed all mandatory gates but status is not qualified")
+            qualified_providers.add(provider_id)
+        else:
+            if provider["status"] == "qualified":
+                raise ValueError(f"Provider {provider_id} claims qualified status but has unmet mandatory gates")
+
+    ranking = record["ranking"]
+    if type(ranking) is not dict or set(ranking) != {"status", "recommended", "experimental", "notes"}:
+        raise ValueError("Invalid M6 ranking block")
+    if type(ranking["notes"]) is not str or not ranking["notes"].strip():
+        raise ValueError("Ranking notes must be a non-empty string")
+    if type(ranking["experimental"]) is not list or any(type(pid) is not str for pid in ranking["experimental"]):
+        raise ValueError("Ranking experimental must be a list of provider IDs")
+    if ranking["status"] not in {"insufficient_evidence", "recommended"}:
+        raise ValueError(f"Invalid ranking status: {ranking['status']}")
+    recommended = ranking["recommended"]
+    if type(recommended) is not list or any(type(provider_id) is not str for provider_id in recommended):
+        raise ValueError("Ranking recommended must be a list")
+    if len(recommended) != len(set(recommended)):
+        raise ValueError("Ranking recommended contains duplicates")
+    for r in recommended:
+        if r not in qualified_providers:
+            raise ValueError(f"Cannot recommend unqualified provider: {r}")
+
+    if len(qualified_providers) < 2:
+        if ranking["status"] != "insufficient_evidence":
+            raise ValueError("Ranking status must be insufficient_evidence when fewer than 2 providers qualify")
+        if recommended:
+            raise ValueError("Ranking cannot recommend providers when fewer than 2 qualify")
+    else:
+        if ranking["status"] != "recommended":
+            raise ValueError("Ranking status must be recommended when at least two providers qualify")
+        summaries = [
+            _extract_provider_qualification_summary(path, pid, record["providers"][pid])
+            for pid in qualified_providers
+        ]
+        environments = {s["environment_name"] for s in summaries}
+        if len(environments) > 1:
+            raise ValueError(f"Incomparable ranking: providers measured on different environments: {environments}")
+
+        ranked_summaries = sorted(
+            summaries,
+            key=lambda s: (
+                s["failures"],
+                -s["repair_success"],
+                -s["tools_succeeded"],
+                -s["visual_verified"],
+                s["latency_p95_ms"],
+                s["peak_rss_kib"],
+                s["provider_id"],
+            ),
+        )
+        expected_recommended = [s["provider_id"] for s in ranked_summaries[:2]]
+        if recommended != expected_recommended:
+            raise ValueError(
+                f"Ranking recommendation mismatch: deterministic ranking requires {expected_recommended}, but ledger recommended {recommended}"
+            )
+    experimental = set(ranking["experimental"])
+    expected_experimental = set(M6_PROVIDERS) - set(recommended)
+    if experimental != expected_experimental:
+        raise ValueError("Ranking experimental must list all providers not in recommended")
+
+    acceptance = record["acceptance"]
+    if type(acceptance) is not dict or set(acceptance) != {"development", "authentic", "full", "reason"}:
+        raise ValueError("Invalid M6 acceptance block")
+    for field in ("development", "authentic", "full"):
+        if acceptance[field] not in {"pass", "not_run", "fail"}:
+            raise ValueError(f"Invalid acceptance status for {field}")
+    if acceptance["authentic"] == "pass" and len(qualified_providers) < 2:
+        raise ValueError("M6 authentic acceptance requires at least two qualified providers")
+    if acceptance["authentic"] == "pass" and ranking["status"] != "recommended":
+        raise ValueError("M6 authentic acceptance requires a two-provider recommendation")
+    if type(acceptance["reason"]) is not str or not acceptance["reason"].strip():
+        raise ValueError("M6 acceptance reason must be a non-empty string")
+    if acceptance["full"] == "pass" and (acceptance["development"] != "pass" or acceptance["authentic"] != "pass"):
+        raise ValueError("M6 full acceptance requires both development and authentic pass")
+
 
 def validate(path):
     path = Path(path)
@@ -1074,6 +1547,8 @@ def validate(path):
         validate_m4(path, record)
     elif kind == "m5":
         validate_m5(path, record)
+    elif kind == "m6":
+        validate_m6(path, record)
     else:
         raise ValueError(f"Unsupported qualification kind: {kind}")
     return record
@@ -1082,13 +1557,14 @@ def validate(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
-        "records", nargs="*", type=Path, help="ledgers to validate (default: M0, M2, M3, M4 and M5)"
+        "records", nargs="*", type=Path, help="ledgers to validate (default: M0, M2, M3, M4, M5, and M6)"
     )
     args = parser.parse_args()
     for record in args.records or DEFAULT_LEDGERS:
         validate(record)
         print(f"valid: {record}")
     print("Qualification records valid; pending gates remain unmet")
+
 
 
 if __name__ == "__main__":

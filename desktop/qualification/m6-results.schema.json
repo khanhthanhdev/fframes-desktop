@@ -1,0 +1,211 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M6QualificationResults",
+  "description": "M6 ACP provider qualification, controlled handoff, and ranking contract across Claude, Codex, Pi, and Antigravity.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "timestamp", "environment", "providers", "ranking", "acceptance"],
+  "properties": {
+    "kind": { "const": "m6" },
+    "schema_version": { "const": 1 },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "os", "arch", "sdk_id", "sdk_manifest_sha256"],
+      "properties": {
+        "scope": { "type": "string", "minLength": 1 },
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "sdk_id": { "type": "string", "minLength": 1 },
+        "sdk_manifest_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "providers": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claude", "codex", "pi", "antigravity"],
+      "properties": {
+        "claude": { "$ref": "#/definitions/providerEntry" },
+        "codex": { "$ref": "#/definitions/providerEntry" },
+        "pi": { "$ref": "#/definitions/providerEntry" },
+        "antigravity": { "$ref": "#/definitions/providerEntry" }
+      }
+    },
+    "ranking": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "recommended", "experimental", "notes"],
+      "properties": {
+        "status": { "enum": ["insufficient_evidence", "recommended"] },
+        "recommended": {
+          "type": "array",
+          "items": { "type": "string" },
+          "maxItems": 2
+        },
+        "experimental": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "notes": { "type": "string", "minLength": 1 }
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["development", "authentic", "full", "reason"],
+      "properties": {
+        "development": { "enum": ["pass", "not_run", "fail"] },
+        "authentic": { "enum": ["pass", "not_run", "fail"] },
+        "full": { "enum": ["pass", "not_run", "fail"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    }
+  },
+  "definitions": {
+    "providerEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "distribution",
+        "upstream_version",
+        "auth_route",
+        "mcp_route",
+        "status",
+        "prerequisites",
+        "probe_observation",
+        "capabilities",
+        "gates"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1 },
+        "distribution": { "type": "string", "minLength": 1 },
+        "upstream_version": { "type": "string" },
+        "auth_route": { "type": "string", "minLength": 1 },
+        "mcp_route": { "enum": ["stdio", "cli_fallback", "unsupported"] },
+        "status": { "enum": ["qualified", "experimental", "blocked", "not_run"] },
+        "prerequisites": { "type": "string", "minLength": 1 },
+        "launch_identity": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "adapter_name": { "type": "string", "minLength": 1 },
+        "probe_observation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "detail", "runtime_available", "observed_unix_seconds", "evidence"],
+          "properties": {
+            "status": { "type": "string", "minLength": 1 },
+            "detail": { "type": "string", "minLength": 1 },
+            "runtime_available": { "type": ["boolean", "null"] },
+            "observed_unix_seconds": { "type": "integer", "minimum": 1700000000 },
+            "searched": {
+              "type": "array",
+              "items": { "type": "string" }
+            },
+            "evidence": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["path", "sha256"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+              }
+            }
+          }
+        },
+        "capabilities": {
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "load_session",
+                "resume_session",
+                "prompt_image",
+                "prompt_audio",
+                "prompt_embedded_context",
+                "mcp_stdio",
+                "mcp_http",
+                "mcp_sse"
+              ],
+              "properties": {
+                "load_session": { "type": "boolean" },
+                "resume_session": { "type": "boolean" },
+                "prompt_image": { "type": "boolean" },
+                "prompt_audio": { "type": "boolean" },
+                "prompt_embedded_context": { "type": "boolean" },
+                "mcp_stdio": { "type": "boolean" },
+                "mcp_http": { "type": "boolean" },
+                "mcp_sse": { "type": "boolean" }
+              }
+            }
+          ]
+        },
+        "gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "create_edit_export",
+            "selected_context_edit",
+            "compiler_error_repair",
+            "completion_and_streaming",
+            "permission_and_errors",
+            "interruption_and_cleanup",
+            "restoration_and_fallback",
+            "tool_parity",
+            "image_context",
+            "twenty_cycle_cleanup",
+            "controlled_handoff",
+            "platform_linux",
+            "platform_windows",
+            "platform_macos",
+            "platform_physical_device"
+          ],
+          "properties": {
+            "create_edit_export": { "$ref": "#/definitions/gateEntry" },
+            "selected_context_edit": { "$ref": "#/definitions/gateEntry" },
+            "compiler_error_repair": { "$ref": "#/definitions/gateEntry" },
+            "completion_and_streaming": { "$ref": "#/definitions/gateEntry" },
+            "permission_and_errors": { "$ref": "#/definitions/gateEntry" },
+            "interruption_and_cleanup": { "$ref": "#/definitions/gateEntry" },
+            "restoration_and_fallback": { "$ref": "#/definitions/gateEntry" },
+            "tool_parity": { "$ref": "#/definitions/gateEntry" },
+            "image_context": { "$ref": "#/definitions/gateEntry" },
+            "twenty_cycle_cleanup": { "$ref": "#/definitions/gateEntry" },
+            "controlled_handoff": { "$ref": "#/definitions/gateEntry" },
+            "platform_linux": { "$ref": "#/definitions/gateEntry" },
+            "platform_windows": { "$ref": "#/definitions/gateEntry" },
+            "platform_macos": { "$ref": "#/definitions/gateEntry" },
+            "platform_physical_device": { "$ref": "#/definitions/gateEntry" }
+          }
+        }
+      }
+    },
+    "gateEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "status", "criteria", "notes"],
+      "properties": {
+        "kind": { "const": "authentic" },
+        "status": { "enum": ["pass", "fail", "blocked", "not_run"] },
+        "criteria": { "type": "string", "minLength": 1 },
+        "notes": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["path", "sha256"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+            }
+          }
+        },
+        "prerequisite": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}
