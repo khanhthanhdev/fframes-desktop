@@ -1,0 +1,87 @@
+{
+  "adapter": {
+    "agent_name": "@agentclientprotocol/codex-acp",
+    "agent_version": "2.1.1",
+    "arguments": [],
+    "auth_methods": [
+      "api-key",
+      "chat-gpt"
+    ],
+    "auth_route": "adapter-managed sign-in (no environment variables forwarded)",
+    "capabilities": {
+      "load_session": true,
+      "mcp_http": true,
+      "mcp_sse": false,
+      "mcp_stdio": true,
+      "prompt_audio": false,
+      "prompt_embedded_context": true,
+      "prompt_image": true,
+      "resume_session": true
+    },
+    "executable_sha256": "4b76310393d756a0f111687cd9df899720f36f7c59b1eb1d86429484034ff91b",
+    "fixture_detected": false,
+    "launch_identity": "f108da53d72fb359959c166b812825453e411cdc2e2fabdf401ceae189190708",
+    "platform": {
+      "machine": "x86_64",
+      "system": "Linux"
+    },
+    "probe_status": "Ready",
+    "protocol_version": 1,
+    "requested_executable": "index.js",
+    "resolved_executable_sha256": "4b76310393d756a0f111687cd9df899720f36f7c59b1eb1d86429484034ff91b"
+  },
+  "git": {
+    "branch": "main",
+    "commit": "7767402dee255707acef4e772c4704a5e4cae172",
+    "dirty_paths": 95,
+    "fingerprint_note": "digest of `git diff HEAD` plus untracked files, excluding desktop/qualification",
+    "tree_fingerprint_sha256": "73722b75d22e609f86d55226821561005ca873ff990ec90d0e02f34a9049cc58"
+  },
+  "harness": {
+    "arguments": [
+      "--checks",
+      "app_workflow",
+      "--adapter",
+      "<tmp>/fframes-auth-acp.9TGzHr/codex-current/node_modules/.bin/codex-acp",
+      "--ledger",
+      "qualification/m3-codex-auth-probe.json",
+      "--out",
+      "qualification/evidence/linux-m3-codex-auth-probe-2026-10-05",
+      "--replace"
+    ],
+    "auth_env_names": [],
+    "script": "desktop/scripts/qualify-m3-agent.py",
+    "started": "2026-10-05T01:51:53.887824Z"
+  },
+  "os": {
+    "cpu_count": 16,
+    "distribution": "Ubuntu 24.04.2 LTS",
+    "evidence_filesystem": {
+      "mount_point": "/",
+      "source": "/dev/vda2",
+      "type": "ext4"
+    },
+    "machine": "x86_64",
+    "memory_kib": 32862284,
+    "release": "6.8.0-142-generic",
+    "system": "Linux",
+    "version": "#142-Ubuntu SMP PREEMPT_DYNAMIC Wed Sep  2 14:24:27 UTC 2026"
+  },
+  "scope": "Linux software-only development run: scripted ACP peer, fake SDK tree/preview worker and the engine's real controller (plus an installed SDK only when --real-sdk-active is given). Authentic gates need a real authenticated adapter, physical devices or other operating systems and are recorded separately.",
+  "sdk": {
+    "note": "no installed SDK given: the fixture checks use a fake SDK tree; real-SDK tests were not run",
+    "provided": false
+  },
+  "toolchain": {
+    "acp_sdk_crate": "2.2.0",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "cargo_lock_sha256": "d9a63818ed10fdbdcf94b3515698d8b3f8cb2805ebd2ee5432b45f2ca6db3761",
+    "host": "x86_64-unknown-linux-gnu",
+    "pinned_channel": "1.98.1",
+    "python": "3.12.3",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "rustc_commit": "48a229ceaefd4985c50990b14116b6d856af0985",
+    "xdotool": "/usr/bin/xdotool",
+    "xvfb": "/usr/bin/Xvfb"
+  }
+}

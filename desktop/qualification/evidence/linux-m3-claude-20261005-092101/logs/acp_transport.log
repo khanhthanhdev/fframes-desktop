@@ -1,0 +1,62 @@
+$ cargo test --locked -p studio-agent-spike --test acp_v1 --test acp_v1_review
+# cwd: desktop   returncode: 0   timed_out: False   seconds: 6.274
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.25s
+     Running tests/acp_v1.rs (target/debug/deps/acp_v1-f3025382f604bc4a)
+
+running 30 tests
+test default_limits_match_the_stage_contract ... ok
+test mcp_server_construction_rejects_relative_commands_and_unsafe_strings ... ok
+test discovery_distinguishes_a_missing_executable_from_a_missing_runtime ... ok
+test cancelling_a_turn_closes_permissions_and_is_never_eligible ... ok
+test critical_event_overflow_fails_visibly_instead_of_dropping_events ... ok
+test dropping_the_driver_reaps_the_adapter ... ok
+test helpers_inside_the_task_group_are_reaped_and_group_cleanup_is_verified ... ok
+test events_after_completion_are_rejected_counted_and_never_recorded ... ok
+test configured_secret_values_never_reach_events_transcripts_stderr_or_failures ... ok
+test spawn_rejects_a_relative_or_missing_session_directory ... ok
+test configured_stdio_servers_reach_session_new_and_restore_requests_verbatim ... ok
+test authenticate_flow_requires_an_advertised_method_and_proves_auth_only_via_a_session ... ok
+test optional_filesystem_and_terminal_services_are_declined ... ok
+test permission_replies_are_correlated_and_duplicates_or_late_replies_are_rejected ... ok
+test mcp_env_values_never_reach_events_transcripts_stderr_failures_or_debug_output ... ok
+test stop_closes_pending_permissions_reaps_the_tree_and_rejects_later_replies ... ok
+test only_advertised_options_can_be_set_and_adapter_rejections_are_events ... ok
+test refusal_and_exhausted_limits_are_never_quiescence_eligible ... ok
+test v1_is_negotiated_explicitly_and_a_turn_completes_authoritatively ... ok
+test unsupported_or_empty_stdio_configuration_sends_an_empty_list_and_reports_the_capability ... ok
+test restoration_requires_a_negotiated_capability ... ok
+test malformed_truncated_and_oversized_messages_fail_the_driver_visibly ... ok
+test turns_reuse_one_session_and_reject_overlap ... ok
+test unsupported_version_and_unknown_stop_reason_are_rejected ... ok
+test mid_turn_protocol_failures_stop_the_tree_and_surface_one_failure_event ... ok
+test discovery_reports_distinct_executable_runtime_protocol_and_auth_states ... ok
+test a_non_reading_adapter_cannot_block_callers_and_stop_spam_coalesces_into_a_deadline_failure ... ok
+test a_setsid_escaped_helper_demotes_ownership_and_is_not_covered_by_group_cleanup ... ok
+test message_deltas_batch_and_the_transcript_stays_bounded ... ok
+test deadlines_fail_visibly_and_reap_the_owned_tree ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.45s
+
+     Running tests/acp_v1_review.rs (target/debug/deps/acp_v1_review-74bf589eb2854b5b)
+
+running 16 tests
+test sdk_wire_diagnostics_never_reach_a_host_subscriber_from_a_driver_connection ... ok
+test a_permission_reply_on_a_full_queue_returns_promptly_and_fails_asynchronously ... ok
+test two_in_flight_permission_requests_sharing_one_wire_id_are_a_protocol_violation ... ok
+test stop_wins_over_an_end_turn_already_in_flight ... ok
+test a_non_reading_adapter_flooding_requests_fails_the_driver_instead_of_blocking ... ok
+test a_permission_arriving_after_stop_is_cancelled_never_offered ... ok
+test secrets_in_wire_metadata_ids_and_options_never_reach_any_exported_surface ... ok
+test answered_requests_return_their_ingress_credit_and_sessions_never_stall ... ok
+test a_completion_that_cannot_be_queued_is_never_published_as_success ... ok
+test one_near_limit_delta_is_split_into_capped_events ... ok
+test host_visible_phases_for_unanswered_requests_are_stable ... ok
+test stderr_is_sanitized_incrementally_so_polling_between_fragments_never_sees_a_prefix ... ok
+test unanswered_option_requests_are_bounded_and_expire_visibly ... ok
+test a_grant_racing_stop_is_either_applied_before_it_or_cancelled_never_both ... ok
+test a_sustained_notification_flood_never_exceeds_the_ingress_window ... ok
+test shutdown_of_a_wedged_connection_uses_the_bounded_fallback_and_demotes_ownership ... ok
+
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.47s
+

@@ -1,0 +1,21 @@
+$ cargo test --locked -p fframes-studio --test x11_shell -- --ignored --nocapture
+# cwd: desktop   returncode: 101   timed_out: False   seconds: 31.269
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running tests/x11_shell.rs (target/debug/deps/x11_shell-c678feb03ae69c55)
+
+running 1 test
+
+thread 'the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it' (1906026) panicked at app/tests/x11_shell.rs:479:5:
+{"project_open":true,"sdk_ready_for_agent":true,"agent_workflow_open":true,"awaiting_preview":false,"displayed_revision":"793cef2a1d90","panel":{"attached":true,"revision":17,"phase":"Accepted","repair_used":0,"queue":0,"review_policy":"AutoApply","list_items":7,"view_rows":7,"view_bytes":1054,"retained_rows":7,"retained_bytes":1054,"live_rows":7,"older_loaded":0,"hidden_newer":0,"open_permissions":0,"owned_processes":2,"broker_grants":0,"handoff":"Displayed","undo":"unavailable"},"preview":{"status":"displayed","transport_epoch":14,"playing":false,"seek_serial":7,"position":3,"audio_output":false,"painted_frame":3,"presented_serial":7,"displayed":{"video_revision":"793cef2a1d90","audio_revision":"793cef2a1d90","audio_sha256":"e3cebf19026b","audio_samples":264000,"sample_rate":48000,"fps":30,"pcm_start_sample":4800,"pcm_samples":32768,"frame_index":3,"frame_serial":7,"total_frames":165,"position":3,"seek_serial":7}},"buttons":{"next-audio-output":[648.0,387.0,101.0,39.0],"play-pause":[496.0,387.0,50.0,39.0],"mute-audio":[556.0,387.0,82.0,39.0],"retry-audio-output":[759.0,387.0,97.0,39.0],"build-preview":[265.0,387.0,110.0,39.0],"close":[1156.0,22.0,107.0,39.0],"previous-frame":[356.0,436.0,119.0,39.0],"next-frame":[485.0,436.0,96.0,39.0],"no-audio-output":[265.0,436.0,81.0,39.0],"cancel-preview":[385.0,387.0,101.0,39.0]}}
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it ... FAILED
+
+failures:
+
+failures:
+    the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.81s
+
+error: test failed, to rerun pass `-p fframes-studio --test x11_shell`

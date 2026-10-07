@@ -1,0 +1,11 @@
+$ cargo test --locked -p fframes-studio --test m3_development_evidence authentic_adapter_probe -- --ignored --exact --nocapture
+# returncode: 0   timed_out: False   seconds: 3.519
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.35s
+     Running tests/m3_development_evidence.rs (target/debug/deps/m3_development_evidence-f5cff8d9b7a2d20b)
+
+running 1 test
+test authentic_adapter_probe ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 1 filtered out; finished in 3.05s
+

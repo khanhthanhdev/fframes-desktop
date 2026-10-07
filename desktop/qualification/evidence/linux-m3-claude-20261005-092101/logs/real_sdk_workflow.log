@@ -1,0 +1,26 @@
+$ cargo test --locked -p fframes-studio --test agent_workflow --test real_sdk_promotion -- --ignored real_sdk
+# cwd: desktop   returncode: 101   timed_out: False   seconds: 1.065
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/agent_workflow.rs (target/debug/deps/agent_workflow-75521abec54161a2)
+
+running 1 test
+test real_sdk_workflow_edits_applies_hands_off_undoes_and_closes_clean ... FAILED
+
+failures:
+
+---- real_sdk_workflow_edits_applies_hands_off_undoes_and_closes_clean stdout ----
+
+thread 'real_sdk_workflow_edits_applies_hands_off_undoes_and_closes_clean' (1806209) panicked at app/tests/agent_workflow.rs:3081:5:
+assertion `left == right` failed: Some(StructuredError { code: "validation_failed", title: "The edit failed validation", detail: "Compile failed (validation failed after the automatic repair attempt: Compile failed)", action: Some("The working copy and candidate were kept; start a new task or export the draft to inspect it."), phase: None, retained: true })
+  left: Failed
+ right: Accepted
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    real_sdk_workflow_edits_applies_hands_off_undoes_and_closes_clean
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 64 filtered out; finished in 0.56s
+
+error: test failed, to rerun pass `-p fframes-studio --test agent_workflow`

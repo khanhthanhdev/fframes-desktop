@@ -1,0 +1,58 @@
+{
+  "group": "resource_bounds",
+  "profile": "full",
+  "resident_rows": {
+    "observed_peak": 400,
+    "limit": 400,
+    "within": true
+  },
+  "resident_bytes": {
+    "observed_peak": 4149288,
+    "limit": 4194304,
+    "slack_one_row": 16480,
+    "within_limit": true,
+    "within_limit_plus_newest_row": true
+  },
+  "transcript": {
+    "rows_persisted_total": 1499,
+    "text_rows": 293,
+    "tool_card_rows": 1202,
+    "text_bytes_total": 4800000,
+    "rows_resident_final": 400,
+    "older_rows_paged_from_disk": true,
+    "page_size_limit": 100
+  },
+  "event_queue": {
+    "driver_queue_limit": 256,
+    "events_scripted": 1527,
+    "queue_overflow_failure": false,
+    "task_phase": "Accepted",
+    "note": "the driver exposes no queue-depth gauge; the bound is shown by the absence of an overflow failure while the scripted event count exceeds the limit"
+  },
+  "brief_queue_peak": 0,
+  "snapshots_published": 23,
+  "stream_seconds": 1.090665098,
+  "cleanup": {
+    "settle_ms": 0,
+    "ownership": {
+      "owned_processes": 0,
+      "workflow_owned_processes": 0,
+      "broker_grants": 0,
+      "tool_workers": 0,
+      "capability_files": 0,
+      "build_leased_entries": 0,
+      "build_in_flight": 0,
+      "build_cached_entries": 0,
+      "open_permissions": 0,
+      "resident_rows": 400
+    }
+  },
+  "not_measured": [
+    "playback/scrub concurrency (needs the native shell and a device)",
+    "GPU/layout cost of rendering rows"
+  ],
+  "schema_version": 1,
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "scope": "scripted ACP peer + fake preview worker + real controller; no provider, adapter, account, device or other OS"
+}

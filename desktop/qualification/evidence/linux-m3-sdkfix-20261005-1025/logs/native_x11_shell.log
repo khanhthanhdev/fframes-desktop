@@ -1,0 +1,11 @@
+$ cargo test --locked -p fframes-studio --test x11_shell -- --ignored --nocapture
+# cwd: desktop   returncode: 0   timed_out: False   seconds: 31.676
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.38s
+     Running tests/x11_shell.rs (target/debug/deps/x11_shell-c678feb03ae69c55)
+
+running 1 test
+test the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 31.20s
+

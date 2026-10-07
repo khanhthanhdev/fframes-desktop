@@ -1,0 +1,430 @@
+{
+  "artifact_leases": {
+    "evidence_directory": "<evidence>",
+    "removed_at_exit": [
+      "work_directory"
+    ],
+    "work_directory": "<work>"
+  },
+  "checks": [
+    {
+      "log": "logs/acp_transport.log",
+      "name": "acp_transport",
+      "reason": "46 tests passed in 2 targets",
+      "returncode": 0,
+      "seconds": 6.271,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 30,
+          "target": "tests/acp_v1.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 16,
+          "target": "tests/acp_v1_review.rs"
+        }
+      ]
+    },
+    {
+      "log": "logs/engine_transactions.log",
+      "name": "engine_transactions",
+      "reason": "123 tests passed in 7 targets",
+      "returncode": 0,
+      "seconds": 108.746,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 28,
+          "target": "tests/agent_task.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 30,
+          "target": "tests/candidate_validation.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 25,
+          "target": "tests/edit_transaction.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 3,
+          "target": "tests/promotion_install.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 12,
+          "target": "tests/review_history.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 14,
+          "target": "tests/review_publication.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 1,
+          "outcome": "ok",
+          "passed": 11,
+          "target": "tests/task_recovery.rs"
+        }
+      ]
+    },
+    {
+      "log": "logs/app_workflow.log",
+      "name": "app_workflow",
+      "reason": "64 tests passed in 1 targets",
+      "returncode": 0,
+      "seconds": 9.774,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 1,
+          "outcome": "ok",
+          "passed": 64,
+          "target": "tests/agent_workflow.rs"
+        }
+      ]
+    },
+    {
+      "log": "logs/app_tools_validation.log",
+      "name": "app_tools_validation",
+      "reason": "102 tests passed in 4 targets",
+      "returncode": 0,
+      "seconds": 13.544,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 39,
+          "target": "tests/agent_tools.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 23,
+          "target": "tests/build_sharing.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 26,
+          "target": "tests/candidate_runner.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 14,
+          "target": "tests/promotion_handoff.rs"
+        }
+      ]
+    },
+    {
+      "log": "logs/app_ui_workflow.log",
+      "name": "app_ui_workflow",
+      "reason": "11 tests passed in 1 targets",
+      "returncode": 0,
+      "seconds": 1.469,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 11,
+          "target": "tests/agent_workflow_ui.rs"
+        }
+      ]
+    },
+    {
+      "log": "logs/dev_evidence.log",
+      "name": "dev_evidence",
+      "reason": "1 tests passed in 1 targets",
+      "returncode": 0,
+      "seconds": 13.339,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 1,
+          "outcome": "ok",
+          "passed": 1,
+          "target": "tests/m3_development_evidence.rs"
+        }
+      ]
+    },
+    {
+      "log": "logs/real_sdk_workflow.log",
+      "name": "real_sdk_workflow",
+      "reason": "2 tests passed in 2 targets",
+      "returncode": 0,
+      "seconds": 58.523,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 1,
+          "target": "tests/agent_workflow.rs"
+        },
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 1,
+          "target": "tests/real_sdk_promotion.rs"
+        }
+      ]
+    },
+    {
+      "log": "logs/native_x11_shell.log",
+      "name": "native_x11_shell",
+      "reason": "1 tests passed in 1 targets",
+      "returncode": 0,
+      "seconds": 31.885,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 0,
+          "outcome": "ok",
+          "passed": 1,
+          "target": "tests/x11_shell.rs"
+        }
+      ]
+    }
+  ],
+  "endpoint_guard": {
+    "note": "no TCP port is bound; the endpoint was free and was released at exit",
+    "tcp_ports": [],
+    "unix_socket": "<tmp>/fframes-m3-qualify-0.sock"
+  },
+  "finished": "2026-10-05T00:49:25.564067Z",
+  "harness_id": "59470dfed027479b9b562cb2757e80c9",
+  "leftover_processes_stopped": [],
+  "measurement_files_path_normalized": [
+    "publication-primitive.json"
+  ],
+  "owned_processes": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "studio-agent-spike",
+        "--test",
+        "acp_v1",
+        "--test",
+        "acp_v1_review"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "acp_transport",
+      "leftovers": [],
+      "pid": 1653950,
+      "returncode": 0,
+      "seconds": 6.271,
+      "started": "2026-10-05T00:45:21.583594Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "studio-engine",
+        "--test",
+        "agent_task",
+        "--test",
+        "candidate_validation",
+        "--test",
+        "edit_transaction",
+        "--test",
+        "promotion_install",
+        "--test",
+        "review_history",
+        "--test",
+        "review_publication",
+        "--test",
+        "task_recovery"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "engine_transactions",
+      "leftovers": [],
+      "pid": 1654709,
+      "returncode": 0,
+      "seconds": 108.746,
+      "started": "2026-10-05T00:45:27.879795Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "fframes-studio",
+        "--test",
+        "agent_workflow"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "app_workflow",
+      "leftovers": [],
+      "pid": 1660467,
+      "returncode": 0,
+      "seconds": 9.774,
+      "started": "2026-10-05T00:47:16.649644Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "fframes-studio",
+        "--test",
+        "agent_tools",
+        "--test",
+        "build_sharing",
+        "--test",
+        "candidate_runner",
+        "--test",
+        "promotion_handoff"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "app_tools_validation",
+      "leftovers": [],
+      "pid": 1664188,
+      "returncode": 0,
+      "seconds": 13.544,
+      "started": "2026-10-05T00:47:26.447580Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "fframes-studio",
+        "--test",
+        "agent_workflow_ui"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "app_ui_workflow",
+      "leftovers": [],
+      "pid": 1666443,
+      "returncode": 0,
+      "seconds": 1.469,
+      "started": "2026-10-05T00:47:40.015682Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "fframes-studio",
+        "--test",
+        "m3_development_evidence",
+        "--",
+        "--nocapture"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "dev_evidence",
+      "leftovers": [],
+      "pid": 1666854,
+      "returncode": 0,
+      "seconds": 13.339,
+      "started": "2026-10-05T00:47:41.507371Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "fframes-studio",
+        "--test",
+        "agent_workflow",
+        "--test",
+        "real_sdk_promotion",
+        "--",
+        "--ignored",
+        "real_sdk"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "real_sdk_workflow",
+      "leftovers": [],
+      "pid": 1668248,
+      "returncode": 0,
+      "seconds": 58.523,
+      "started": "2026-10-05T00:47:54.870485Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "fframes-studio",
+        "--test",
+        "x11_shell",
+        "--",
+        "--ignored",
+        "--nocapture"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "native_x11_shell",
+      "leftovers": [],
+      "pid": 1680640,
+      "returncode": 0,
+      "seconds": 31.885,
+      "started": "2026-10-05T00:48:53.419026Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    }
+  ],
+  "owned_processes_alive_at_end": [],
+  "total_seconds": 243.981,
+  "unowned_group_members_left_alone": []
+}

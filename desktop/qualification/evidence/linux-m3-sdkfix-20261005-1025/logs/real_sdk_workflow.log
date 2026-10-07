@@ -1,0 +1,18 @@
+$ cargo test --locked -p fframes-studio --test agent_workflow --test real_sdk_promotion -- --ignored real_sdk
+# cwd: desktop   returncode: 0   timed_out: False   seconds: 57.951
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/agent_workflow.rs (target/debug/deps/agent_workflow-75521abec54161a2)
+
+running 1 test
+test real_sdk_workflow_edits_applies_hands_off_undoes_and_closes_clean ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 64 filtered out; finished in 26.92s
+
+     Running tests/real_sdk_promotion.rs (target/debug/deps/real_sdk_promotion-065702cc41f5d68a)
+
+running 1 test
+test real_sdk_promotion_installs_matching_video_and_audio_and_a_failed_handoff_keeps_the_old_preview ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 30.51s
+

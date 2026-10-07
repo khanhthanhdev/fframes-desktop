@@ -1,0 +1,90 @@
+{
+  "adapter": {
+    "agent_name": "@agentclientprotocol/claude-agent-acp",
+    "agent_version": "0.85.1",
+    "arguments": [],
+    "auth_methods": [],
+    "auth_route": "adapter-managed sign-in (no environment variables forwarded)",
+    "capabilities": {
+      "load_session": true,
+      "mcp_http": true,
+      "mcp_sse": true,
+      "mcp_stdio": true,
+      "prompt_audio": false,
+      "prompt_embedded_context": true,
+      "prompt_image": true,
+      "resume_session": true
+    },
+    "executable_sha256": "4a1f0fff5cdd26b8c9adb5f9b3d314640e06f876cfff97cac437159b4551ec27",
+    "fixture_detected": false,
+    "launch_identity": "fb2e40c28192bc381dc372166813330c264df0e75e55526d8a208063edfe3366",
+    "platform": {
+      "machine": "x86_64",
+      "system": "Linux"
+    },
+    "probe_status": "Ready",
+    "protocol_version": 1,
+    "requested_executable": "index.js",
+    "resolved_executable_sha256": "4a1f0fff5cdd26b8c9adb5f9b3d314640e06f876cfff97cac437159b4551ec27"
+  },
+  "git": {
+    "branch": "main",
+    "commit": "7767402dee255707acef4e772c4704a5e4cae172",
+    "dirty_paths": 96,
+    "fingerprint_note": "digest of `git diff HEAD` plus untracked files, excluding desktop/qualification",
+    "tree_fingerprint_sha256": "847add7f40d2862ea24c5bc3b89dcdef413b51d15e4c5e6fc23a7bd11c89c2c2"
+  },
+  "harness": {
+    "arguments": [
+      "--ledger",
+      "qualification/m3-results.json",
+      "--out",
+      "qualification/evidence/linux-m3-sdkfix-20261005-1016",
+      "--real-sdk-active",
+      "<sdk-active>",
+      "--adapter",
+      "<tmp><tmp>.eY4M3CR1KV/node_modules/.bin/claude-agent-acp"
+    ],
+    "auth_env_names": [],
+    "script": "desktop/scripts/qualify-m3-agent.py",
+    "started": "2026-10-05T03:22:24.647651Z"
+  },
+  "os": {
+    "cpu_count": 16,
+    "distribution": "Ubuntu 24.04.2 LTS",
+    "evidence_filesystem": {
+      "mount_point": "/",
+      "source": "/dev/vda2",
+      "type": "ext4"
+    },
+    "machine": "x86_64",
+    "memory_kib": 32862284,
+    "release": "6.8.0-142-generic",
+    "system": "Linux",
+    "version": "#142-Ubuntu SMP PREEMPT_DYNAMIC Wed Sep  2 14:24:27 UTC 2026"
+  },
+  "scope": "Linux software-only development run: scripted ACP peer, fake SDK tree/preview worker and the engine's real controller (plus an installed SDK only when --real-sdk-active is given). Authentic gates need a real authenticated adapter, physical devices or other operating systems and are recorded separately.",
+  "sdk": {
+    "cargo_fframes_version": "1.1.0",
+    "compatibility_sha256": "a7f79b086922a5100289a72cb2f630d6fe87ac0149d4dc7c1a0a672122b16425",
+    "directory_name": "active",
+    "ffmpeg_tag": "9.0.0",
+    "fframes_version": "1.1.0",
+    "provided": true,
+    "rust_toolchain": "1.98.1",
+    "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+    "target_triple": "x86_64-unknown-linux-gnu"
+  },
+  "toolchain": {
+    "acp_sdk_crate": "2.2.0",
+    "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+    "cargo_lock_sha256": "d9a63818ed10fdbdcf94b3515698d8b3f8cb2805ebd2ee5432b45f2ca6db3761",
+    "host": "x86_64-unknown-linux-gnu",
+    "pinned_channel": "1.98.1",
+    "python": "3.12.3",
+    "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+    "rustc_commit": "48a229ceaefd4985c50990b14116b6d856af0985",
+    "xdotool": "/usr/bin/xdotool",
+    "xvfb": "/usr/bin/Xvfb"
+  }
+}

@@ -1,0 +1,149 @@
+{
+  "artifact_leases": {
+    "evidence_directory": "<evidence>",
+    "removed_at_exit": [
+      "work_directory"
+    ],
+    "work_directory": "<work>"
+  },
+  "checks": [
+    {
+      "log": null,
+      "name": "acp_transport",
+      "reason": "check `acp_transport` was not selected in this invocation (--checks)",
+      "returncode": null,
+      "seconds": null,
+      "status": "not_run",
+      "test_results": null
+    },
+    {
+      "log": null,
+      "name": "engine_transactions",
+      "reason": "check `engine_transactions` was not selected in this invocation (--checks)",
+      "returncode": null,
+      "seconds": null,
+      "status": "not_run",
+      "test_results": null
+    },
+    {
+      "log": "logs/app_workflow.log",
+      "name": "app_workflow",
+      "reason": "64 tests passed in 1 targets",
+      "returncode": 0,
+      "seconds": 9.642,
+      "status": "pass",
+      "test_results": [
+        {
+          "failed": 0,
+          "ignored": 1,
+          "outcome": "ok",
+          "passed": 64,
+          "target": "tests/agent_workflow.rs"
+        }
+      ]
+    },
+    {
+      "log": null,
+      "name": "app_tools_validation",
+      "reason": "check `app_tools_validation` was not selected in this invocation (--checks)",
+      "returncode": null,
+      "seconds": null,
+      "status": "not_run",
+      "test_results": null
+    },
+    {
+      "log": null,
+      "name": "app_ui_workflow",
+      "reason": "check `app_ui_workflow` was not selected in this invocation (--checks)",
+      "returncode": null,
+      "seconds": null,
+      "status": "not_run",
+      "test_results": null
+    },
+    {
+      "log": null,
+      "name": "dev_evidence",
+      "reason": "check `dev_evidence` was not selected in this invocation (--checks)",
+      "returncode": null,
+      "seconds": null,
+      "status": "not_run",
+      "test_results": null
+    },
+    {
+      "log": null,
+      "name": "real_sdk_workflow",
+      "reason": "check `real_sdk_workflow` was not selected in this invocation (--checks)",
+      "returncode": null,
+      "seconds": null,
+      "status": "not_run",
+      "test_results": null
+    },
+    {
+      "log": null,
+      "name": "native_x11_shell",
+      "reason": "check `native_x11_shell` was not selected in this invocation (--checks)",
+      "returncode": null,
+      "seconds": null,
+      "status": "not_run",
+      "test_results": null
+    }
+  ],
+  "endpoint_guard": {
+    "note": "no TCP port is bound; the endpoint was free and was released at exit",
+    "tcp_ports": [],
+    "unix_socket": "<tmp>/fframes-m3-qualify-0.sock"
+  },
+  "finished": "2026-10-05T01:50:59.635587Z",
+  "harness_id": "32c81fbfbbf445ebbc672e25e89f1435",
+  "leftover_processes_stopped": [],
+  "measurement_files_path_normalized": [],
+  "owned_processes": [
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "fframes-studio",
+        "--test",
+        "agent_workflow"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "app_workflow",
+      "leftovers": [],
+      "pid": 1759828,
+      "returncode": 0,
+      "seconds": 9.642,
+      "started": "2026-10-05T01:50:46.186543Z",
+      "timed_out": false,
+      "work_directory_leftovers": []
+    },
+    {
+      "argv": [
+        "cargo",
+        "test",
+        "--locked",
+        "-p",
+        "fframes-studio",
+        "--test",
+        "m3_development_evidence",
+        "authentic_adapter_probe",
+        "--",
+        "--ignored",
+        "--exact",
+        "--nocapture"
+      ],
+      "cwd": "<repo>/desktop",
+      "label": "adapter_probe",
+      "leftovers": [],
+      "pid": 1763572,
+      "returncode": 0,
+      "seconds": 3.519,
+      "started": "2026-10-05T01:50:55.853336Z",
+      "timed_out": false
+    }
+  ],
+  "owned_processes_alive_at_end": [],
+  "total_seconds": 13.449,
+  "unowned_group_members_left_alone": []
+}

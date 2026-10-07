@@ -1,0 +1,180 @@
+$ cargo test --locked -p studio-engine --test agent_task --test candidate_validation --test edit_transaction --test promotion_install --test review_history --test review_publication --test task_recovery
+# cwd: desktop   returncode: 0   timed_out: False   seconds: 113.555
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running tests/agent_task.rs (target/debug/deps/agent_task-da154595301f0d27)
+
+running 28 tests
+test capture_needs_a_writer_and_caller_ownership_can_only_demote ... ok
+test dirty_imported_source_is_the_task_base_not_the_older_checkpoint ... ok
+test context_lists_existing_assets_and_instruction_files ... ok
+test capture_tickets_are_single_use_and_die_with_every_gate_event ... ok
+test an_escape_seen_before_quiescence_blocks_capture_and_stays_demoted ... ok
+test a_draft_refresh_is_refused_while_a_provider_session_is_live ... ok
+test an_active_marker_left_by_a_crashed_session_is_unsafe_after_restart ... ok
+test a_qualified_verified_acknowledgement_clears_an_unsafe_marker ... ok
+test closing_or_dropping_interrupts_the_active_task_and_reaps_its_scope ... ok
+test a_live_writer_blocks_capture_whatever_the_caller_claims ... ok
+test empty_and_oversized_briefs_are_rejected_before_any_state_changes ... ok
+test an_escaped_writer_keeps_the_draft_unsafe_after_finish ... ok
+test an_escaped_writer_keeps_the_draft_unsafe_after_source_invalidation ... ok
+test an_escaped_writer_keeps_the_draft_unsafe_after_close ... ok
+test a_stale_finish_cannot_disturb_the_successor_or_its_scope ... ok
+test an_accepted_task_draft_is_replaced_without_archiving ... ok
+test driver_reported_escapes_demote_even_when_the_scope_looks_clean ... ok
+test build_and_checkpoint_jobs_keep_their_semantics_while_a_task_is_active ... ok
+test protocol_completion_alone_never_opens_the_gate ... ok
+test invalid_source_retains_draft_and_checkpoint_and_edit_back_never_resurrects_the_task ... ok
+test processes_in_the_scope_without_a_registered_writer_keep_the_draft_unsafe ... ok
+test only_one_task_holds_the_writer_lease_and_finishing_releases_it ... ok
+test repair_starts_a_fresh_scope_and_a_fresh_gate ... ok
+test repeat_tasks_reuse_the_stable_draft_after_archiving_the_retained_one ... ok
+test identities_from_an_earlier_generation_or_open_session_are_stale ... ok
+test the_previous_scope_cannot_spawn_between_the_emptiness_check_and_the_refresh ... ok
+test validation_failure_spends_the_single_repair_then_fails_and_frees_the_draft ... ok
+test unqualified_or_unverified_writers_keep_the_draft_unrefreshable ... ok
+
+test result: ok. 28 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.86s
+
+     Running tests/candidate_validation.rs (target/debug/deps/candidate_validation-e82240d8e3138c78)
+
+running 30 tests
+test a_report_is_never_an_acceptance_proof_when_read_back ... ok
+test broadening_needs_one_existing_non_instruction_file_to_change_and_unknown_kinds_widen ... ok
+test coverage_has_boundaries_playhead_and_at_most_24_evenly_spaced_frames ... ok
+test a_build_that_does_not_name_the_candidate_proves_nothing ... ok
+test environment_failures_never_spend_the_repair_and_a_missing_probe_never_passes ... ok
+test capture_names_identities_hashes_and_changed_paths_and_registers_with_the_task ... ok
+test frames_must_carry_the_identity_of_the_candidate_timeline ... ok
+test scan_pcm_reports_activity_clipping_and_non_finite_samples ... ok
+test audio_only_edit_with_unchanged_video_passes_and_checks_the_mix ... ok
+test invalid_drafts_and_foreign_project_ids_are_rejected_before_validation ... ok
+test targeted_coverage_widens_when_scenes_cannot_establish_it ... ok
+test audio_checks_cover_revision_geometry_duration_finiteness_and_placement ... ok
+test compile_failure_routes_to_one_repair_then_retains_with_bounded_context ... ok
+test clipping_and_silence_are_visible_diagnostics_not_failures ... ok
+test a_critical_inspection_fact_survives_the_bounded_display_buffer ... ok
+test videos_longer_than_the_broadened_bound_report_partial_coverage_visibly ... ok
+test passing_report_names_every_identity_and_needs_no_pixel_or_title_change ... ok
+test incomplete_required_coverage_is_retained_not_accepted ... ok
+test shared_source_deletions_and_truncated_changes_broaden_to_the_full_video_in_bounded_batches ... ok
+test a_declared_shader_capability_gap_is_a_visible_warning_recorded_in_the_report ... ok
+test unchanged_candidate_has_the_base_revision_and_no_changes ... ok
+test a_draft_that_changes_during_capture_fails_at_either_verification ... ok
+test restored_revision_is_a_private_immutable_tree_removed_on_drop ... ok
+test inspection_errors_truncation_and_unsupported_shaders ... ok
+test the_controller_captures_only_with_a_current_ticket_and_routes_validation_reports ... ok
+test unverifiable_track_placement_is_never_passed ... ok
+test stop_between_worker_requests_is_an_environment_failure_that_spends_no_repair ... ok
+test accepted_environment_and_exhausted_reports_end_in_the_right_states ... ok
+test render_failures_timeline_problems_and_wrong_revision_fail_closed ... ok
+test fragmented_pcm_cannot_hide_audio_outside_the_track_windows ... ok
+
+test result: ok. 30 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.61s
+
+     Running tests/edit_transaction.rs (target/debug/deps/edit_transaction-3d642d4e42a4a75a)
+
+running 25 tests
+test a_source_edit_after_launch_refuses_with_the_candidate_preserved ... ok
+test an_object_that_decays_after_planning_rolls_back_cleanly ... ok
+test a_write_through_an_open_descriptor_after_displacement_is_retained ... ok
+test an_in_place_write_between_verification_and_displacement_is_retained ... ok
+test an_editor_save_by_rename_during_displacement_keeps_the_new_file_in_place ... ok
+test a_late_descriptor_write_before_the_commit_is_caught_by_the_final_slot_check ... ok
+test a_journal_append_failure_suspends_mutation_and_the_next_open_recovers ... ok
+test a_destination_recreated_between_displacement_and_publication_is_never_overwritten ... ok
+test an_external_edit_between_preparing_and_publishing_undo_refuses ... ok
+test a_blocked_gate_refuses_every_publication_and_keeps_the_candidate_ready ... ok
+test apply_publishes_a_multi_file_set_as_a_validated_task_revision ... ok
+test a_filesystem_with_only_the_link_pair_blocks_apply_and_undo_without_touching_files ... ok
+test conflicts_block_new_mutation_until_resolved_and_survive_reopen ... ok
+test the_publication_primitive_is_proved_on_this_filesystem_before_apply_is_enabled ... ok
+test a_task_history_change_after_launch_fences_the_task ... ok
+test directory_swaps_and_links_halt_without_following ... ok
+test a_nonpassing_or_foreign_report_never_authorizes_publication ... ok
+test dirty_imported_bytes_are_the_task_base_and_the_old_checkpoint_is_never_restored ... ok
+test a_declined_publication_entry_changes_nothing_for_apply_and_undo ... ok
+test undo_conflicts_on_a_touched_file_and_changes_nothing ... ok
+test corrupt_or_missing_candidate_objects_fail_before_any_byte_changes ... ok
+test review_policy_defaults_to_automatic_and_manual_review_waits_for_an_explicit_apply ... ok
+test disk_full_while_staging_rolls_back_with_no_trace ... ok
+test links_and_special_files_at_a_destination_are_refused_at_planning ... ok
+test undo_reverses_only_its_own_files_and_keeps_unrelated_external_edits ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.32s
+
+     Running tests/promotion_install.rs (target/debug/deps/promotion_install-25da0cffbbc793ce)
+
+running 3 tests
+test a_staged_candidate_installs_only_under_its_promotion_authorization ... ok
+test a_preview_tagged_with_the_task_base_or_a_stale_playhead_never_installs ... ok
+test any_later_source_change_revokes_the_authorization ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.35s
+
+     Running tests/review_history.rs (target/debug/deps/review_history-eae603613ba91e18)
+
+running 12 tests
+test a_checkpoint_taken_while_a_candidate_validates_fences_apply ... ok
+test a_stale_sqlite_projection_alone_stays_a_note ... ok
+test a_draft_marker_failure_after_the_commit_still_returns_the_committed_promotion ... ok
+test a_lifecycle_failure_during_apply_keeps_the_acceptance_and_suspends_what_follows ... ok
+test an_unsupported_task_journal_changes_no_history_file_even_with_an_old_database_and_a_torn_tail ... ok
+test a_failed_lifecycle_append_suspends_every_source_changing_entry_point ... ok
+test an_old_pending_job_intent_never_hides_a_later_task_commit ... ok
+test a_damaged_interior_lifecycle_journal_is_refused_before_replay_touches_anything ... ok
+test a_duplicate_project_id_is_refused_before_anything_is_replayed_or_written ... ok
+test a_checkpoint_between_preparing_and_publishing_undo_fences_the_undo ... ok
+test an_undo_prepared_in_a_closed_session_or_another_controller_never_publishes ... ok
+test an_aggregate_history_beyond_one_mebibyte_still_opens_undoes_and_reopens ... ok
+
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 39.10s
+
+     Running tests/review_publication.rs (target/debug/deps/review_publication-371ea6851cbb2557)
+
+running 14 tests
+test a_directory_holding_anything_the_revision_did_not_delete_is_never_emptied_by_force ... ok
+test a_file_becomes_a_directory_and_back_exactly ... ok
+test a_directory_becomes_a_file_and_back ... ok
+test a_content_only_replacement_keeps_the_exact_permission_bits ... ok
+test undo_restores_the_exact_bits_the_original_had_and_refuses_after_a_later_chmod ... ok
+test the_stage_inode_is_journalled_before_any_byte_is_written ... ok
+test a_replaced_stage_inode_is_never_collected_even_when_its_bytes_look_right ... ok
+test a_verified_prefix_of_our_own_stage_is_collected_on_recovery ... ok
+test unrelated_shorter_bytes_in_the_stage_name_are_retained_as_a_conflict ... ok
+test a_root_swapped_for_a_link_during_publication_is_a_conflict_never_a_commit ... ok
+test every_boundary_of_a_file_to_directory_apply_converges ... ok
+test every_boundary_of_a_directory_to_file_apply_converges_and_restores_the_directory_mode ... ok
+test every_boundary_of_the_undo_of_a_file_to_directory_edit_converges ... ok
+test every_boundary_of_the_undo_of_a_directory_to_file_edit_converges ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 40.72s
+
+     Running tests/task_recovery.rs (target/debug/deps/task_recovery-86ef6c9bdf687d10)
+
+running 12 tests
+test kill_child ... ignored, spawned by real_process_death_at_publication_boundaries
+
+running 1 test
+test an_existing_version_one_installation_migrates_with_a_backup_and_keeps_its_history ... ok
+test the_boundary_sequence_covers_every_durable_step ... ok
+test a_newer_task_journal_or_database_opens_nothing_and_changes_nothing ... ok
+
+running 1 test
+test journal_tail_truncation_and_interior_corruption_are_handled_without_data_loss ... ok
+test a_recreated_destination_during_a_crashed_displacement_halts_as_a_conflict ... ok
+test recovery_never_overwrites_bytes_an_editor_wrote_while_the_app_was_down ... ok
+
+running 1 test
+test the_projection_is_rebuilt_from_the_journal_when_lost_or_stale ... ok
+
+running 1 test
+
+running 1 test
+test real_process_death_at_publication_boundaries ... ok
+test a_process_death_during_recovery_itself_still_converges ... ok
+test a_process_death_at_every_durable_boundary_recovers_without_loss ... ok
+test an_io_failure_at_every_durable_boundary_ends_cleanly_or_suspends_for_recovery ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 29.28s
+

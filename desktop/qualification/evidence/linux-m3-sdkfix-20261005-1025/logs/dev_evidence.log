@@ -1,0 +1,12 @@
+$ cargo test --locked -p fframes-studio --test m3_development_evidence -- --nocapture
+# cwd: desktop   returncode: 0   timed_out: False   seconds: 13.886
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running tests/m3_development_evidence.rs (target/debug/deps/m3_development_evidence-f5cff8d9b7a2d20b)
+
+running 2 tests
+test authentic_adapter_probe ... ignored, authentic: needs a real ACP adapter (FFRAMES_M3_ADAPTER) and its account
+test m3_development_evidence ... ok
+
+test result: ok. 1 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 13.40s
+

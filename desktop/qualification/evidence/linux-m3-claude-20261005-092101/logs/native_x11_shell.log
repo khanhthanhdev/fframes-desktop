@@ -1,0 +1,21 @@
+$ cargo test --locked -p fframes-studio --test x11_shell -- --ignored --nocapture
+# cwd: desktop   returncode: 101   timed_out: False   seconds: 0.465
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.36s
+     Running tests/x11_shell.rs (target/debug/deps/x11_shell-c678feb03ae69c55)
+
+running 1 test
+
+thread 'the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it' (1806255) panicked at app/tests/x11_shell.rs:247:5:
+SDK_ACTIVE layout
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+test the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it ... FAILED
+
+failures:
+
+failures:
+    the_native_shell_runs_a_task_adopts_the_staged_preview_and_undoes_it
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+error: test failed, to rerun pass `-p fframes-studio --test x11_shell`

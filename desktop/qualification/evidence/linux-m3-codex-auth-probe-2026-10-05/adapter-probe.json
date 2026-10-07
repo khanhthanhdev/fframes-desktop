@@ -1,0 +1,80 @@
+{
+  "adapter": {
+    "agent_name": "@agentclientprotocol/codex-acp",
+    "launch_identity": "f108da53d72fb359959c166b812825453e411cdc2e2fabdf401ceae189190708",
+    "protocol_version": 1
+  },
+  "adapter_arg_count": 0,
+  "auth_env_names": [],
+  "cleanup": {
+    "owned_processes_after": 0
+  },
+  "decision": {
+    "fixture_detected": false,
+    "gate_status": "pass",
+    "probe_status": "Ready"
+  },
+  "edit_attempted": false,
+  "evidence_kind": "authentic",
+  "fixture_only": false,
+  "gate": "auth_adapter_probe_v1",
+  "group": "adapter_probe",
+  "measurements": {
+    "auth_status": "ready",
+    "capabilities": {
+      "load_session": true,
+      "mcp_http": true,
+      "mcp_sse": false,
+      "mcp_stdio": true,
+      "prompt_audio": false,
+      "prompt_embedded_context": true,
+      "prompt_image": true,
+      "resume_session": true
+    }
+  },
+  "platform": {
+    "machine": "x86_64",
+    "system": "Linux"
+  },
+  "probe": {
+    "fixture_detected": false,
+    "protocol_version": 1,
+    "status": "Ready"
+  },
+  "probe_seconds": 1.01435137,
+  "prompt_sent": false,
+  "report": {
+    "executable": "<tmp>/fframes-auth-acp.9TGzHr/codex-current/node_modules/@agentclientprotocol/codex-acp/dist/index.js",
+    "initialized": {
+      "agent_name": "@agentclientprotocol/codex-acp",
+      "agent_version": "2.1.1",
+      "auth_methods": [
+        "api-key",
+        "chat-gpt"
+      ],
+      "authenticated": false,
+      "capabilities": {
+        "load_session": true,
+        "mcp_http": true,
+        "mcp_sse": false,
+        "mcp_stdio": true,
+        "prompt_audio": false,
+        "prompt_embedded_context": true,
+        "prompt_image": true,
+        "resume_session": true
+      },
+      "protocol_version": 1
+    },
+    "status": {
+      "Ready": {
+        "agent": "@agentclientprotocol/codex-acp",
+        "version": "2.1.1"
+      }
+    }
+  },
+  "requested_executable": "<tmp>/fframes-auth-acp.9TGzHr/codex-current/node_modules/@agentclientprotocol/codex-acp/dist/index.js",
+  "resolved_executable_sha256": "4b76310393d756a0f111687cd9df899720f36f7c59b1eb1d86429484034ff91b",
+  "schema": "m3-authentic/1",
+  "schema_version": 1,
+  "writer_ownership_claimed": "unknown"
+}

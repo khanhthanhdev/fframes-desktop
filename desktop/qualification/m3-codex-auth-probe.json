@@ -1,0 +1,397 @@
+{
+  "kind": "m3",
+  "schema_version": 1,
+  "timestamp": "2026-10-05T01:51:54.000963Z",
+  "environment": {
+    "scope": "Linux software-only development run: scripted ACP peer, fake SDK tree/preview worker and the engine's real controller (plus an installed SDK only when --real-sdk-active is given). Authentic gates need a real authenticated adapter, physical devices or other operating systems and are recorded separately.",
+    "os": {
+      "system": "Linux",
+      "release": "6.8.0-142-generic",
+      "version": "#142-Ubuntu SMP PREEMPT_DYNAMIC Wed Sep  2 14:24:27 UTC 2026",
+      "machine": "x86_64",
+      "distribution": "Ubuntu 24.04.2 LTS",
+      "cpu_count": 16,
+      "memory_kib": 32862284,
+      "evidence_filesystem": {
+        "mount_point": "/",
+        "type": "ext4",
+        "source": "/dev/vda2"
+      }
+    },
+    "toolchain": {
+      "rustc": "rustc 1.98.1 (48a229cea 2026-09-01)",
+      "rustc_commit": "48a229ceaefd4985c50990b14116b6d856af0985",
+      "host": "x86_64-unknown-linux-gnu",
+      "cargo": "cargo 1.98.1 (797e8a9bc 2026-08-05)",
+      "pinned_channel": "1.98.1",
+      "xvfb": "/usr/bin/Xvfb",
+      "xdotool": "/usr/bin/xdotool",
+      "python": "3.12.3",
+      "acp_sdk_crate": "2.2.0",
+      "cargo_lock_sha256": "d9a63818ed10fdbdcf94b3515698d8b3f8cb2805ebd2ee5432b45f2ca6db3761"
+    },
+    "git": {
+      "commit": "7767402dee255707acef4e772c4704a5e4cae172",
+      "branch": "main",
+      "dirty_paths": 95,
+      "tree_fingerprint_sha256": "73722b75d22e609f86d55226821561005ca873ff990ec90d0e02f34a9049cc58",
+      "fingerprint_note": "digest of `git diff HEAD` plus untracked files, excluding desktop/qualification"
+    },
+    "sdk": {
+      "provided": false,
+      "note": "no installed SDK given: the fixture checks use a fake SDK tree; real-SDK tests were not run"
+    },
+    "adapter": {
+      "requested_executable": "index.js",
+      "executable_sha256": "4b76310393d756a0f111687cd9df899720f36f7c59b1eb1d86429484034ff91b",
+      "launch_identity": "f108da53d72fb359959c166b812825453e411cdc2e2fabdf401ceae189190708",
+      "platform": {
+        "system": "Linux",
+        "machine": "x86_64"
+      },
+      "arguments": [],
+      "resolved_executable_sha256": "4b76310393d756a0f111687cd9df899720f36f7c59b1eb1d86429484034ff91b",
+      "agent_name": "@agentclientprotocol/codex-acp",
+      "agent_version": "2.1.1",
+      "protocol_version": 1,
+      "auth_methods": [
+        "api-key",
+        "chat-gpt"
+      ],
+      "auth_route": "adapter-managed sign-in (no environment variables forwarded)",
+      "capabilities": {
+        "load_session": true,
+        "resume_session": true,
+        "prompt_image": true,
+        "prompt_audio": false,
+        "prompt_embedded_context": true,
+        "mcp_http": true,
+        "mcp_sse": false,
+        "mcp_stdio": true
+      },
+      "probe_status": "Ready",
+      "fixture_detected": false
+    },
+    "harness": {
+      "script": "desktop/scripts/qualify-m3-agent.py",
+      "arguments": [
+        "--checks",
+        "app_workflow",
+        "--adapter",
+        "<tmp>/fframes-auth-acp.9TGzHr/codex-current/node_modules/.bin/codex-acp",
+        "--ledger",
+        "qualification/m3-codex-auth-probe.json",
+        "--out",
+        "qualification/evidence/linux-m3-codex-auth-probe-2026-10-05",
+        "--replace"
+      ],
+      "auth_env_names": [],
+      "started": "2026-10-05T01:51:53.887824Z"
+    }
+  },
+  "gates": {
+    "dev_acp_transport": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "ACP v1 driver tests (acp_v1, acp_v1_review) pass against the scripted peer: negotiation, streaming, permissions, cancellation, bounds, redaction.",
+      "notes": "check `acp_transport` was not selected in this invocation (--checks)",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `acp_transport` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_engine_transactions": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "Engine agent-task, candidate-validation, edit-transaction, promotion, history and crash-recovery suites pass.",
+      "notes": "check `engine_transactions` was not selected in this invocation (--checks)",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `engine_transactions` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_workflow_fixture": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "The AgentWorkflow integration suite passes against the scripted peer, fake preview worker and real controller.",
+      "notes": "64 tests passed in 1 targets",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/logs/app_workflow.log",
+          "sha256": "90b25e62bbb490797b36cbda388ef621644559c996960020f5d9c6abba88b1a4"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ]
+    },
+    "dev_tools_and_validation": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "Project tool broker/CLI/MCP, shared build service, candidate runner and preview handoff suites pass.",
+      "notes": "check `app_tools_validation` was not selected in this invocation (--checks)",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `app_tools_validation` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_native_ui_workflow": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "The native conversation panel / shell workflow test target (agent_workflow_ui: controls, permission and clarification cards, paging inside the resident limits, UI preview-handoff sink and acknowledgement) passes against the scripted peer.",
+      "notes": "check `app_ui_workflow` was not selected in this invocation (--checks)",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `app_ui_workflow` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_native_x11_shell": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "The production GPUI shell on an owned Xvfb (scripted peer, real SDK, software rendering) sends a prompt through native input after a baseline preview stepped to a non-zero playhead; the media-changing edit is adopted via adopt_promotion and displayed with matching video/audio revision and a changed audio digest, a fresh transport epoch, the playhead position/frame/PCM window retained and the awaiting label cleared; Undo restores the original audio through another matching hand-off under yet another epoch. Writer containment is the explicit test-only injection, not a qualification. NOT a provider, physical-display, physical-audio or IME qualification.",
+      "notes": "check `native_x11_shell` was not selected in this invocation (--checks)",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `native_x11_shell` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_resource_bounds": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "Under a long streamed transcript resident rows <= 400 and bytes <= 4 MiB (+ the newest row), older rows are paged, the 256-event queue never overflows and nothing is owned after close.",
+      "notes": "the measurement test did not pass (check `dev_evidence` was not selected in this invocation (--checks))",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `dev_evidence` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_compiler_count": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "The shared BuildService starts exactly one compile per equal build key (UI/tool/validation subscribers), one per distinct key and per accepted edit.",
+      "notes": "the measurement test did not pass (check `dev_evidence` was not selected in this invocation (--checks))",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `dev_evidence` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_cleanup_cycles": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "At least 20 accepted edits and 20 failed/cancelled tasks leave zero owned processes, broker capabilities, build leases and materializations, checked after every cycle and after close.",
+      "notes": "the measurement test did not pass (check `dev_evidence` was not selected in this invocation (--checks))",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `dev_evidence` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_cli_mcp_parity": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "studio-tools and studio-mcp return identical project_context/timeline/inspect/render_frame results against the same broker capability.",
+      "notes": "the measurement test did not pass (check `dev_evidence` was not selected in this invocation (--checks))",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `dev_evidence` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_publication_primitive": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "The Linux Apply gate selects atomic renameat2(RENAME_NOREPLACE) on the project filesystem and refuses a link-only filesystem.",
+      "notes": "the measurement test did not pass (check `dev_evidence` was not selected in this invocation (--checks))",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `dev_evidence` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "dev_real_sdk_workflow": {
+      "kind": "development",
+      "status": "not_run",
+      "criteria": "The ignored real-SDK workflow/promotion tests pass with a real Cargo compile and real preview worker (scripted agent).",
+      "notes": "check `real_sdk_workflow` was not selected in this invocation (--checks)",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/environment.json",
+          "sha256": "a08bec698265b113b47ec84aa881731e61d3b2f3853bd5411d3a9849d12fde81"
+        },
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/harness-run.json",
+          "sha256": "1e8cdf63781d2183b021591cf04e337f26e5e48d57a0d832064af852055c1ea7"
+        }
+      ],
+      "prerequisite": "Include `real_sdk_workflow` in --checks (or omit --checks) and rerun the harness; this invocation did not select it."
+    },
+    "auth_adapter_probe_v1": {
+      "kind": "authentic",
+      "status": "pass",
+      "criteria": "A REAL ACP adapter initializes, negotiates protocol v1, reports Ready auth through a scratch session (no prompt) and its capabilities are recorded.",
+      "notes": "@agentclientprotocol/codex-acp 2.1.1 negotiated ACP v1 and created a scratch session (auth route: adapter-managed sign-in (no environment variables forwarded)); capabilities recorded. No prompt was sent, no edit was made and no writer containment is claimed: only the handshake is qualified.",
+      "evidence": [
+        {
+          "path": "evidence/linux-m3-codex-auth-probe-2026-10-05/adapter-probe.json",
+          "sha256": "49a32dae7499243695689f5579e93238f96d7f532b686d49ccf75e0d57106c7d"
+        }
+      ]
+    },
+    "auth_two_edit_undo_restart": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "In a real generated/imported project with a real authenticated adapter: brief -> playable result A, second edit -> B, Undo to A, restart, committed acceptance recovered; timeline/frame/audio/revision identities and source/Git/draft inventories checked at every step.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "a real ACP adapter executable and a signed-in provider account (none exists on this machine), an installed SDK and an operator-driven native session. No automated driver for a live provider session exists in this repository; this harness cannot run the gate and a scripted-peer run is never a substitute."
+    },
+    "auth_writer_process_group": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "The real adapter's writer processes are proven to stay inside the spawned process group (including after Stop and a provider crash), so WriterOwnership may be ProcessGroupContained for that adapter.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "a real ACP adapter executable and a signed-in provider account (none exists on this machine), observed through its real process tree. Until then ownership stays Unknown/Detached and automatic Apply is not qualified for any provider; the scripted peer proves the engine's gate only."
+    },
+    "auth_compiler_error_repair": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "An authentic task deliberately introduces a compiler error: structured repair context reaches the agent and exactly one repair attempt runs.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "a real ACP adapter executable and a signed-in provider account (none exists on this machine), an installed SDK and an operator-run brief that provokes a compile error."
+    },
+    "auth_interaction_and_failure_modes": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "With the real adapter: permission requests, clarification, Stop in every phase, provider crash, external source conflict, and interrupted publication/Undo with restart leave recoverable data and no stuck writer.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "a real ACP adapter executable and a signed-in provider account (none exists on this machine); the conflict and interrupted-publication runs also need an operator able to edit the project externally and kill the app mid-publication."
+    },
+    "auth_mcp_cli_support": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "The real adapter accepts the stdio MCP server in session/new and/or runs the studio-tools command, and project tools work through that route.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "a real ACP adapter executable and a signed-in provider account (none exists on this machine) that honors stdio MCP servers (and one that can run shell commands for the studio-tools route); MCP_QUALIFICATION is unqualified against any provider until then."
+    },
+    "auth_twenty_cycle_cleanup": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "At least 20 edit or failed-task cycles with the real adapter leave no owned process, broker capability or materialization/PCM lease after close.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "a real ACP adapter executable and a signed-in provider account (none exists on this machine) and provider quota for 20 real edit/failure cycles."
+    },
+    "auth_visual_ime": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "The native conversation panel is verified with real IME composition, focus and Tab order, transcript scroll while streaming, and Space/timeline shortcuts not stolen from the focused prompt.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "A native desktop session with a real input method (IME) and an operator; the Linux Xvfb software-rendering runs do not exercise IME or GPU presentation."
+    },
+    "auth_physical_audio": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "Promoted-revision audio handoff and the M2 output-clock behavior are measured on a physical audio output device and real display presentation.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "A physical audio output device and display on a native desktop; real_cpal_* tests need a real CPAL output device and none exists on this machine."
+    },
+    "auth_windows": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "The M3 workflow, packaging and process containment (Job Objects) are exercised on Windows.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "A Windows host; non-Linux code is compiled by inspection only and no Windows build was run."
+    },
+    "auth_macos": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "The M3 workflow, packaging and process containment are exercised on macOS.",
+      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "evidence": [],
+      "prerequisite": "A macOS host; non-Linux code is compiled by inspection only and no macOS build was run."
+    }
+  },
+  "acceptance": {
+    "m3_authenticated": "not_run",
+    "reason": "M3 authenticated acceptance is NOT claimed: 10 authentic gate(s) are not pass (auth_two_edit_undo_restart, auth_writer_process_group, auth_compiler_error_repair, auth_interaction_and_failure_modes, auth_mcp_cli_support, auth_twenty_cycle_cleanup, auth_visual_ime, auth_physical_audio, auth_windows, auth_macos). Development (fixture) gates prove the workflow code only."
+  }
+}

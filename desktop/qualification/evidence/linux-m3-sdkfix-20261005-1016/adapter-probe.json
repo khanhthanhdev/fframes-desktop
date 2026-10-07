@@ -1,0 +1,77 @@
+{
+  "adapter": {
+    "agent_name": "@agentclientprotocol/claude-agent-acp",
+    "launch_identity": "fb2e40c28192bc381dc372166813330c264df0e75e55526d8a208063edfe3366",
+    "protocol_version": 1
+  },
+  "adapter_arg_count": 0,
+  "auth_env_names": [],
+  "cleanup": {
+    "owned_processes_after": 0
+  },
+  "decision": {
+    "fixture_detected": false,
+    "gate_status": "pass",
+    "probe_status": "Ready"
+  },
+  "edit_attempted": false,
+  "evidence_kind": "authentic",
+  "fixture_only": false,
+  "gate": "auth_adapter_probe_v1",
+  "group": "adapter_probe",
+  "measurements": {
+    "auth_status": "ready",
+    "capabilities": {
+      "load_session": true,
+      "mcp_http": true,
+      "mcp_sse": true,
+      "mcp_stdio": true,
+      "prompt_audio": false,
+      "prompt_embedded_context": true,
+      "prompt_image": true,
+      "resume_session": true
+    }
+  },
+  "platform": {
+    "machine": "x86_64",
+    "system": "Linux"
+  },
+  "probe": {
+    "fixture_detected": false,
+    "protocol_version": 1,
+    "status": "Ready"
+  },
+  "probe_seconds": 2.938505705,
+  "prompt_sent": false,
+  "report": {
+    "executable": "<tmp><tmp>.eY4M3CR1KV/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+    "initialized": {
+      "agent_name": "@agentclientprotocol/claude-agent-acp",
+      "agent_version": "0.85.1",
+      "auth_methods": [],
+      "authenticated": false,
+      "capabilities": {
+        "load_session": true,
+        "mcp_http": true,
+        "mcp_sse": true,
+        "mcp_stdio": true,
+        "prompt_audio": false,
+        "prompt_embedded_context": true,
+        "prompt_image": true,
+        "resume_session": true
+      },
+      "protocol_version": 1
+    },
+    "status": {
+      "Ready": {
+        "agent": "@agentclientprotocol/claude-agent-acp",
+        "version": "0.85.1"
+      }
+    }
+  },
+  "requested_executable": "<tmp><tmp>.eY4M3CR1KV/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js",
+  "resolved_executable_sha256": "4a1f0fff5cdd26b8c9adb5f9b3d314640e06f876cfff97cac437159b4551ec27",
+  "schema": "m3-authentic/1",
+  "schema_version": 1,
+  "writer_ownership_claimed": "unknown"
+}

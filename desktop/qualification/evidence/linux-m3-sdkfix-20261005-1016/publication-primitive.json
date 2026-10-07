@@ -1,0 +1,21 @@
+{
+  "apply_gate": "ready",
+  "blocked_reason": null,
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "group": "publication_primitive",
+  "kernel": "6.8.0-142-generic",
+  "link_only_filesystem_gate": {
+    "blocked": true,
+    "reason": "linkat+unlinkat cannot move a live project file safely: an editor saving by rename between the two calls would lose its file; an atomic renameat2(RENAME_NOREPLACE) is required"
+  },
+  "note": "the probe ran on the temporary project's filesystem under <tmp>; the link fallback is refused for live project names",
+  "project_filesystem": {
+    "mount_point": "/",
+    "source": "/dev/vda2",
+    "type": "ext4"
+  },
+  "schema_version": 1,
+  "scope": "scripted ACP peer + fake preview worker + real controller; no provider, adapter, account, device or other OS",
+  "selected_mechanism": "Renameat2"
+}

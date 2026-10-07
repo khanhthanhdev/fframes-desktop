@@ -1,0 +1,130 @@
+$ cargo test --locked -p fframes-studio --test agent_tools --test build_sharing --test candidate_runner --test promotion_handoff
+# cwd: desktop   returncode: 0   timed_out: False   seconds: 13.611
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running tests/agent_tools.rs (target/debug/deps/agent_tools-48abfe02e5ab3b18)
+
+running 39 tests
+test capability_socket_and_runtime_dir_are_private ... ok
+test dispatcher_refuses_cross_project_and_stale_revision ... ok
+test dispatcher_bounds_text_replies_and_artifacts ... ok
+test frame_selection_resolve_is_bounded_sorted_and_deduplicated ... ok
+test a_second_broker_in_the_same_runtime_dir_is_refused_and_stale_files_are_cleared ... ok
+test dropping_the_broker_shuts_it_down ... ok
+test client_refuses_unsafe_or_malformed_capability_files ... ok
+test initialize_answers_the_one_revision_this_server_implements_whatever_the_client_asks ... ok
+test insecure_runtime_directories_are_refused ... ok
+test dead_tasks_are_stale_for_new_and_established_connections ... ok
+test mcp_forwards_calls_verbatim_and_maps_replies_and_errors ... ok
+test at_most_eight_connections_are_served ... ok
+test mcp_lifecycle_errors_and_lazy_connection ... ok
+test a_panicking_backend_is_an_internal_error_and_the_broker_keeps_serving ... ok
+test known_revision_history_is_bounded_lru_and_status_summary_stays_small ... ok
+test request_parsing_rejects_bad_shapes_and_accepts_documented_ones ... ok
+test mcp_stderr_is_bounded_to_sixteen_kib ... ok
+test client_roundtrip_and_error_mapping ... ok
+test cli_and_mcp_return_byte_identical_replies_without_the_secret_on_argv ... ok
+test cli_exit_codes_and_list ... ok
+test a_dropped_connection_cancels_its_executing_call_and_queued_calls ... ok
+test six_unique_tools_are_listed_by_mcp_and_descriptions ... ok
+test oversized_request_lines_close_the_connection_without_executing ... ok
+test queue_holds_sixteen_behind_two_workers_and_the_nineteenth_is_busy ... ok
+test mcp_flags_and_a_missing_broker ... ok
+test revoke_cancels_an_executing_call ... ok
+test shutdown_cancels_joins_and_removes_socket_and_capabilities ... ok
+test revoke_refuses_reconnect_and_the_next_call ... ok
+test unknown_methods_and_bad_params_are_answered_without_closing ... ok
+test wrong_secret_and_unknown_capability_are_indistinguishable ... ok
+test client_call_timeout_marks_the_connection_broken ... ok
+test requests_on_one_connection_run_in_order ... ok
+test shutdown_with_live_drippers_is_bounded_and_peers_see_the_close ... ok
+test an_oversized_hello_is_rejected_at_the_limit_before_any_newline ... ok
+test grants_are_short_lived_and_expired_ones_do_not_linger ... ok
+test a_client_call_against_a_dripping_reply_fails_at_its_deadline ... ok
+test expiry_refuses_new_and_established_connections ... ok
+test a_hello_dripped_without_a_newline_is_closed_at_the_deadline_and_frees_capacity ... ok
+test hello_must_arrive_within_five_seconds ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.22s
+
+     Running tests/build_sharing.rs (target/debug/deps/build_sharing-4fc42bddb2864bf2)
+
+running 23 tests
+test default_limits_are_eight_entries_and_a_two_gib_target ... ok
+test a_key_the_compiler_cannot_honor_is_refused_before_any_compile_or_cache_entry ... ok
+test artifact_allocations_add_up_and_each_release_returns_only_its_own_bytes ... ok
+test failures_are_delivered_to_everyone_and_never_cached ... ok
+test a_different_consumed_environment_input_is_a_different_key_and_never_joins ... ok
+test concurrent_equal_key_requests_compile_once_and_share_one_build ... ok
+test the_process_wide_service_is_one_shared_instance_for_ui_and_tools ... ok
+test closing_a_project_kills_its_compiles_and_drops_the_cache_but_not_live_leases ... ok
+test a_different_sdk_installation_is_a_different_key_and_binds_its_own_directory ... ok
+test a_cached_entry_whose_artifacts_vanished_is_never_reused ... ok
+test different_keys_never_reuse_a_build ... ok
+test accounting_against_an_entry_the_cache_dropped_is_refused_without_panicking ... ok
+test closing_the_whole_service_kills_in_flight_compiles_and_fails_every_waiter ... ok
+test build_key_separates_every_input_that_changes_the_bytes ... ok
+test observing_status_never_starts_a_compile ... ok
+test the_cargo_compiler_only_accepts_the_default_cpu_debug_worker_key ... ok
+test artifact_bytes_count_against_the_budget_after_the_compile_settled ... ok
+test live_leases_are_never_evicted_and_a_full_cache_refuses_instead ... ok
+test the_byte_target_evicts_only_unleased_entries ... ok
+test cancelling_one_subscriber_keeps_the_others_and_the_last_cancel_kills_the_compile ... ok
+test ui_preparation_and_a_tool_subscriber_with_the_same_key_compile_once ... ok
+test cancelling_the_ui_compile_scope_leaves_a_tool_subscriber_running ... ok
+test a_crashing_compiler_fails_every_subscriber_and_leaves_the_service_usable ... ok
+
+test result: ok. 23 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.44s
+
+     Running tests/candidate_runner.rs (target/debug/deps/candidate_runner-6ffc3b6b08681af5)
+
+running 26 tests
+test draft_requests_return_busy_while_the_writer_gate_is_held_and_never_compile ... ok
+test a_draft_that_names_another_project_is_never_served ... ok
+test a_draft_that_changes_during_capture_fails_capture_and_keeps_the_old_preview ... ok
+test mcp_session_config_passes_only_the_capability_path ... ok
+test clipping_is_a_visible_warning_and_a_custom_main_import_needs_no_video_cli ... ok
+test compile_failure_reports_bounded_context_and_old_playback_survives ... ok
+test cli_through_the_broker_reaches_the_real_backend_and_stops_after_the_task_ends ... ok
+test an_unchanged_candidate_joins_the_ui_build_instead_of_recompiling ... ok
+test artifact_store_enforces_ids_expiry_size_and_symlink_containment ... ok
+test an_incompatible_worker_is_an_environment_failure_no_repair_can_fix ... ok
+test concurrent_calls_on_distinct_revisions_never_exceed_the_worker_bound ... ok
+test cli_and_mcp_agree_on_revision_artifact_hashes_and_errors_over_the_real_backend ... ok
+test fixed_bindings_answer_for_the_captured_candidate_and_share_the_validation_build ... ok
+test at_most_two_tool_workers_live_and_close_releases_all_of_them ... ok
+test tool_access_is_bound_to_the_task_and_project_and_closes_cleanly ... ok
+test one_automatic_repair_then_terminal_with_the_second_failure_retained ... ok
+test the_workers_declared_shader_gap_reaches_the_report_as_a_visible_warning ... ok
+test audio_only_edit_with_unchanged_video_passes_and_misplaced_audio_fails ... ok
+test inspection_errors_worker_start_failures_and_cancellation_route_deterministically ... ok
+test six_tools_answer_for_labelled_immutable_draft_revisions ... ok
+test passing_candidate_is_validated_and_staged_while_the_old_preview_keeps_playing ... ok
+test stop_during_validation_is_environmental_and_leaves_the_old_preview_alone ... ok
+test old_playback_survives_every_kind_of_validation_failure ... ok
+test a_task_that_ends_mid_call_leaves_no_worker_or_artifact_behind ... ok
+test captured_snapshot_history_is_bounded_and_evicted_identities_are_stale ... ok
+test candidates_above_the_preview_cap_validate_and_stage_at_the_effective_scale ... ok
+
+test result: ok. 26 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 6.31s
+
+     Running tests/promotion_handoff.rs (target/debug/deps/promotion_handoff-f037aabb62f6e498)
+
+running 14 tests
+test a_closed_coordinator_never_adopts ... ok
+test a_failed_handoff_keeps_the_old_preview_playing_and_the_committed_source ... ok
+test a_staged_preview_whose_worker_scope_is_already_shut_down_is_rejected_at_adoption ... ok
+test an_edit_after_publication_revokes_the_install_but_not_the_old_playback ... ok
+test a_dead_staged_worker_is_never_adopted_even_at_exactly_the_staged_serial_position_and_scale ... ok
+test a_source_that_moved_before_the_fence_never_installs_the_prepared_preview ... ok
+test the_published_candidate_is_reprimed_at_the_latest_seek_and_installs_with_matching_audio ... ok
+test an_undo_is_validated_through_the_candidate_pipeline_and_hands_off_like_an_apply ... ok
+test cancelling_an_adopted_handoff_fences_it_at_once_and_reaps_in_the_background ... ok
+test a_staged_preview_carrying_another_promotions_tag_is_refused_at_adoption ... ok
+test the_install_fence_excludes_every_controller_mutation_until_the_install_completes ... ok
+test rejecting_a_staged_preview_hands_its_teardown_off_instead_of_waiting_for_it ... ok
+test a_refresh_never_cancels_the_preparation_adopted_for_the_matching_promotion ... ok
+test an_expired_but_matching_authorization_adopts_but_the_state_install_fence_refuses_it ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.11s
+
