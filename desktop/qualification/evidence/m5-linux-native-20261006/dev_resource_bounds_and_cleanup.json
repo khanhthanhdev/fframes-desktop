@@ -1,0 +1,27 @@
+{
+  "schema": "m5-development/1",
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "gate": "dev_resource_bounds_and_cleanup",
+  "result": "pass",
+  "exit_code": 0,
+  "command": "cargo test -p fframes-studio-runtime --lib && cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --lib source_indexes_retain_four_latest_revisions_and_reuse_matching_revision && cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test m5_resource_qualification -- --exact m5_resource_measurements_are_bounded --nocapture && cargo test --locked --manifest-path desktop/Cargo.toml -p studio-project --test source_index malformed_syntax_and_cancelled_build_are_bounded_diagnostics && cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test agent_workflow closing_the_workflow_mid_task_reaps_everything && cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test agent_tools shutdown_cancels_joins_and-removes-socket-and-capabilities",
+  "tests": [
+    "anchors::tests::test_hit_testing_paint_order",
+    "preview_worker::editor_metadata_tests::duplicate_scene_keys_fall_back_to_unique_positional_timeline_ids",
+    "anchors::tests::test_validate_source_anchor_success_and_failures",
+    "worker::tests::test_worker_serving_loop_lifecycle",
+    "preview_worker::tests::disk_chunks_match_core_stereo_mix_with_resampling_fades_ducking_and_offset",
+    "preview_worker::editor_metadata_tests::object_count_limit_is_reachable_with_compact_semantic_keys",
+    "preview_worker::editor_metadata_tests::metadata_byte_limit_rejects_overflow_without_publishing_partial_objects",
+    "agent_tools::backend::source_index_cache_tests::source_indexes_retain_four_latest_revisions_and_reuse_matching_revision",
+    "m5_resource_measurements_are_bounded",
+    "malformed_syntax_and_cancelled_build_are_bounded_diagnostics",
+    "closing_the_workflow_mid_task_reaps_everything",
+    "shutdown_cancels_joins_and_removes_socket_and_capabilities"
+  ],
+  "passed": 12,
+  "failed": 0,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+}

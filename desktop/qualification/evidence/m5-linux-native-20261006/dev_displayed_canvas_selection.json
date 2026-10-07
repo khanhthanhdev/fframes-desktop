@@ -1,0 +1,20 @@
+{
+  "schema": "m5-development/1",
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "gate": "dev_displayed_canvas_selection",
+  "result": "pass",
+  "exit_code": 0,
+  "command": "cargo test --locked --manifest-path desktop/Cargo.toml -p studio-engine --test canvas_selection && cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test canvas_selection",
+  "tests": [
+    "selection_uses_the_painted_transform_and_cycles_repeated_instances",
+    "stale_frame_and_removed_identity_cannot_rebind_selection",
+    "missing_identity_clears_semantic_selection_on_the_next_accepted_frame",
+    "missing_metadata_keeps_rectangle_scope_usable_and_never_infers_an_anchor",
+    "accepted_frame_keeps_identity_geometry_and_image_pairing_atomic"
+  ],
+  "passed": 5,
+  "failed": 0,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+}

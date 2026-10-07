@@ -1,0 +1,22 @@
+{
+  "schema": "m5-development/1",
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "gate": "dev_source_retrieval_and_tools",
+  "result": "pass",
+  "exit_code": 0,
+  "command": "cargo test --locked --manifest-path desktop/Cargo.toml -p studio-project --test source_index && cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test selection_tools",
+  "tests": [
+    "malformed_syntax_and_cancelled_build_are_bounded_diagnostics",
+    "duplicate_marker_and_hash_mismatch_refuse_exact_lookup",
+    "method_anchor_returns_containing_impl_and_exact_marker_ranges",
+    "syntax_spans_are_hash_bound_utf8_and_deterministic",
+    "ambiguity_and_file_budgets_are_reported_instead_of_claiming_resolution",
+    "selection_retrieval_tools_reject_partial_or_ambiguous_selection_queries",
+    "selection_retrieval_tools_share_dispatch_and_revision_fences"
+  ],
+  "passed": 7,
+  "failed": 0,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+}

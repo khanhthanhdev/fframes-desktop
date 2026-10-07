@@ -1,0 +1,129 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "M5QualificationResults",
+  "description": "M5 canvas selection and source-retrieval development/authentic gates. Pass claims require bounded evidence whose hashes are checked by validate-qualification.py.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["kind", "schema_version", "timestamp", "environment", "gates", "acceptance"],
+  "properties": {
+    "kind": {"const": "m5"},
+    "schema_version": {"const": 1},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "os", "arch", "sdk_id", "sdk_manifest_sha256"],
+      "properties": {
+        "scope": {"type": "string", "minLength": 1},
+        "os": {"type": "string", "minLength": 1},
+        "arch": {"type": "string", "minLength": 1},
+        "sdk_id": {"type": "string", "minLength": 1},
+        "sdk_manifest_sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}
+      }
+    },
+    "gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "dev_identity_and_geometry",
+        "dev_displayed_canvas_selection",
+        "dev_source_retrieval_and_tools",
+        "dev_frozen_canvas_task_scope",
+        "dev_managed_sdk_title_lookup",
+        "dev_native_linux_canvas",
+        "dev_resource_bounds_and_cleanup",
+        "dev_full_title_edit_apply_undo_reopen",
+        "auth_provider_title_edit_undo_reopen",
+        "auth_physical_display_input",
+        "auth_windows",
+        "auth_macos"
+      ],
+      "properties": {
+        "dev_identity_and_geometry": {"$ref": "#/definitions/developmentGate"},
+        "dev_displayed_canvas_selection": {"$ref": "#/definitions/developmentGate"},
+        "dev_source_retrieval_and_tools": {"$ref": "#/definitions/developmentGate"},
+        "dev_frozen_canvas_task_scope": {"$ref": "#/definitions/developmentGate"},
+        "dev_managed_sdk_title_lookup": {"$ref": "#/definitions/developmentGate"},
+        "dev_native_linux_canvas": {"$ref": "#/definitions/developmentGate"},
+        "dev_resource_bounds_and_cleanup": {"$ref": "#/definitions/developmentGate"},
+        "dev_full_title_edit_apply_undo_reopen": {"$ref": "#/definitions/developmentGate"},
+        "auth_provider_title_edit_undo_reopen": {"$ref": "#/definitions/authenticGate"},
+        "auth_physical_display_input": {"$ref": "#/definitions/authenticGate"},
+        "auth_windows": {"$ref": "#/definitions/authenticGate"},
+        "auth_macos": {"$ref": "#/definitions/authenticGate"}
+      }
+    },
+    "acceptance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["development", "full", "reason"],
+      "properties": {
+        "development": {"enum": ["pass", "not_run"]},
+        "full": {"enum": ["pass", "not_run"]},
+        "reason": {"type": "string", "minLength": 1}
+      }
+    }
+  },
+  "definitions": {
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "sha256"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "sha256": {"type": "string", "pattern": "^[a-fA-F0-9]{64}$"}
+        }
+      }
+    },
+    "developmentGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "status", "criteria", "notes", "evidence"],
+      "properties": {
+        "kind": {"const": "development"},
+        "status": {"enum": ["pass", "fail", "blocked", "not_run"]},
+        "criteria": {"type": "string", "minLength": 1},
+        "notes": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/definitions/evidence"},
+        "prerequisite": {"type": "string", "minLength": 20}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["blocked", "not_run"]}}},
+          "then": {"required": ["prerequisite", "evidence"], "properties": {"evidence": {"maxItems": 0}}},
+          "else": {"not": {"required": ["prerequisite"]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "pass"}}},
+          "then": {"properties": {"evidence": {"minItems": 1}}}
+        }
+      ]
+    },
+    "authenticGate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "status", "criteria", "notes", "evidence"],
+      "properties": {
+        "kind": {"const": "authentic"},
+        "status": {"enum": ["pass", "fail", "blocked", "not_run"]},
+        "criteria": {"type": "string", "minLength": 1},
+        "notes": {"type": "string", "minLength": 1},
+        "evidence": {"$ref": "#/definitions/evidence"},
+        "prerequisite": {"type": "string", "minLength": 20}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"status": {"enum": ["blocked", "not_run"]}}},
+          "then": {"required": ["prerequisite", "evidence"], "properties": {"evidence": {"maxItems": 0}}},
+          "else": {"not": {"required": ["prerequisite"]}}
+        },
+        {
+          "if": {"properties": {"status": {"const": "pass"}}},
+          "then": {"properties": {"evidence": {"minItems": 1}}}
+        }
+      ]
+    }
+  }
+}

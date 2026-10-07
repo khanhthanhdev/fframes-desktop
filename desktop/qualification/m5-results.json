@@ -1,0 +1,171 @@
+{
+  "kind": "m5",
+  "schema_version": 1,
+  "timestamp": "2026-10-06T17:16:14+00:00",
+  "environment": {
+    "scope": "Managed SDK development qualification on this Linux host; scripted fixture/native X11 only, not an authenticated provider or physical-device claim.",
+    "os": "linux",
+    "arch": "x86_64",
+    "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+    "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+  },
+  "gates": {
+    "dev_identity_and_geometry": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "Runtime and protocol tests prove stable semantic identity and frame-bound transformed video-coordinate geometry.",
+      "notes": "Bounded test evidence recorded by the M5 runner.",
+      "evidence": [
+        {
+          "path": "evidence/m5-linux-native-20261006/dev_identity_and_geometry.json",
+          "sha256": "63ad865b95af979a8f21358292debe69c55265ce486c543aaeb28eb51a8d4965"
+        }
+      ]
+    },
+    "dev_displayed_canvas_selection": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "GPUI-free canvas and shell tests refuse stale image/frame identities and preserve overlap and rectangle semantics.",
+      "notes": "Bounded test evidence recorded by the M5 runner.",
+      "evidence": [
+        {
+          "path": "evidence/m5-linux-native-20261006/dev_displayed_canvas_selection.json",
+          "sha256": "51ccd3bad8903e7b86b95ca785394560569d1bc5b4a3dc4a56b4813ee46f7441"
+        }
+      ]
+    },
+    "dev_source_retrieval_and_tools": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "Hash-verified syntax retrieval and shared read-only tool dispatch pass boundedness and revision-fence tests.",
+      "notes": "Bounded test evidence recorded by the M5 runner.",
+      "evidence": [
+        {
+          "path": "evidence/m5-linux-native-20261006/dev_source_retrieval_and_tools.json",
+          "sha256": "380c2ee81ef58833940e83a605c537514baad734351ea717b236af828ce20cbd"
+        }
+      ]
+    },
+    "dev_frozen_canvas_task_scope": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "Element and rectangle selections freeze typed identity, geometry and explicit uncertainty without fabricating source anchors.",
+      "notes": "Bounded test evidence recorded by the M5 runner.",
+      "evidence": [
+        {
+          "path": "evidence/m5-linux-native-20261006/dev_frozen_canvas_task_scope.json",
+          "sha256": "6241e9ad5c268cc9e13dfae38eaf4018e4c402887579ce478bd840710f5cd747"
+        }
+      ]
+    },
+    "dev_managed_sdk_title_lookup": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "A generated starter title renders through the verified managed SDK and resolves its registered object tuple and explicit source anchor.",
+      "notes": "Generated starter title rendered and its explicit source anchor resolved against immutable Rust source.",
+      "evidence": [
+        {
+          "path": "evidence/m5-linux-native-20261006/dev_managed_sdk_title_lookup.json",
+          "sha256": "8d1860fd07b6b31c84bf7472c9e36e93f49270523ac7e311bbf75704983cd996"
+        },
+        {
+          "path": "evidence/m5-linux-native-20261006/m5-managed-title-frame/0.png",
+          "sha256": "1a3ead0449fe1725da234bd71431e79fd24f1bd0644c029a9635cadce056d73f"
+        },
+        {
+          "path": "evidence/m5-linux-native-20261006/m5-managed-title-strip.png",
+          "sha256": "a9221df00a7a120b07b5c7c44a01e411211019df0e2cc1e7ba133bd4c707c4bf"
+        },
+        {
+          "path": "evidence/m5-linux-native-20261006/m5-managed-inspect-summary.json",
+          "sha256": "afadbd7e6f7c3c0315b8160ac1085ddcad2d1ef3f25d92220ea3f5a9746d3dfd"
+        }
+      ]
+    },
+    "dev_native_linux_canvas": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "Native X11 input selects the managed title from measured frame geometry and exercises cycling, zoom, pan and nonsemantic rectangle scope.",
+      "notes": "Xvfb native input selected the measured managed-title bounds and exercised zoom, pan, cycling and rectangle scope. Screenshots are included as evidence.",
+      "evidence": [
+        {
+          "path": "evidence/m5-linux-native-20261006/dev_native_linux_canvas.json",
+          "sha256": "4ab592d0acfa096630d79551008136413e8a43c9555c4f77f93cc2f4813ad21b"
+        },
+        {
+          "path": "evidence/m5-linux-native-20261006/m5-managed-title-selected.png",
+          "sha256": "4bbda3005c76b0564caa42f7c9415ca5d31fb11979aa9a8d0527e49a201dce91"
+        },
+        {
+          "path": "evidence/m5-linux-native-20261006/m5-nonsemantic-rectangle-scope.png",
+          "sha256": "c31d3f8f38db71ae1723bfa042e0532d8cec08bcbf66357606fe9e55448805eb"
+        }
+      ]
+    },
+    "dev_resource_bounds_and_cleanup": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "Measure bounded source-index and hit-test workloads, and verify cancellation and owned resource teardown.",
+      "notes": "Bounded test evidence recorded by the M5 runner.",
+      "evidence": [
+        {
+          "path": "evidence/m5-linux-native-20261006/dev_resource_bounds_and_cleanup.json",
+          "sha256": "ee548a100ef6574b662c0c680ce051418d5028d68803b50535c01a27b63706fa"
+        },
+        {
+          "path": "evidence/m5-linux-native-20261006/m5-resource-measurements.json",
+          "sha256": "93d3edce6bcf1f3aff43b2879ede8c21214f9a3c821f1c62a4b6a1b19d04a6e0"
+        }
+      ]
+    },
+    "dev_full_title_edit_apply_undo_reopen": {
+      "kind": "development",
+      "status": "pass",
+      "criteria": "A selected managed-SDK title completes prompt, candidate validation, Apply, Undo and reopen with matching before/after identity evidence.",
+      "notes": "Bounded test evidence recorded by the M5 runner.",
+      "evidence": [
+        {
+          "path": "evidence/m5-linux-native-20261006/dev_full_title_edit_apply_undo_reopen.json",
+          "sha256": "f5b6f1989900df2e31eb76d351a3a4b37174996cf0f48ee8789767e3b1ce2290"
+        }
+      ]
+    },
+    "auth_provider_title_edit_undo_reopen": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "An authenticated ACP provider completes a selected title edit, Apply, Undo and reopen with safe writer teardown.",
+      "notes": "No authentic provider run was attempted; scripted peers cannot satisfy this gate.",
+      "evidence": [],
+      "prerequisite": "Use an operator-authenticated ACP provider and run the complete selected-title lifecycle."
+    },
+    "auth_physical_display_input": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "A real Linux device proves displayed-frame semantic selection, source-anchor resolution and physical display/input behavior.",
+      "notes": "Xvfb is development-only evidence and does not qualify physical display/input.",
+      "evidence": [],
+      "prerequisite": "Run the native selection workflow on a physical Linux display/input device."
+    },
+    "auth_windows": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "A Windows run proves displayed-frame semantic selection and hash-verified source-anchor retrieval through the managed SDK.",
+      "notes": "No Windows host is available in this environment.",
+      "evidence": [],
+      "prerequisite": "Run the complete M5 development workflow on a Windows host with native input."
+    },
+    "auth_macos": {
+      "kind": "authentic",
+      "status": "not_run",
+      "criteria": "A macOS run proves displayed-frame semantic selection and hash-verified source-anchor retrieval through the managed SDK.",
+      "notes": "No macOS host is available in this environment.",
+      "evidence": [],
+      "prerequisite": "Run the complete M5 development workflow on a macOS host with native input."
+    }
+  },
+  "acceptance": {
+    "development": "pass",
+    "full": "not_run",
+    "reason": "M5 development gates pass. Full acceptance remains pending authentic provider, physical-device, Windows and macOS evidence."
+  }
+}

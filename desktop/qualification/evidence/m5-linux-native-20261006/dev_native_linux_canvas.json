@@ -1,0 +1,16 @@
+{
+  "schema": "m5-development/1",
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "gate": "dev_native_linux_canvas",
+  "result": "pass",
+  "exit_code": 0,
+  "command": "cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test x11_shell -- --ignored the_native_shell_selects_the_managed_starter_title_and_keeps_rectangle_scope_nonsemantic --exact --nocapture",
+  "tests": [
+    "the_native_shell_selects_the_managed_starter_title_and_keeps_rectangle_scope_nonsemantic"
+  ],
+  "passed": 1,
+  "failed": 0,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+}

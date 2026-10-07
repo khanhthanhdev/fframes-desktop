@@ -1,0 +1,16 @@
+{
+  "schema": "m5-development/1",
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "gate": "dev_full_title_edit_apply_undo_reopen",
+  "result": "pass",
+  "exit_code": 0,
+  "command": "cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test agent_workflow -- --ignored --exact selected_title_prompt_apply_undo_and_reopen_round_trips_identity --nocapture",
+  "tests": [
+    "selected_title_prompt_apply_undo_and_reopen_round_trips_identity"
+  ],
+  "passed": 1,
+  "failed": 0,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+}

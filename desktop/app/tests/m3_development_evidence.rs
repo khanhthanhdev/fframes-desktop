@@ -983,7 +983,7 @@ fn cli_mcp_parity(_profile: &Profile) -> Value {
         .iter()
         .map(|t| t["name"].as_str().unwrap().to_owned())
         .collect();
-    assert_eq!(listed.len(), 6, "{listed:?}");
+    assert_eq!(listed.len(), 9, "{listed:?}");
 
     let mut results = Vec::new();
     let mut dropped = std::collections::BTreeSet::new();

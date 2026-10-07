@@ -3,7 +3,7 @@
 
 Usage: validate-qualification.py [LEDGER ...]
 
-With no argument the shipped ledgers (M0, M2, M3, M4) are validated. M3 rules
+With no argument the shipped ledgers (M0, M2, M3, M4, M5) are validated. M3 rules
 (``qualification/m3-results.json``, see ``m3-results.schema.json``): every evidence file is
 hashed, nothing passes without evidence, a ``not_run``/``blocked`` gate states its missing
 prerequisite, and:
@@ -28,6 +28,7 @@ import math
 import re
 import string
 import sys
+from datetime import datetime
 from pathlib import Path
 
 QUALIFICATION = Path(__file__).resolve().parents[1] / "qualification"
@@ -36,6 +37,7 @@ DEFAULT_LEDGERS = [
     QUALIFICATION / "m2-results.json",
     QUALIFICATION / "m3-results.json",
     QUALIFICATION / "m4-results.json",
+    QUALIFICATION / "m5-results.json",
 ]
 
 M0_GATES = {"managed_compilation", "gpui_startup", "renderer_worker", "acp_task", "selection_anchor"}
@@ -96,6 +98,22 @@ M4_GATES = {
     "auth_macos": "authentic",
 }
 M4_STATUSES = {"pass", "fail", "blocked", "not_run"}
+M5_GATES = {
+    "dev_identity_and_geometry": "development",
+    "dev_displayed_canvas_selection": "development",
+    "dev_source_retrieval_and_tools": "development",
+    "dev_frozen_canvas_task_scope": "development",
+    "dev_managed_sdk_title_lookup": "development",
+    "dev_native_linux_canvas": "development",
+    "dev_resource_bounds_and_cleanup": "development",
+    "dev_full_title_edit_apply_undo_reopen": "development",
+    "auth_provider_title_edit_undo_reopen": "authentic",
+    "auth_physical_display_input": "authentic",
+    "auth_windows": "authentic",
+    "auth_macos": "authentic",
+}
+M5_STATUSES = {"pass", "fail", "blocked", "not_run"}
+MAX_M5_METADATA_BYTES = 1024 * 1024
 # Agent names of the repository's scripted fixtures: they can never be an authentic adapter.
 FIXTURE_AGENT_NAMES = {"scripted-agent", "protocol-peer", "acp-peer", "fixture", "test-agent"}
 # Credential-like text. The M3 harness redacts with exactly these before serialization and the
@@ -760,6 +778,288 @@ def validate_m4(path, record):
         raise ValueError("M4 completion must pass exactly when every M4 gate passes")
 
 
+M5_REQUIRED_TESTS = {
+    "dev_identity_and_geometry": (
+        "active_preview_binds_transformed_video_pixel_geometry_to_exact_frame_and_seek",
+        "annotated_groups_keep_stable_keys_transforms_order_and_video_pixel_bounds",
+        "semantic_keys_are_reversible_and_repeated_instances_do_not_alias",
+    ),
+    "dev_displayed_canvas_selection": (
+        "accepted_frame_keeps_identity_geometry_and_image_pairing_atomic",
+        "selection_uses_the_painted_transform_and_cycles_repeated_instances",
+    ),
+    "dev_source_retrieval_and_tools": (
+        "syntax_spans_are_hash_bound_utf8_and_deterministic",
+        "selection_retrieval_tools_share_dispatch_and_revision_fences",
+        "selection_retrieval_tools_reject_partial_or_ambiguous_selection_queries",
+    ),
+    "dev_frozen_canvas_task_scope": (
+        "canvas_packets_freeze_exact_object_or_nonsemantic_rectangle_evidence",
+        "frame_selection_resolve_is_bounded_sorted_and_deduplicated",
+    ),
+    "dev_managed_sdk_title_lookup": (
+        "generated_title_identity_geometry_and_source_anchor_survive_managed_render",
+    ),
+    "dev_native_linux_canvas": (
+        "the_native_shell_selects_the_managed_starter_title_and_keeps_rectangle_scope_nonsemantic",
+    ),
+    "dev_resource_bounds_and_cleanup": (
+        "source_indexes_retain_four_latest_revisions_and_reuse_matching_revision",
+        "m5_resource_measurements_are_bounded",
+        "malformed_syntax_and_cancelled_build_are_bounded_diagnostics",
+        "closing_the_workflow_mid_task_reaps_everything",
+        "shutdown_cancels_joins_and_removes_socket_and_capabilities",
+        "metadata_byte_limit_rejects_overflow_without_publishing_partial_objects",
+        "object_count_limit_is_reachable_with_compact_semantic_keys",
+    ),
+    "dev_full_title_edit_apply_undo_reopen": (
+        "selected_title_prompt_apply_undo_and_reopen_round_trips_identity",
+    ),
+}
+
+
+def _m5_authentic_contract(name, proof):
+    adapter = proof.get("adapter")
+    platform = proof.get("platform")
+    if (
+        proof.get("evidence_kind") != "authentic"
+        or proof.get("fixture_only") is not False
+        or proof.get("gate") != name
+        or proof.get("result") != "pass"
+        or type(adapter) is not dict
+        or type(adapter.get("name")) is not str
+        or not adapter["name"].strip()
+        or adapter["name"].strip().lower() in FIXTURE_AGENT_NAMES
+        or adapter.get("protocol_version") != 1
+        or type(adapter.get("launch_identity")) is not str
+        or HEX64.fullmatch(adapter["launch_identity"]) is None
+        or adapter.get("fixture_detected") is not False
+        or type(platform) is not dict
+        or not all(type(platform.get(key)) is str and platform[key].strip() for key in ("system", "arch"))
+        or proof.get("cleanup_empty") is not True
+    ):
+        raise ValueError(f"M5 authentic pass {name} lacks real adapter, platform or clean teardown evidence")
+
+    measurements = proof.get("measurements")
+    selection = measurements.get("selection") if type(measurements) is dict else None
+    source_anchor = measurements.get("source_anchor") if type(measurements) is dict else None
+    if (
+        type(selection) is not dict
+        or selection.get("semantic_object_selected") is not True
+        or selection.get("displayed_frame_identity_matched") is not True
+        or type(source_anchor) is not dict
+        or source_anchor.get("anchor_resolved") is not True
+        or source_anchor.get("source_hash_verified") is not True
+    ):
+        raise ValueError(
+            f"M5 authentic pass {name} lacks semantic selection and source-anchor evidence"
+        )
+
+    if name == "auth_provider_title_edit_undo_reopen":
+        transaction = proof.get("transaction")
+        required_steps = ["prompt", "candidate_validation", "apply", "undo", "reopen"]
+        if (
+            type(transaction) is not list
+            or [step.get("name") for step in transaction if type(step) is dict] != required_steps
+            or any(step.get("passed") is not True for step in transaction if type(step) is dict)
+        ):
+            raise ValueError("M5 authentic provider pass lacks the complete title transaction")
+    elif name == "auth_physical_display_input":
+        if (
+            type(measurements) is not dict
+            or measurements.get("physical_device") is not True
+            or measurements.get("display_input_exercised") is not True
+        ):
+            raise ValueError("M5 physical-input pass lacks physical-device measurements")
+    else:
+        expected_system = "Windows" if name == "auth_windows" else "Darwin"
+        if platform.get("system") != expected_system:
+            raise ValueError(f"M5 authentic pass {name} records the wrong platform")
+
+
+def validate_m5(path, record):
+    required = {"kind", "schema_version", "timestamp", "environment", "gates", "acceptance"}
+    if set(record) != required or record.get("kind") != "m5" or record.get("schema_version") != 1:
+        raise ValueError("Invalid M5 qualification schema")
+    if type(record["timestamp"]) is not str or not record["timestamp"].strip():
+        raise ValueError("Invalid M5 timestamp")
+    try:
+        datetime.fromisoformat(record["timestamp"].replace("Z", "+00:00"))
+    except ValueError as error:
+        raise ValueError("Invalid M5 timestamp") from error
+    environment = record["environment"]
+    if type(environment) is not dict or set(environment) != {
+        "scope", "os", "arch", "sdk_id", "sdk_manifest_sha256"
+    }:
+        raise ValueError("Invalid M5 environment")
+    if any(type(environment.get(key)) is not str or not environment[key].strip() for key in ("scope", "os", "arch", "sdk_id")):
+        raise ValueError("Invalid M5 environment identity")
+    if HEX64.fullmatch(environment["sdk_manifest_sha256"]) is None:
+        raise ValueError("Invalid M5 SDK manifest digest")
+    if type(record["gates"]) is not dict or set(record["gates"]) != set(M5_GATES):
+        raise ValueError("Invalid M5 gates")
+
+    scan_for_secrets(path, "ledger")
+    all_development = True
+    all_gates = True
+    for name, kind in M5_GATES.items():
+        gate = record["gates"][name]
+        if type(gate) is not dict or set(gate) - {
+            "kind", "status", "criteria", "notes", "evidence", "prerequisite"
+        }:
+            raise ValueError(f"Invalid M5 gate: {name}")
+        if gate.get("kind") != kind:
+            raise ValueError(f"M5 gate {name} must be of kind {kind}")
+        status = gate.get("status")
+        if status not in M5_STATUSES:
+            raise ValueError(f"Invalid M5 gate status: {name}")
+        for field in ("criteria", "notes"):
+            if type(gate.get(field)) is not str or not gate[field].strip():
+                raise ValueError(f"Missing M5 gate {field}: {name}")
+        files = evidence_files(path, name, gate.get("evidence", []))
+        for source in files:
+            scan_for_secrets(source, f"evidence of {name}")
+
+        if status == "pass":
+            if not files:
+                raise ValueError(f"{name} claims a pass without evidence")
+            proofs = [evidence_json(source) for source in files]
+            if kind == "development":
+                proofs = [proof for proof in proofs if proof is not None and proof.get("schema") == "m5-development/1"]
+                if not proofs:
+                    raise ValueError(f"{name} has no structured M5 development pass evidence")
+                for proof in proofs:
+                    test_names = proof.get("tests")
+                    if (
+                        proof.get("evidence_kind") != "development"
+                        or proof.get("fixture_only") is not True
+                        or proof.get("gate") != name
+                        or proof.get("result") != "pass"
+                        or type(proof.get("exit_code")) is not int
+                        or proof["exit_code"] != 0
+                        or type(proof.get("command")) is not str
+                        or not proof["command"].strip()
+                        or type(proof.get("passed")) is not int
+                        or proof["passed"] < 1
+                        or type(proof.get("failed")) is not int
+                        or proof["failed"] != 0
+                        or type(test_names) is not list
+                        or any(type(test) is not str for test in test_names)
+                        or not all(
+                            any(required_test in test for test in test_names)
+                            for required_test in M5_REQUIRED_TESTS[name]
+                        )
+                    ):
+                        raise ValueError(f"M5 development pass evidence is incomplete or not bound to {name}")
+                    if name in {
+                        "dev_managed_sdk_title_lookup",
+                        "dev_native_linux_canvas",
+                        "dev_resource_bounds_and_cleanup",
+                        "dev_full_title_edit_apply_undo_reopen",
+                    } and (
+                        proof.get("sdk_id") != environment["sdk_id"]
+                        or proof.get("sdk_manifest_sha256") != environment["sdk_manifest_sha256"]
+                    ):
+                        raise ValueError(f"M5 SDK evidence for {name} is not bound to the recorded manifest")
+                if name == "dev_resource_bounds_and_cleanup":
+                    measurements = [
+                        evidence_json(source)
+                        for source in files
+                        if evidence_json(source) is not None
+                        and evidence_json(source).get("schema") == "m5-resource-measurements/1"
+                    ]
+                    if len(measurements) != 1:
+                        raise ValueError("M5 resource pass must cite exactly one measurement record")
+                    measurement = measurements[0]
+                    source_measurement = measurement.get("source")
+                    frame_measurement = measurement.get("frame")
+                    limits = measurement.get("limits")
+                    integer = lambda value: type(value) is int and value >= 0
+                    if (
+                        measurement.get("fixture_only") is not True
+                        or measurement.get("sdk_id") != environment["sdk_id"]
+                        or measurement.get("sdk_manifest_sha256") != environment["sdk_manifest_sha256"]
+                        or type(measurement.get("rustc_version")) is not str
+                        or not measurement["rustc_version"].strip()
+                        or type(source_measurement) is not dict
+                        or type(frame_measurement) is not dict
+                        or type(limits) is not dict
+                        or limits != {"source_files": 256, "source_bytes": 8 * 1024 * 1024, "frame_objects": 4096}
+                        or source_measurement.get("file_count") != 256
+                        or not integer(source_measurement.get("indexed_bytes"))
+                        or source_measurement["indexed_bytes"] > limits["source_bytes"]
+                        or not integer(source_measurement.get("build_micros"))
+                        or not integer(source_measurement.get("lookup_samples"))
+                        or source_measurement["lookup_samples"] < 1
+                        or not integer(source_measurement.get("lookup_p95_micros"))
+                        or not integer(frame_measurement.get("width"))
+                        or frame_measurement["width"] == 0
+                        or not integer(frame_measurement.get("height"))
+                        or frame_measurement["height"] == 0
+                        or not integer(frame_measurement.get("object_count"))
+                        or not 1 <= frame_measurement["object_count"] <= limits["frame_objects"]
+                        or not integer(frame_measurement.get("serialized_metadata_bytes"))
+                        or not integer(frame_measurement.get("metadata_budget_bytes"))
+                        or frame_measurement["metadata_budget_bytes"] != MAX_M5_METADATA_BYTES - 4096
+                        or frame_measurement["serialized_metadata_bytes"] > frame_measurement["metadata_budget_bytes"]
+                        or frame_measurement.get("worker_overflow_policy") != "reject_without_partial_objects"
+                        or not integer(frame_measurement.get("serialized_bytes_at_object_limit"))
+                        or not integer(frame_measurement.get("objects_excluded_by_metadata_byte_limit"))
+                        or frame_measurement["objects_excluded_by_metadata_byte_limit"]
+                        != limits["frame_objects"] - frame_measurement["object_count"]
+                        or not integer(frame_measurement.get("hit_test_samples"))
+                        or frame_measurement["hit_test_samples"] < 1
+                        or not integer(frame_measurement.get("hit_test_p95_micros"))
+                    ):
+                        raise ValueError("M5 resource measurements are missing, unbounded or not tied to the SDK")
+                if name == "dev_native_linux_canvas" and sum(source.suffix == ".png" for source in files) < 2:
+                    raise ValueError("M5 native canvas pass must cite both inspected interaction screenshots")
+                if name == "dev_managed_sdk_title_lookup":
+                    required_artifacts = {
+                        "m5-managed-title-frame/0.png",
+                        "m5-managed-title-strip.png",
+                        "m5-managed-inspect-summary.json",
+                    }
+                    cited_artifacts = {
+                        source.relative_to(path.parent.resolve()).as_posix() for source in files
+                    }
+                    if not all(
+                        any(path.endswith(f"/{required}") for path in cited_artifacts)
+                        for required in required_artifacts
+                    ):
+                        raise ValueError("M5 managed title pass must cite frame, inspect and strip artifacts")
+            else:
+                proofs = [proof for proof in proofs if proof is not None and proof.get("schema") == "m5-authentic/1"]
+                if not proofs:
+                    raise ValueError(f"{name} has no structured M5 authentic pass evidence")
+                for proof in proofs:
+                    _m5_authentic_contract(name, proof)
+
+        if status in {"not_run", "blocked"}:
+            prerequisite = gate.get("prerequisite")
+            if type(prerequisite) is not str or len(prerequisite.strip()) < 20:
+                raise ValueError(f"{name} is {status} without a stated prerequisite")
+            if files:
+                raise ValueError(f"Unrun M5 gate {name} must not cite evidence")
+        elif "prerequisite" in gate:
+            raise ValueError(f"{name} states a prerequisite although it is {status}")
+        if kind == "development":
+            all_development &= status == "pass"
+        all_gates &= status == "pass"
+
+    acceptance = record["acceptance"]
+    if type(acceptance) is not dict or set(acceptance) != {"development", "full", "reason"}:
+        raise ValueError("Invalid M5 acceptance")
+    if acceptance["development"] not in {"pass", "not_run"} or acceptance["full"] not in {"pass", "not_run"}:
+        raise ValueError("Invalid M5 acceptance status")
+    if type(acceptance["reason"]) is not str or not acceptance["reason"].strip():
+        raise ValueError("Invalid M5 acceptance reason")
+    if (acceptance["development"] == "pass") != all_development:
+        raise ValueError("M5 development acceptance must pass exactly when every development gate passes")
+    if (acceptance["full"] == "pass") != all_gates:
+        raise ValueError("M5 full acceptance must pass exactly when every development and authentic gate passes")
+
+
 def validate(path):
     path = Path(path)
     record = load_record(path)
@@ -772,6 +1072,8 @@ def validate(path):
         validate_m3(path, record)
     elif kind == "m4":
         validate_m4(path, record)
+    elif kind == "m5":
+        validate_m5(path, record)
     else:
         raise ValueError(f"Unsupported qualification kind: {kind}")
     return record
@@ -779,7 +1081,9 @@ def validate(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("records", nargs="*", type=Path, help="ledgers to validate (default: M0, M2 and M3)")
+    parser.add_argument(
+        "records", nargs="*", type=Path, help="ledgers to validate (default: M0, M2, M3, M4 and M5)"
+    )
     args = parser.parse_args()
     for record in args.records or DEFAULT_LEDGERS:
         validate(record)

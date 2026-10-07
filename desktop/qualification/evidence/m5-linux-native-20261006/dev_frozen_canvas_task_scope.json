@@ -1,0 +1,23 @@
+{
+  "schema": "m5-development/1",
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "gate": "dev_frozen_canvas_task_scope",
+  "result": "pass",
+  "exit_code": 0,
+  "command": "cargo test --locked --manifest-path desktop/Cargo.toml -p studio-engine --test agent_task_scope && cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test agent_tools frame_selection_resolve_is_bounded_sorted_and_deduplicated",
+  "tests": [
+    "stale_scene_instances_and_inconsistent_identities_are_refused",
+    "scene_scope_freezes_instance_overlap_and_adjacent_boundaries",
+    "ranges_are_half_open_and_empty_ranges_require_no_frame_evidence",
+    "a_scope_frozen_against_an_adopted_preview_with_generation_zero_is_valid",
+    "scene_source_candidates_are_bounded_exact_and_bound_to_inventory_hashes",
+    "scope_round_trips_and_legacy_whole_project_has_no_compiled_identity",
+    "canvas_packets_freeze_exact_object_or_nonsemantic_rectangle_evidence",
+    "frame_selection_resolve_is_bounded_sorted_and_deduplicated"
+  ],
+  "passed": 8,
+  "failed": 0,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+}

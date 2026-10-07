@@ -1,0 +1,28 @@
+{
+  "schema": "m5-development/1",
+  "evidence_kind": "development",
+  "fixture_only": true,
+  "gate": "dev_identity_and_geometry",
+  "result": "pass",
+  "exit_code": 0,
+  "command": "cargo test --locked --manifest-path fframes-studio-runtime/Cargo.toml --test editor_metadata && cargo test --locked --manifest-path Cargo.toml -p fframes --test editor_identity && cargo test --locked --manifest-path Cargo.toml -p fframes-studio-protocol",
+  "tests": [
+    "active_preview_binds_transformed_video_pixel_geometry_to_exact_frame_and_seek",
+    "semantic_keys_are_reversible_and_repeated_instances_do_not_alias",
+    "explicit_source_anchor_survives_svg_identity_encoding",
+    "annotated_groups_keep_stable_keys_transforms_order_and_video_pixel_bounds",
+    "preview::tests::bounds_audio_records",
+    "preview::tests::rejects_nan_scale_and_stale_identity",
+    "tests::test_payload_length_mismatch_rejected",
+    "tests::test_payload_cap_exceeded_rejected",
+    "tests::test_stride_too_small_rejected",
+    "tests::test_serialization_roundtrip",
+    "tests::test_unsupported_version_rejected",
+    "tests::test_valid_frame_header",
+    "tests::test_zero_dimensions_rejected"
+  ],
+  "passed": 13,
+  "failed": 0,
+  "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v2",
+  "sdk_manifest_sha256": "f800212e456dbb911ec7be55dcc674b73bc86e7f5f52f6faf619f57ea87c11ba"
+}
