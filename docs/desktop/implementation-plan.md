@@ -116,6 +116,8 @@ Execution detail: [Phase 4 step-by-step presets and scoped-editing plan](../../p
 
 ### M5 — Canvas selection and reliable source retrieval
 
+Execution detail: [Phase 5 step-by-step canvas selection and source retrieval plan](../../plans/261006-2010-desktop-phase-five-canvas-selection-source-retrieval/plan.md). Its four sequential execution stages belong to M5 and reuse the implemented M0–M4 foundations. The Linux development implementation is complete: generated projects register stable semantic identities and explicit source anchors; displayed-frame selection and overlap/group cycling use transformed geometry; immutable syntax retrieval powers `selection_context`, `source_lookup` and `style_context`; element and rectangle scopes enter the existing validated edit/Apply/Undo workflow. Managed-SDK rendering, native X11 selection and the full development edit lifecycle are recorded in the [M5 qualification ledger](../../desktop/qualification/m5-results.json). Authenticated-provider, physical-device, Windows and macOS qualification remain separately pending; development evidence is not release qualification.
+
 Add stable scene-instance/component/object IDs and optional source registration to desktop-generated projects. Emit a revision-specific editor index and frame-specific bounds/paint-order metadata. Prove how IDs survive SVG conversion before choosing the final macro/runtime representation.
 
 Implement letterbox/zoom coordinate mapping, topmost object hit testing, group/overlap cycling and source-ref lookup. Begin with explicit source anchors and semantic IDs; add automatic macro spans only after their accuracy and stability are demonstrated.

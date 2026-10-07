@@ -248,21 +248,36 @@ A timeline selection is an editing scope, not a guarantee that only those frames
 
 ### Stable identities for element selection
 
-Introduce an opt-in editor annotation/registration API for generated projects. Its exact syntax needs a macro/runtime spike, but its data contract should carry:
+The opt-in editor contract is implemented by `Video::editor_instance_key`,
+`Scene::editor_instance_key`, and `fframes::EditorObjectKey`. A registration starts with
+`EditorObjectKey::new(scene_instance, component, object, repeat)`, with all four nonempty,
+printable, bounded author keys. Apply `.with_source_anchor("src/lib.rs", "render_frame",
+Some("unique-marker"))` only for an explicit source hint, and `.with_style_tokens([...])` only
+for registered token bindings. `render_id()` produces a reversible SVG ID; annotate a rendered
+group with it. The generated starter does this once in `StudioVideo::new` and reads resolved
+style fields in `render_frame`. Content, typography, paint order and position do not define the
+identity. Repeated instances require distinct repeat keys. An absent anchor is normal and never
+implies that the application knows the source span.
 
-- Stable scene-instance ID separate from a Rust type name or timeline index.
-- Stable element/component ID plus an instance key for repeated/generated elements.
-- Source anchor: workspace-relative file, symbol/component and revision-validated span.
-- Frame-specific transformed bounds, visibility and paint order.
-- Optional text, media reference and style-token bindings.
+The renderer converts these IDs into an editor index plus frame-specific object geometry. The
+scaled-frame response carries metadata atomically with the image: its envelope supplies the
+complete `PreviewIdentity` and request ID; metadata names the frame/seek, full video-pixel
+dimensions, identity-index and geometry digests, parent, optional anchor/token bindings, bounds,
+paint order and `ExactBounds` / `ApproximateBounds` / `Unsupported` support. Worker negotiation
+adds `editor_frame_v1` as an optional capability, so older M2 workers continue image/audio
+preview while exact-object selection remains unavailable. The current contract caps each frame
+at 4,096 objects and metadata at 1 MiB. Invalid or over-limit metadata disables semantic
+selection visibly instead of publishing a partial list as complete.
 
-A lexical static_hash is a rendering-cache identity. It changes with markup, can be shared by identical subtrees and does not distinguish dynamic instances; it must not be the editor object ID.
-
-For initial templates, explicit semantic IDs and source registration can precede automatic macro span capture. Later extend svgr! output with optional sidecar source metadata. Determine which Rust span/location APIs and renderer conversion stages preserve useful anchors; do not assume source spans are already available from the final SVG.
+A lexical `static_hash` remains a rendering-cache identity. It changes with markup, can be shared
+by identical subtrees and does not distinguish dynamic instances; it must never be the editor
+object ID. Automatic macro source locations are not claimed: registered anchors resolve only
+against hash-verified immutable project source and must identify a unique marker within the named
+Rust symbol.
 
 ### Hit testing
 
-Map the pointer through preview letterboxing/zoom into video coordinates. Query metadata from the exact displayed frame and revision. Start with transformed bounds and topmost selection, plus a list to cycle through overlapping groups. Treat text outlines, clips, masks, opacity and shader content conservatively.
+`studio-engine::CanvasViewport` maps logical pointer coordinates through fit/letterboxing, pointer-centred zoom and pan into full-resolution video pixels. It uses the same transform for image and overlay and clamps rectangle endpoints to the painted image. `hit_test` accepts only metadata for the exact displayed frame/seek/geometry digest; topmost paint order wins, while cycling exposes overlapping objects and parent groups. A selection is retained across frames only when its full semantic tuple is present under the same preview identity. New source, a stale reply, an absent object or malformed metadata clears/refuses it; it is never rebound by display name, index or nearby bounds. Click pauses at the painted frame. Shift-drag creates a clamped nonsemantic rectangle; Escape clears the object selection. Legacy/unannotated workers preserve preview, timeline and scene/range workflows with a visible selection-unavailable reason.
 
 Bounding-box selection is approximate for non-rectangular objects. A shader/video layer is selectable as a layer; an arbitrary pixel inside it is not necessarily a separately editable object. Fall back to a rectangle/time selection with a screenshot when no semantic object is available.
 
@@ -338,7 +353,7 @@ The existing skill is a starting point, but desktop instructions should route pr
 
 For the first integration slice, Studio can build a project once and invoke its compiled CLI for timeline JSON, PNG frames, inspection and a cached draft MP4. This proves the authoring loop. It does not establish smooth interactive frame generation.
 
-The implemented M2 path keeps the concrete Video, media provider, Previewer and CPU renderer caches alive in an immutable project worker. Its additive `--preview-worker` contract negotiates hello, timeline, scaled frames, inspection, prepared PCM/windows and shutdown; the legacy `--worker` route remains unchanged. Standard output carries bounded JSON control; pixels and PCM windows use a loopback binary transport. Element metadata and export remain separate later scope.
+The implemented M2 path keeps the concrete Video, media provider, Previewer and CPU renderer caches alive in an immutable project worker. Its additive `--preview-worker` contract negotiates hello, timeline, scaled frames, inspection, prepared PCM/windows and shutdown; the legacy `--worker` route remains unchanged. Standard output carries bounded JSON control; pixels and PCM windows use a loopback binary transport. Optional M5 element metadata and source retrieval are described in section 6; export remains later scope.
 
 Each message includes protocol version, project/source revision, worker generation and request ID. A paused seek is latest-wins. Reject late results from superseded requests or old renderer generations. On a successful rebuild, start a new worker, prepare its first frame, then switch atomically at the UI model level while preserving/clamping playhead and selection.
 
@@ -373,16 +388,29 @@ Expose a narrow task-scoped MCP server and an equivalent local CLI facade:
 | Tool                        | Purpose                                                   |
 | --------------------------- | --------------------------------------------------------- |
 | project_context             | Project revision, target format, files and active preset  |
-| selection_context           | Frozen selection packet and source anchors                |
-| source_lookup               | Resolve IDs/symbols to relevant source and dependencies   |
+| selection_context           | Frame/seek plus an optional complete semantic tuple and geometry-digest assertion; returns the revision-bound selected object/active scenes or an explicit unannotated/unavailable result |
+| source_lookup               | A project-relative Rust path + symbol + optional unique marker, or a full object tuple with frame/seek; returns hash-bound syntax snippets, containing implementation, bounded helper candidates and uncertainty |
 | timeline                    | Compiled scene/audio structure                            |
 | render_frame / render_strip | Return image artifacts for a requested revision/range     |
 | inspect                     | Structured diagnostics tied to frames/scenes              |
 | audio_analyze / audio_at    | Mix quality and placement evidence                        |
-| style_context               | Resolved tokens, overrides, guidance and available assets |
+| style_context               | An optional registered object tuple/token; returns the immutable preset/token snapshot, origin and explicit binding status (never infers a token from a literal) |
 | build_status                | Current candidate artifact and compiler diagnostics       |
 
-The agent retains its own coding tools. fframes tools should neither accept arbitrary shell commands nor provide a second unrestricted filesystem interface. Bind them to the session's project/draft/revision and route expensive operations through the build/preview coordinator so duplicate requests share work.
+All nine read-only methods share one app-owned task capability and dispatcher across the GUI,
+`studio-tools` and `studio-mcp`; the three selection/retrieval calls use the same project and
+revision checks and reply budgets as the original six. `source_lookup` indexes only immutable,
+inventory-hash-verified Rust bytes: no `rustc`, macro execution, app-local files or arbitrary
+path reads. The syntax index is deterministic and bounded to 256 Rust files / 1 MiB per file /
+8 MiB total; lookups return at most eight 4 KiB snippets and 32 KiB of text, with helper
+exploration bounded to depth two and 32 edges. Omitted files may be read on demand only through
+their immutable checkpoint object and the same per-file/hash checks. Parse failures, duplicate
+markers, ambiguity, truncation, cfg/macros and non-type-resolved helper candidates stay explicit
+in results. Indexes are derived per revision and capped at four entries / 32 MiB. A task's frozen
+base selection remains queryable while its writer is active; draft requests continue through the
+existing writer gate and never silently substitute base bytes. The agent retains its own coding
+tools. fframes tools neither accept arbitrary shell commands nor provide a second unrestricted
+filesystem interface.
 
 Return image artifacts in a supported form and with size limits; include text diagnostics for providers without visual input. Project build dependencies and toolchains are managed by the app's build service, not repeatedly installed by each agent.
 
