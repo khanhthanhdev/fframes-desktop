@@ -178,12 +178,13 @@ pub fn materialize_in_environment(
             &sdk,
             &compatibility,
         )?;
-        atomic_write(
-            &root.join(file.path.as_str()),
-            toml::to_string_pretty(&cargo)
-                .map_err(|e| error(&root, e.to_string()))?
-                .as_bytes(),
-        )?;
+        let cargo_path = root.join(file.path.as_str());
+        let cargo_text =
+            toml::to_string_pretty(&cargo).map_err(|e| error(&cargo_path, e.to_string()))?;
+        // This tree is private staging, not the user's portable project. Replace the
+        // copied manifest directly: atomic rename-over-existing is not supported on Windows.
+        fs::write(&cargo_path, cargo_text.as_bytes())
+            .map_err(|e| error(&cargo_path, e.to_string()))?;
     }
     fs::create_dir_all(root.join(".cargo")).map_err(|e| error(&root, e.to_string()))?;
     let vendor = sdk.join("framework/vendor");

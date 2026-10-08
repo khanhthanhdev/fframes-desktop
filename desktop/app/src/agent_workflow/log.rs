@@ -433,7 +433,9 @@ impl RowStore {
     fn append_dirty(&mut self) -> Result<(), LogError> {
         let file = OpenOptions::new()
             .create(true)
-            .append(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
             .open(&self.path)
             .map_err(io_err)?;
         let pending = self.repair;
@@ -444,6 +446,8 @@ impl RowStore {
             }
             None => self.file_len,
         };
+        let mut file = file;
+        file.seek(SeekFrom::End(0)).map_err(io_err)?;
         let mut writer = BufWriter::new(file);
         let mut written = 0u64;
         let result = (|| -> Result<(), LogError> {
