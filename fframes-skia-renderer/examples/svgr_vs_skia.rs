@@ -186,10 +186,7 @@ fn main() {
     let decoders = VideoDecodersWorker::new(1);
     let mut converter_cache = usvgr::Cache::new_with_text_cache(10);
 
-    println!(
-        "low-poly-art owl @ {}x{}, {} frames, single thread\n",
-        WIDTH, HEIGHT, frames
-    );
+    println!("low-poly-art owl @ {WIDTH}x{HEIGHT}, {frames} frames, single thread\n");
 
     let start = Instant::now();
     let trees: Vec<usvgr::Tree> = (0..frames)

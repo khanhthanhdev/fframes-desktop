@@ -1,5 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
+use fframes::usvgr::ahash::AHashMap;
 use fframes::{ShaderDraw, ShaderUniformValue, usvgr};
 use skia_safe::runtime_effect::{ChildPtr, ChildType, uniform};
 use skia_safe::{Canvas, Data, Paint, Rect, RuntimeEffect};
@@ -24,7 +25,7 @@ pub fn compile_shader(shader: &fframes::Shader) -> Result<RuntimeEffect, String>
 pub(super) struct ShaderCache {
     /// `Shader::id` → compiled effect, or `None` when compilation failed
     /// (the error was logged and the layer is skipped from then on).
-    effects: HashMap<u64, Option<RuntimeEffect>>,
+    effects: AHashMap<u64, Option<RuntimeEffect>>,
     warned: HashSet<(u64, String)>,
 }
 

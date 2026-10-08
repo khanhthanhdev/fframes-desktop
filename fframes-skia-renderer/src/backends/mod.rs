@@ -2,14 +2,95 @@
 pub mod metal;
 #[cfg(feature = "vulkan")]
 pub mod vulkan;
+#[cfg(feature = "vulkan")]
+pub(crate) mod vulkan_readback;
 
-use fframes::FFramesRendererResult;
+use fframes::{EncoderInput, FFramesRendererError, FFramesRendererResult, VideoEncoderInfo};
 use skia_safe::{Surface, gpu::DirectContext, surfaces};
 
-use crate::SkiaFFramesRenderer;
+use crate::{HardwareFrameTarget, SkiaFFramesRenderer};
+
+/// The lock of the GPU queue a context submits to, see [`SkiaContext::queue_lock`].
+pub type QueueLock = std::sync::Arc<std::sync::Mutex<()>>;
+
+/// Holds `lock` (when there is one) until the guard is dropped.
+pub fn lock_queue(lock: Option<&QueueLock>) -> Option<std::sync::MutexGuard<'_, ()>> {
+    lock.map(|lock| {
+        lock.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    })
+}
+
+/// Reads the pixels of a GPU surface without keeping the queue of its context busy, see
+/// [`SkiaContext::reader`].
+pub trait SurfaceReader {
+    /// Submits everything drawn with `gpu` followed by a copy of `surface`, waits for the
+    /// copy and writes it to `pixels`: rows of `width * 4` bytes without padding, in the
+    /// byte order of the surface (which has to be RGBA or BGRA 8888).
+    ///
+    /// The queue is only held while submitting, not while the GPU works.
+    fn read(
+        &mut self,
+        gpu: &mut DirectContext,
+        surface: &mut Surface,
+        pixels: &mut [u8],
+    ) -> FFramesRendererResult<()>;
+}
+
+/// A GPU context of a backend with a surface to draw into.
+pub struct SkiaContext {
+    pub surface: Surface,
+    /// `None` for backends that render on the CPU.
+    pub gpu: Option<DirectContext>,
+    /// A Vulkan queue must not be used from two threads at once, and a device can have
+    /// fewer queues than a render has GPU contexts (integrated GPUs expose a single one).
+    /// Contexts that share a queue share this lock; whoever drives a context holds it
+    /// around every call that reaches the queue: a flush that submits, a pixel readback,
+    /// dropping the context. `None` when the backend needs no such lock.
+    pub queue_lock: Option<QueueLock>,
+    /// The fast way to read surfaces of this context back when the queue is shared.
+    /// Without it Skia's own readback is used under [`Self::queue_lock`].
+    pub reader: Option<Box<dyn SurfaceReader>>,
+}
 
 pub trait SkiaBackend: Sync + Send {
     fn create_skia_surface(&self) -> FFramesRendererResult<(Surface, Option<DirectContext>)>;
+
+    /// Like [`Self::create_skia_surface`], with what the context needs to share its GPU
+    /// queue with other contexts of the backend.
+    fn create_skia_context(&self) -> FFramesRendererResult<SkiaContext> {
+        let (surface, gpu) = self.create_skia_surface()?;
+        Ok(SkiaContext {
+            surface,
+            gpu,
+            queue_lock: None,
+            reader: None,
+        })
+    }
+
+    /// Offers hardware frames to the video encoder of a render: textures Skia draws into and
+    /// the encoder reads, so the pixels never leave the GPU. Called once per render before
+    /// the encoders are opened.
+    ///
+    /// `None` (the default) when the backend has no such frames for this encoder; the
+    /// frames are converted to its pixel format and read back then.
+    fn negotiate_hardware_frames(&self, _encoder: &VideoEncoderInfo<'_>) -> Option<EncoderInput> {
+        None
+    }
+
+    /// A new GPU context together with the frames negotiated by
+    /// [`Self::negotiate_hardware_frames`] that are rendered on it. Called on every GPU
+    /// thread of a render.
+    fn hardware_frame_target(
+        &self,
+        _input: &EncoderInput,
+        _width: i32,
+        _height: i32,
+    ) -> FFramesRendererResult<(DirectContext, Box<dyn HardwareFrameTarget>)> {
+        Err(FFramesRendererError::Skia(
+            "this Skia backend has no hardware frames".to_owned(),
+        ))
+    }
 }
 
 #[derive(Clone, Copy)]

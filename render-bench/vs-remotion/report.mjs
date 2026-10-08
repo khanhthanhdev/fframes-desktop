@@ -1,62 +1,89 @@
-function median(values) {
-  const sorted = [...values].sort((a, b) => a - b);
-  return sorted[Math.floor(sorted.length / 2)];
-}
+export const engines = [
+  "fframes",
+  "fframes-gpu",
+  "remotion-ffmpeg",
+  "remotion-mediabunny",
+];
+const labels = {
+  fframes: "fframes CPU (tiny-skia)",
+  "fframes-gpu": "fframes + Skia GPU",
+  "remotion-ffmpeg": "Remotion + FFmpeg",
+  "remotion-mediabunny": "Remotion + MediaBunny",
+};
+
 export function summarize(records, plan) {
-  const native = records.filter(r => r.engine === "fframes");
-  const browser = records.filter(r => r.engine === "remotion");
-  const gpu = records.filter(r => r.engine === "fframes-gpu");
-  const valid = runs =>
-    runs.length === plan.rounds &&
-    new Set(runs.map(r => r.round)).size === plan.rounds &&
-    runs.every(
-      r =>
-        r.status === "ok" &&
-        r.samples?.length === plan.frames &&
-        r.samples.every(
-          (s, i) =>
-            s.frame === plan.warmup + i &&
-            Number.isFinite(s.total_ms) &&
-            s.total_ms > 0
-        )
-    );
-  const complete = valid(native) && valid(browser);
-  const gpuComplete = valid(gpu);
-  const gpuSkipped =
-    gpu.length === plan.rounds && gpu.every(r => r.status === "skipped");
-  const total = r => r.samples.reduce((n, s) => n + s.total_ms, 0);
-  const fframes = complete ? median(native.map(total)) : null;
-  const remotion = complete ? median(browser.map(total)) : null;
-  const gpuMs = gpuComplete ? median(gpu.map(total)) : null;
+  const results = Object.fromEntries(
+    engines.map(engine => {
+      const runs = records.filter(r => r.engine === engine);
+      const complete =
+        runs.length === plan.rounds &&
+        new Set(runs.map(r => r.round)).size === plan.rounds;
+      const skipped =
+        engine === "fframes-gpu" &&
+        complete &&
+        runs.every(r => r.status === "skipped");
+      const valid =
+        complete &&
+        runs.every(
+          r =>
+            r.status === "ok" &&
+            r.video?.frames === plan.frames &&
+            Number.isFinite(r.export_ms) &&
+            r.export_ms > 0 &&
+            (engine === "remotion-mediabunny"
+              ? r.encoder === "webcodecs-h264"
+              : ["libx264", "h264_videotoolbox"].includes(r.encoder))
+        );
+      return [
+        engine,
+        {
+          status: skipped ? "skipped" : valid ? "complete" : "incomplete",
+          export_ms: valid ? runs[0].export_ms : null,
+          ...(skipped ? { reason: runs[0].reason } : {}),
+        },
+      ];
+    })
+  );
   return {
-    status: complete && (gpuComplete || gpuSkipped) ? "complete" : "incomplete",
-    fframes_median_ms: fframes,
-    remotion_median_ms: remotion,
-    speedup: complete ? remotion / fframes : null,
-    gpu_median_ms: gpuMs,
-    gpu_speedup: complete && gpuComplete ? remotion / gpuMs : null,
-    gpu_status: gpuSkipped
-      ? "skipped"
-      : gpuComplete
-        ? "complete"
-        : "incomplete",
-    gpu_skip_reason: gpuSkipped ? gpu[0].reason : null,
+    status: Object.values(results).every(r => r.status !== "incomplete")
+      ? "complete"
+      : "incomplete",
+    pipelines: results,
   };
 }
+
 export function markdown(report) {
-  const result = report.summary;
+  const result = report.summary.pipelines;
+  const speedup = (engine, baseline) => {
+    const time = result[engine].export_ms;
+    const reference = result[baseline].export_ms;
+    return time && reference ? `${(reference / time).toFixed(2)}×` : "n/a";
+  };
+  const rows = engines.map(engine => {
+    const run = result[engine];
+    const encoder =
+      report.records.find(r => r.engine === engine && r.status === "ok")
+        ?.encoder ?? "n/a";
+    const time =
+      run.status === "skipped"
+        ? `skipped: ${run.reason}`
+        : run.export_ms == null
+          ? "incomplete"
+          : `${(run.export_ms / 1000).toFixed(3)} s`;
+    return `| ${labels[engine]} | ${encoder} | ${time} | ${speedup(engine, "remotion-ffmpeg")} | ${speedup(engine, "remotion-mediabunny")} |`;
+  });
   return [
-    "# fframes + Skia vs Remotion",
+    "# fframes vs Remotion + FFmpeg and Remotion + MediaBunny",
     "",
-    "100,000 elements: 99,000 rectangles and 1,000 changing text digits. Remotion uses an unkeyed list with 12 dependent effect/state updates per element. All render the same 1000×1000 scene serially, without a video encoder.",
+    report.workload,
     "",
-    "Median of 3 rounds, each with 3 warm-up and 30 measured frames. PNG compression is included; startup, warm-up and disk writes are excluded.",
+    "One complete 300-frame (10-second) H.264 MP4 export per pipeline, after a three-frame MP4 warm-up. No audio. Includes rendering, pixel conversion, encoder setup, encoding, draining, muxing and file writes. Compilation, media preparation, browser launch, bundling and warm-up are excluded. MediaBunny writes to the browser’s origin-private file system; copying the completed file to the host for validation is excluded. Output frame counts and durations are checked after timing.",
     "",
-    "| Renderer | Median for 30 frames | Speedup vs Remotion |",
-    "|---|---:|---:|",
-    `| fframes + Skia CPU | ${result.fframes_median_ms?.toFixed(2) ?? "incomplete"} ms | ${result.speedup?.toFixed(2) ?? "n/a"}× |`,
-    `| fframes + Skia GPU | ${result.gpu_status === "skipped" ? `skipped: ${result.gpu_skip_reason}` : `${result.gpu_median_ms?.toFixed(2) ?? "incomplete"} ms`} | ${result.gpu_speedup?.toFixed(2) ?? "n/a"}× |`,
-    `| Remotion | ${result.remotion_median_ms?.toFixed(2) ?? "incomplete"} ms | — |`,
+    "| Pipeline | Encoder | Complete MP4 export | Speedup vs Remotion + FFmpeg | Speedup vs Remotion + MediaBunny |",
+    "|---|---|---:|---:|---:|",
+    ...rows,
+    "",
+    "30 fps, 8 Mbps target, GOP 30, no audio. fframes CPU uses all available logical cores; Skia uses MaxPerformance with the default worker pool. Remotion + FFmpeg uses 18 browser tabs, capped by the available logical cores, with its default browser graphics settings. CPU uses x264 medium. Skia GPU and Remotion + FFmpeg require hardware VideoToolbox on macOS and use x264 elsewhere; native encoders use one codec thread per segment. MediaBunny uses WebCodecs H.264 with prefer-hardware; Chrome controls encoder selection and threading. Hardware preference does not prove which encoder Chrome selected. Equal bitrate targets do not guarantee equal image quality. Browser executables and versions are recorded separately for each Remotion path.",
     "",
   ].join("\n");
 }

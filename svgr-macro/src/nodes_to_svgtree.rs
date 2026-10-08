@@ -164,6 +164,21 @@ fn points_to_segments(value: &str, element: EId) -> Option<Vec<PathSegment>> {
     Some(segments)
 }
 
+/// Attributes usvgr reads a color from. Only these get a static `Color`: any other attribute
+/// keeps its text, so `id="gold"` or `href="#abc"` stay strings instead of silently losing
+/// the element its id or reference.
+fn accepts_color(aid: AId) -> bool {
+    matches!(
+        aid,
+        AId::Fill
+            | AId::Stroke
+            | AId::StopColor
+            | AId::FloodColor
+            | AId::LightingColor
+            | AId::Color
+    )
+}
+
 fn inline_attribute_value(value: &str, aid: AId, element: EId) -> TokenStream {
     // Special handling for path data - parse at compile time
     if aid == AId::D {
@@ -199,7 +214,10 @@ fn inline_attribute_value(value: &str, aid: AId, element: EId) -> TokenStream {
                 SvgAttributeValue::Float(#float, StringStorage::Borrowed(#value))
             }
         }
-    } else if let Ok(color) = svgtree::svgrtypes::Color::from_str(value) {
+    } else if let Some(color) = accepts_color(aid)
+        .then(|| svgtree::svgrtypes::Color::from_str(value).ok())
+        .flatten()
+    {
         quote! {
             SvgAttributeValue::Color(#color)
         }

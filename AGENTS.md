@@ -274,7 +274,6 @@ my-video/
   media/              # embedded by include_media_dir! (a DM Sans font to start with)
   src/lib.rs          # the Video from the template
   src/main.rs         # fframes::cli (render, frame, strip, onion, svg, timeline, inspect, snapshot, audio)
-  tests/frames.rs     # frame snapshots + "no warnings in any frame"
 ```
 
 For the web editor copy `examples/hello-world/editor` next to it and adapt step 9; gate the
@@ -617,6 +616,22 @@ Global flags: `--json` (one JSON document on stdout, JSON progress events on std
   (`features = ["vulkan"]`; `new_metal` with `metal`). The Skia backend walks the `svgr!` tree
   directly and caches static subtrees as pictures; it is roughly 10x faster than the CPU
   backend on 1080p (see `cargo run --release -p fframes_skia_renderer --features vulkan --example svgr_vs_skia`).
+- The Skia backend hands frames to the encoder the fastest way both support
+  (`SkiaFFramesRenderer::frame_export(SkiaFrameExport::Auto)`, the default):
+  1. hardware frames, the encoder reads the texture Skia drew and nothing is read back:
+     `h264_videotoolbox`/`hevc_videotoolbox` with `new_metal`, and `h264_vulkan`/`hevc_vulkan`
+     with `SkiaVulkanCtx::new_shared_with_encoder(W, H)` and
+     `fframes_skia_renderer = { features = ["vulkan-video"] }` (the driver needs Vulkan Video
+     encode). Only when the requested `pixel_format` is `yuv420p` (the default) or `nv12`;
+  2. conversion on the GPU for `yuv420p`, `nv12`, `nv21`, `yuva420p`, `yuv422p` and `yuv444p`: only
+     the converted planes are read back;
+  3. RGBA readback and conversion on the CPU for every other pixel format
+     (`SkiaFrameExport::CpuConversion` forces it). The CPU backend always converts this way.
+
+  A backend of your own implements
+  `FFramesRenderBackend::negotiate_encoder_input` (a software format or
+  `EncoderInput::hardware_frames`) and `encoder_frame_renderer`, which returns libav frames
+  (`fframes::VideoFrame`) for `SegmentWriter::submit_frame`.
 - macOS: request `hevc_videotoolbox` only with `fframes = { features = ["videotoolbox"] }`
   (see `examples/teej-podcast/Cargo.toml`), otherwise the encoder silently falls back.
 - In code: `fframes::Previewer::new(&video, &options)` keeps fonts, images and caches between
@@ -665,7 +680,6 @@ $R strip -n 12                      # overall flow; `strip Intro -n 8` for one s
 $R frame Intro@end,Outro@50%        # full size details, check text stays inside its boxes
 $R audio analyze --waveform w.png   # levels, silence, cue positions
 $R render                           # final file
-cargo test -p my-video              # frame snapshots
 just clippy && cargo fmt --all && just check-wasm my-video   # if it has an editor bridge
 ```
 

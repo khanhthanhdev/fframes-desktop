@@ -1,4 +1,4 @@
-use crate::SkiaBackend;
+use crate::{SkiaBackend, SkiaContext, lock_queue};
 use fframes::{
     Color, FFramesRendererError, FFramesRendererResult, FrameRenderer, RgbaFrame, usvgr,
 };
@@ -11,9 +11,20 @@ pub fn surface_with_size<TBackend: SkiaBackend + ?Sized>(
     width: i32,
     height: i32,
 ) -> FFramesRendererResult<(Surface, Option<gpu::DirectContext>)> {
-    let (surface, mut gpu_context) = backend.create_skia_surface()?;
-    if surface.width() == width && surface.height() == height {
-        return Ok((surface, gpu_context));
+    let context = context_with_size(backend, width, height)?;
+    Ok((context.surface, context.gpu))
+}
+
+/// [`surface_with_size`] with everything else of the new context, see
+/// [`SkiaBackend::create_skia_context`].
+pub fn context_with_size<TBackend: SkiaBackend + ?Sized>(
+    backend: &TBackend,
+    width: i32,
+    height: i32,
+) -> FFramesRendererResult<SkiaContext> {
+    let mut context = backend.create_skia_context()?;
+    if context.surface.width() == width && context.surface.height() == height {
+        return Ok(context);
     }
 
     let info = ImageInfo::new(
@@ -22,7 +33,7 @@ pub fn surface_with_size<TBackend: SkiaBackend + ?Sized>(
         AlphaType::Premul,
         None,
     );
-    let surface = match gpu_context.as_mut() {
+    context.surface = match context.gpu.as_mut() {
         Some(gpu_context) => gpu::surfaces::render_target(
             gpu_context,
             gpu::Budgeted::Yes,
@@ -39,7 +50,7 @@ pub fn surface_with_size<TBackend: SkiaBackend + ?Sized>(
         FFramesRendererError::Skia(format!("can not create a {width}x{height} surface"))
     })?;
 
-    Ok((surface, gpu_context))
+    Ok(context)
 }
 
 /// Scales the canvas so `tree` fills `width`x`height`, see `fframes::fit_transform`.
@@ -54,21 +65,64 @@ pub fn apply_fit(canvas: &Canvas, tree: &usvgr::Tree, width: i32, height: i32) {
 /// GPU context and render cache between frames.
 pub struct SkiaFrameRenderer<'a, TBackend: SkiaBackend> {
     backend: &'a TBackend,
-    surface: Option<(Surface, Option<gpu::DirectContext>)>,
+    cache_config: crate::SkiaCacheConfig,
+    surface: Option<SkiaContext>,
     render_cache: crate::render::RenderCache,
+}
+
+impl<TBackend: SkiaBackend> SkiaFrameRenderer<'_, TBackend> {
+    /// Drops the surface and its GPU context. Destroying a context waits for its queue.
+    fn release_surface(&mut self) {
+        if let Some(SkiaContext {
+            surface,
+            gpu,
+            queue_lock,
+            reader,
+        }) = self.surface.take()
+        {
+            // what lives on the context goes first
+            self.render_cache = crate::render::RenderCache::with_config(self.cache_config);
+            drop(surface);
+            drop(reader);
+            let _queue = lock_queue(queue_lock.as_ref());
+            drop(gpu);
+        }
+    }
+}
+
+impl<TBackend: SkiaBackend> Drop for SkiaFrameRenderer<'_, TBackend> {
+    fn drop(&mut self) {
+        self.release_surface();
+    }
 }
 
 impl<'a, TBackend: SkiaBackend> SkiaFrameRenderer<'a, TBackend> {
     pub fn new(backend: &'a TBackend) -> Self {
         Self {
             backend,
+            cache_config: crate::SkiaCacheConfig::default(),
             surface: None,
             render_cache: crate::render::RenderCache::new(),
         }
     }
+
+    /// Uses these cache limits for subsequent frames. Clears previously cached render resources.
+    pub fn with_cache_config(mut self, config: crate::SkiaCacheConfig) -> Self {
+        self.cache_config = config;
+        self.render_cache = crate::render::RenderCache::with_config(config);
+        self
+    }
 }
 
 impl<TBackend: SkiaBackend> FrameRenderer for SkiaFrameRenderer<'_, TBackend> {
+    fn fast_shapes(&self) -> bool {
+        true
+    }
+
+    fn svg_text_cache_capacity(&self) -> Option<usize> {
+        Some(self.cache_config.text_capacity)
+    }
+
     fn render_tree(
         &mut self,
         tree: &usvgr::Tree,
@@ -77,10 +131,16 @@ impl<TBackend: SkiaBackend> FrameRenderer for SkiaFrameRenderer<'_, TBackend> {
         height: u32,
     ) -> FFramesRendererResult<RgbaFrame> {
         let (w, h) = (width as i32, height as i32);
-        if !matches!(&self.surface, Some((s, _)) if s.width() == w && s.height() == h) {
-            self.surface = Some(surface_with_size(self.backend, w, h)?);
+        if !matches!(&self.surface, Some(c) if c.surface.width() == w && c.surface.height() == h) {
+            self.release_surface();
+            self.surface = Some(context_with_size(self.backend, w, h)?);
         }
-        let (surface, gpu_context) = self.surface.as_mut().expect("surface was just created");
+        let SkiaContext {
+            surface,
+            gpu: gpu_context,
+            queue_lock,
+            ..
+        } = self.surface.as_mut().expect("surface was just created");
 
         let canvas = surface.canvas();
         canvas.clear(skia_safe::Color::from_argb(
@@ -94,6 +154,8 @@ impl<TBackend: SkiaBackend> FrameRenderer for SkiaFrameRenderer<'_, TBackend> {
         crate::render::render_tree(tree, canvas, &mut self.render_cache);
         canvas.restore();
 
+        // the flush and the readback submit to the queue of the context
+        let _queue = lock_queue(queue_lock.as_ref());
         if let Some(gpu_context) = gpu_context.as_mut() {
             gpu_context.flush_submit_and_sync_cpu();
         }

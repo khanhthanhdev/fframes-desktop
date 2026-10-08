@@ -38,6 +38,13 @@ impl<TBackend: SkiaBackend> InstantRenderingGPUBackend<TBackend> {
         })
     }
 
+    /// Applies cache limits to instant rendering and clears cached resources.
+    pub fn with_cache_config(mut self, config: crate::SkiaCacheConfig) -> Self {
+        self.converter_cache = usvgr::Cache::new_with_text_cache(config.text_capacity);
+        self.render_cache = crate::render::RenderCache::with_config(config);
+        self
+    }
+
     pub fn new_from_existing_texture(
         backend: TBackend,
         surface: Surface,
@@ -82,6 +89,7 @@ impl InstantRenderingVideoCtx<'_> {
 
         let usvg_options = usvgr::Options {
             font_family: "Arial".to_string(),
+            fast_shapes: true,
             ..Default::default()
         };
 

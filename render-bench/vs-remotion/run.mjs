@@ -2,19 +2,29 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { isolated } from "./process.mjs";
 import { createHash } from "node:crypto";
 import { bundle } from "@remotion/bundler";
-import {
-  openBrowser,
-  selectComposition,
-  renderFrames,
-} from "@remotion/renderer";
-import { summarize, markdown } from "./report.mjs";
+import { remotionWorker } from "./web.mjs";
+import { ffmpegWorker } from "./ffmpeg.mjs";
+import { engines, summarize, markdown } from "./report.mjs";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "../..");
 const args = process.argv.slice(2);
+if (process.platform === "darwin") {
+  const awake = spawn(
+    "/usr/bin/caffeinate",
+    ["-i", "-w", String(process.pid)],
+    {
+      stdio: "ignore",
+    }
+  );
+  awake.on("error", error =>
+    console.error(`Preventing idle sleep failed: ${error}`)
+  );
+  awake.unref();
+}
 const option = (name, fallback) => {
   const i = args.indexOf(`--${name}`);
   return i < 0 ? fallback : args[i + 1];
@@ -22,75 +32,52 @@ const option = (name, fallback) => {
 const git = (...a) =>
   execFileSync("git", ["-C", root, ...a], { encoding: "utf8" }).trim();
 
-async function remotionWorker(config) {
-  const chromiumOptions = { disableWebSecurity: false };
-  const browser = await openBrowser("chrome", {
-    browserExecutable: config.chrome,
-    chromiumOptions,
-    logLevel: "error",
-  });
-  try {
-    const composition = await selectComposition({
-      serveUrl: config.bundle,
-      id: "MixedGrid",
-      puppeteerInstance: browser,
-      timeoutInMilliseconds: config.timeout,
-      logLevel: "error",
-    });
-    const samples = [];
-    const images = new Map();
-    let dom;
-    await renderFrames({
-      composition,
-      serveUrl: config.bundle,
-      puppeteerInstance: browser,
-      concurrency: 1,
-      frameRange: [0, config.warmup + config.frames - 1],
-      imageFormat: "png",
-      outputDir: null,
-      timeoutInMilliseconds: config.timeout,
-      logLevel: "error",
-      onStart: ({ parallelEncoding, resolvedConcurrency }) => {
-        if (parallelEncoding || resolvedConcurrency !== 1)
-          throw new Error("unexpected Remotion rendering pipeline");
-      },
-      onFrameBuffer: async (buffer, frame) => {
-        if (frame >= config.warmup) images.set(frame, buffer);
-        // Inspect the real Remotion page during warm-up, outside measured frames.
-        if (frame === config.warmup - 1) {
-          for (const page of await browser.pages()) {
-            const counts = await page.evaluate(() => ({
-              rectangles: document.querySelectorAll("svg rect").length,
-              texts: document.querySelectorAll("svg text").length,
-            }));
-            if (counts.rectangles + counts.texts === config.nodes) dom = counts;
-          }
-          if (!dom || dom.texts !== Math.ceil(config.nodes / 100))
-            throw new Error("incorrect Remotion DOM element count");
-        }
-      },
-      onFrameUpdate: (_count, frame, total_ms) => {
-        if (frame >= config.warmup) samples.push({ frame, total_ms });
-      },
-    });
-    samples.sort((a, b) => a.frame - b.frame);
-    // Remotion's per-frame timing covers seek, effects, raster and PNG capture.
-    // Save captured buffers only after rendering has finished.
-    for (const [frame, buffer] of images)
-      await fs.writeFile(path.join(config.directory, `${frame}.png`), buffer);
-    return {
-      samples,
-      renderer: "@remotion/renderer renderFrames",
-      concurrency: 1,
-      browser: execFileSync(config.chrome, ["--version"], {
-        encoding: "utf8",
-      }).trim(),
-      chromium_options: chromiumOptions,
-      dom,
-    };
-  } finally {
-    await browser.close({ silent: true });
-  }
+function inspectVideo(file, plan) {
+  const probe = JSON.parse(
+    execFileSync(
+      "ffprobe",
+      [
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-count_frames",
+        "-show_entries",
+        "stream=codec_name,width,height,pix_fmt,color_range,avg_frame_rate,nb_read_frames,duration:format=size",
+        "-of",
+        "json",
+        file,
+      ],
+      { encoding: "utf8" }
+    )
+  );
+  const video = probe.streams[0];
+  const [numerator, denominator] = video.avg_frame_rate.split("/").map(Number);
+  const fps = numerator / denominator;
+  const frames = Number(video.nb_read_frames);
+  const duration = Number(video.duration);
+  if (
+    video.codec_name !== "h264" ||
+    video.width !== plan.width ||
+    video.height !== plan.height ||
+    !["yuv420p", "yuvj420p"].includes(video.pix_fmt) ||
+    fps !== 30 ||
+    frames !== plan.frames ||
+    !Number.isFinite(duration) ||
+    Math.abs(duration - plan.frames / fps) > 0.001
+  )
+    throw new Error(`incorrect MP4 output: ${JSON.stringify(video)}`);
+  return {
+    frames,
+    fps,
+    duration_s: duration,
+    width: video.width,
+    height: video.height,
+    codec: video.codec_name,
+    pixel_format: video.pix_fmt,
+    color_range: video.color_range,
+    bytes: Number(probe.format.size),
+  };
 }
 async function directoryHash(directory) {
   const hash = createHash("sha256");
@@ -105,21 +92,38 @@ async function directoryHash(directory) {
 }
 if (args[0] === "--worker") {
   const config = JSON.parse(await fs.readFile(args[1], "utf8"));
-  console.log(JSON.stringify(await remotionWorker(config)));
+  const worker =
+    config.engine === "remotion-ffmpeg" ? ffmpegWorker : remotionWorker;
+  console.log(JSON.stringify(await worker(config)));
 } else {
   for (let i = 0; i < args.length; i += 2) {
-    if (!["--chrome", "--out", "--binary"].includes(args[i]) || !args[i + 1])
+    if (
+      !["--chrome", "--ffmpeg-chrome", "--out", "--binary"].includes(args[i]) ||
+      !args[i + 1]
+    )
       throw new Error(`unknown or incomplete option: ${args[i]}`);
   }
   const plan = {
     nodes: 100000,
-    effect_passes: 12,
-    rounds: 3,
-    frames: 30,
+    width: 3840,
+    height: 2160,
+    rounds: 1,
+    frames: 300,
     warmup: 3,
-    timeout: 300000,
-    backends: ["skia-cpu", "skia-gpu-if-available"],
-    chrome: option("chrome", process.env.CHROME_PATH ?? "/usr/bin/chromium"),
+    timeout: 600000,
+    backends: ["cpu", "skia-gpu-if-available"],
+    engines,
+    ffmpeg_chrome: option(
+      "ffmpeg-chrome",
+      process.env.FFMPEG_CHROME_PATH ?? null
+    ),
+    chrome: option(
+      "chrome",
+      process.env.CHROME_PATH ??
+        (process.platform === "darwin"
+          ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          : "/usr/bin/google-chrome")
+    ),
   };
   const binary = path.resolve(
     option("binary", path.join(root, "target/release/vs-remotion-bench"))
@@ -140,10 +144,26 @@ if (args[0] === "--worker") {
     if (err.code !== "ENOENT") throw err;
   }
   const report = {
-    schema_version: 5,
-    comparison: "Remotion renderFrames vs fframes Previewer + Skia",
+    schema_version: 15,
+    comparison:
+      "fframes CPU and Skia GPU vs Remotion + FFmpeg and Remotion + MediaBunny: complete H.264 MP4 export",
+    encoding: {
+      codec: "h264",
+      target_bitrate: 8000000,
+      cpu_encoder: "libx264 medium",
+      macos_gpu_encoder: "h264_videotoolbox",
+      remotion_ffmpeg_encoder:
+        process.platform === "darwin" ? "h264_videotoolbox" : "libx264 medium",
+      remotion_mediabunny_encoder: "WebCodecs H.264, prefer-hardware",
+      gop: 30,
+      pixel_format: "yuv420p",
+      native_codec_threads: 1,
+      fps: 30,
+      audio: false,
+    },
+    workload_revision: "100k-4k-circles-300-frames-v1",
     workload:
-      "99% rectangles, 1% changing DM Sans text digits; text painted last",
+      "4K (3840×2160), 99,000 overlapping circles and 1,000 changing DM Sans text digits in 20 panels. Every circle moves and changes color; 10,000 radii animate between 16 and 28 SVG units. A 1000×1000 viewBox stretches to the output. No filters. Remotion uses 100,000 keyed components with useCurrentFrame and a memoized parent tree.",
     plan,
     environment: {
       platform: os.platform(),
@@ -154,6 +174,11 @@ if (args[0] === "--worker") {
       node: process.version,
       remotion: JSON.parse(
         await fs.readFile(path.join(here, "node_modules/remotion/package.json"))
+      ).version,
+      mediabunny: JSON.parse(
+        await fs.readFile(
+          path.join(here, "node_modules/mediabunny/package.json")
+        )
       ).version,
       react: JSON.parse(
         await fs.readFile(path.join(here, "node_modules/react/package.json"))
@@ -170,13 +195,25 @@ if (args[0] === "--worker") {
     },
     records: [],
   };
-  const serveUrl = await bundle({
+  const webBundle = await bundle({
     entryPoint: path.join(here, "browser.jsx"),
     outDir: path.join(out, "remotion-bundle"),
     publicDir: path.join(here, "media"),
     enableCaching: false,
+    ignoreRegisterRootWarning: true,
+    webpackOverride: config => ({
+      ...config,
+      entry: path.join(here, "browser.jsx"),
+    }),
   });
-  report.environment.browser_bundle_sha256 = await directoryHash(serveUrl);
+  const serverBundle = await bundle({
+    entryPoint: path.join(here, "server.jsx"),
+    outDir: path.join(out, "remotion-ffmpeg-bundle"),
+    publicDir: path.join(here, "media"),
+    enableCaching: false,
+  });
+  report.environment.mediabunny_bundle_sha256 = await directoryHash(webBundle);
+  report.environment.ffmpeg_bundle_sha256 = await directoryHash(serverBundle);
   const persist = async () => {
     report.summary = summarize(report.records, plan);
     await fs.writeFile(
@@ -187,7 +224,6 @@ if (args[0] === "--worker") {
   };
   for (let round = 0; round < plan.rounds; round++) {
     const nodes = plan.nodes;
-    const engines = ["fframes", "fframes-gpu", "remotion"];
     const order = engines.map((_, i) => engines[(i + round) % engines.length]);
     for (const engine of order) {
       const directory = path.join(out, `${nodes}-${engine}-${round}`);
@@ -198,32 +234,33 @@ if (args[0] === "--worker") {
         engine,
         round,
         directory,
-        bundle: serveUrl,
+        bundle: engine === "remotion-ffmpeg" ? serverBundle : webBundle,
       };
       const configPath = path.join(directory, "config.json");
       await fs.writeFile(configPath, JSON.stringify(config));
       console.error(
         `round ${round + 1}/${plan.rounds}: ${nodes} nodes, ${engine}`
       );
-      const result =
-        engine !== "remotion"
-          ? await isolated(
-              binary,
-              [engine === "fframes" ? "cpu" : "gpu", directory],
-              plan.timeout,
-              path.join(directory, "process.log")
-            )
-          : await isolated(
-              process.execPath,
-              [fileURLToPath(import.meta.url), "--worker", configPath],
-              plan.timeout,
-              path.join(directory, "process.log")
-            );
+      const loadBefore = os.loadavg();
+      const result = engine.startsWith("fframes")
+        ? await isolated(
+            binary,
+            [engine === "fframes" ? "cpu" : "gpu", directory],
+            plan.timeout,
+            path.join(directory, "process.log")
+          )
+        : await isolated(
+            process.execPath,
+            [fileURLToPath(import.meta.url), "--worker", configPath],
+            plan.timeout,
+            path.join(directory, "process.log")
+          );
       const record = {
         nodes,
         engine,
         round,
         status: result.status,
+        load_before: loadBefore,
         load_after: os.loadavg(),
         code: result.code,
         signal: result.signal,
@@ -232,6 +269,9 @@ if (args[0] === "--worker") {
         if (result.status !== "ok")
           throw new Error(result.error || result.status);
         Object.assign(record, JSON.parse(result.stdout));
+        // Verify the completed file after the timer has stopped.
+        if (record.status === "ok")
+          record.video = inspectVideo(path.join(directory, "export.mp4"), plan);
       } catch (err) {
         record.status =
           result.status === "ok" ? "invalid-output" : result.status;

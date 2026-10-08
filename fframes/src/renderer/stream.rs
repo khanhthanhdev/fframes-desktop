@@ -1,5 +1,6 @@
 use super::EncoderOptions;
 use super::ffmpeg_helper::STEREO_CH_LAYOUT;
+use super::frame_export::EncoderInput;
 use super::renderer_error::{RenderEncodingError, RenderEncodingResult};
 use crate::ffmpeg_action;
 use crate::ffmpeg_loggable_action;
@@ -93,12 +94,165 @@ unsafe fn fit_sample_format(codec: *const AVCodec, requested: AVSampleFormat) ->
     }
 }
 
-unsafe fn is_pixel_format_supported(codec: *const AVCodec, pixel_format: AVPixelFormat) -> bool {
-    let supported = unsafe {
+/// The pixel formats the encoder takes, `None` when it accepts any (or libav can't tell).
+pub(crate) unsafe fn supported_pixel_formats<'a>(
+    codec: *const AVCodec,
+) -> Option<&'a [AVPixelFormat]> {
+    unsafe {
         supported_codec_config::<AVPixelFormat>(codec, AVCodecConfig::AV_CODEC_CONFIG_PIX_FORMAT)
-    };
+    }
+}
 
-    supported.is_none_or(|formats| formats.contains(&pixel_format))
+unsafe fn is_pixel_format_supported(codec: *const AVCodec, pixel_format: AVPixelFormat) -> bool {
+    unsafe { supported_pixel_formats(codec) }.is_none_or(|formats| formats.contains(&pixel_format))
+}
+
+/// The encoder named `preferred_encoder`, otherwise the default encoder of `codec_id`.
+pub(crate) unsafe fn find_encoder(
+    preferred_encoder: Option<&str>,
+    codec_id: AVCodecID,
+    warn_about_fallback: bool,
+) -> RenderEncodingResult<*const AVCodec> {
+    unsafe {
+        let mut codec = if let Some(encoder) = preferred_encoder {
+            let codec_name = CString::new(encoder).map_err(RenderEncodingError::CStringError)?;
+
+            avcodec_find_encoder_by_name(codec_name.as_ptr())
+        } else {
+            std::ptr::null()
+        };
+
+        if codec.is_null() {
+            codec = avcodec_find_encoder(codec_id);
+
+            if let Some(preferred_codec_name) = preferred_encoder
+                && !codec.is_null()
+                && warn_about_fallback
+            {
+                let found_encoder_name = CStr::from_ptr((*codec).name);
+
+                eprintln!(
+                    "Warning: Can not find encoder {preferred_codec_name}, continue with {found_encoder_name}",
+                    found_encoder_name =
+                        found_encoder_name.to_str().unwrap_or("unknown codec name")
+                );
+            }
+        }
+
+        if codec.is_null() {
+            return Err(RenderEncodingError::CannotLocateCodec);
+        }
+
+        Ok(codec)
+    }
+}
+
+/// Configures the context of a video encoder for `input` and opens it.
+pub(crate) unsafe fn open_video_encoder(
+    c: *mut AVCodecContext,
+    codec: *const AVCodec,
+    (width, height, fps): (i32, i32, i32),
+    global_header: bool,
+    encoder_options: &EncoderOptions,
+    input: &EncoderInput,
+    thread_count: i32,
+) -> RenderEncodingResult<()> {
+    unsafe {
+        (*c).codec_id = (*codec).id;
+        (*c).width = width;
+        (*c).height = height;
+        // avcodec_open2 applies codec_params afterwards, so an explicit `threads`
+        // option still overrides this default (including `threads=0` for auto).
+        (*c).thread_count = thread_count;
+        (*c).time_base = AVRational { num: 1, den: fps };
+
+        if !is_pixel_format_supported(codec, input.pixel_format) {
+            return Err(RenderEncodingError::InvalidPixFmt(input.pixel_format));
+        }
+
+        (*c).pix_fmt = input.pixel_format;
+        // The encoder shares the frame pool (and with it the device) the backend
+        // renders into.
+        if let Some(frames) = &input.hw_frames_ctx {
+            (*c).hw_frames_ctx = frames.new_ref();
+        }
+        if let Some(device) = &input.hw_device_ctx {
+            (*c).hw_device_ctx = device.new_ref();
+        }
+        // Every RGBA to YUV path (the built-in yuv420 converter, swscale's
+        // default and the GPU converters of the backends) produces BT.601
+        // limited range. Say so: an untagged HD stream is decoded as BT.709,
+        // shifting colors. Hardware encoders that are fed RGB surfaces
+        // convert with the matrix they are told here.
+        let pix_fmt_desc = av_pix_fmt_desc_get(input.pixel_format);
+        if !pix_fmt_desc.is_null() && (*pix_fmt_desc).flags & AV_PIX_FMT_FLAG_RGB as u64 == 0 {
+            (*c).color_range = AVColorRange::AVCOL_RANGE_MPEG;
+            (*c).colorspace = AVColorSpace::AVCOL_SPC_SMPTE170M;
+        }
+        (*c).gop_size = encoder_options.gop_size;
+        (*c).qmin = encoder_options.qmin;
+        (*c).qmax = encoder_options.qmax;
+        (*c).qcompress = encoder_options.qcompress;
+        (*c).max_qdiff = encoder_options.max_qdiff;
+        (*c).bit_rate_tolerance = encoder_options.bitrate_tolerance;
+
+        if let Some(video_bitrate) = encoder_options.bitrate {
+            (*c).bit_rate = video_bitrate;
+        }
+
+        if global_header {
+            (*c).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as i32;
+        }
+
+        let opts: *mut *mut AVDictionary = &mut std::ptr::null_mut();
+
+        let codec_options = match encoder_options.codec_params {
+            Some(options) => Some(options),
+            None if !(*codec).name.is_null() => {
+                let codec_name = CStr::from_ptr((*codec).name).to_string_lossy();
+
+                match codec_name.as_ref() {
+                    "libx264" => Some(
+                        [
+                            ("preset", "ultrafast"),
+                            ("tune", "animation"),
+                            ("profile", "main"),
+                            ("bframes", "2"),
+                            ("crf", "23"),
+                        ]
+                        .as_slice(),
+                    ),
+                    "libx265" => Some(
+                        [
+                            ("preset", "ultrafast"),
+                            ("tune", "animation"),
+                            ("profile", "main"),
+                            ("crf", "23"),
+                            ("x265-params", "log-level=none"),
+                        ]
+                        .as_slice(),
+                    ),
+                    _ => None,
+                }
+            }
+            _ => None,
+        };
+
+        if let Some(codec_params) = codec_options {
+            for (param, value) in codec_params {
+                let c_param = CString::new(*param).map_err(RenderEncodingError::CStringError)?;
+                let c_value = CString::new(*value).map_err(RenderEncodingError::CStringError)?;
+
+                av_dict_set(opts, c_param.as_ptr(), c_value.as_ptr(), 0);
+            }
+        }
+
+        let status = avcodec_open2(c, codec, opts);
+        av_dict_free(opts);
+        ffmpeg_loggable_action!(status);
+
+        Ok(())
+    }
 }
 
 impl Stream {
@@ -132,35 +286,7 @@ impl Stream {
         *mut AVCodecContext,
     )> {
         unsafe {
-            let mut codec = if let Some(encoder) = preferred_encoder {
-                let codec_name =
-                    CString::new(encoder).map_err(RenderEncodingError::CStringError)?;
-
-                avcodec_find_encoder_by_name(codec_name.as_ptr())
-            } else {
-                std::ptr::null_mut()
-            };
-
-            if codec.is_null() {
-                codec = avcodec_find_encoder(codec_id);
-
-                if let Some(preferred_codec_name) = preferred_encoder
-                    && !codec.is_null()
-                {
-                    let found_encoder_name = CStr::from_ptr((*codec).name);
-
-                    eprintln!(
-                        "Warning: Can not find encoder {preferred_codec_name}, continue with {found_encoder_name}",
-                        found_encoder_name =
-                            found_encoder_name.to_str().unwrap_or("unknown codec name")
-                    );
-                }
-            }
-
-            if codec.is_null() {
-                return Err(RenderEncodingError::CannotLocateCodec);
-            }
-
+            let codec = find_encoder(preferred_encoder, codec_id, true)?;
             let codec_id = (*codec).id;
 
             let st = avformat_new_stream(oc, std::ptr::null_mut());
@@ -182,107 +308,32 @@ impl Stream {
         fps: i32,
         oc: *mut AVFormatContext,
         encoder_options: &EncoderOptions,
+        input: &EncoderInput,
         thread_count: i32,
     ) -> RenderEncodingResult<Self> {
         unsafe {
-            let (codec, codec_id, st, c) = Self::prepare_stream_codec(
+            let (codec, _codec_id, st, c) = Self::prepare_stream_codec(
                 encoder_options.preferred_encoder,
                 (*(*oc).oformat).video_codec,
                 oc,
             )?;
 
-            (*c).codec_id = codec_id;
-            (*c).width = width;
-            (*c).height = height;
-            // avcodec_open2 applies codec_params afterwards, so an explicit `threads`
-            // option still overrides this default (including `threads=0` for auto).
-            (*c).thread_count = thread_count;
             (*st).time_base = AVRational { num: 1, den: fps };
-            (*c).time_base = (*st).time_base;
-
-            if !is_pixel_format_supported(codec, encoder_options.pixel_format) {
-                return Err(RenderEncodingError::InvalidPixFmt(
-                    encoder_options.pixel_format,
-                ));
-            }
-
-            (*c).pix_fmt = encoder_options.pixel_format;
-            // Both RGBA → YUV paths (the built-in yuv420 converter and
-            // swscale's default) produce BT.601 limited range. Say so: an
-            // untagged HD stream is decoded as BT.709, shifting colors.
-            let pix_fmt_desc = av_pix_fmt_desc_get(encoder_options.pixel_format);
-            if !pix_fmt_desc.is_null() && (*pix_fmt_desc).flags & AV_PIX_FMT_FLAG_RGB as u64 == 0 {
-                (*c).color_range = AVColorRange::AVCOL_RANGE_MPEG;
-                (*c).colorspace = AVColorSpace::AVCOL_SPC_SMPTE170M;
-            }
-            (*c).gop_size = encoder_options.gop_size;
-            (*c).qmin = encoder_options.qmin;
-            (*c).qmax = encoder_options.qmax;
-            (*c).qcompress = encoder_options.qcompress;
-            (*c).max_qdiff = encoder_options.max_qdiff;
-            (*c).bit_rate_tolerance = encoder_options.bitrate_tolerance;
-
-            if let Some(video_bitrate) = encoder_options.bitrate {
-                (*c).bit_rate = video_bitrate;
-            }
-
-            if (*(*oc).oformat).flags & AVFMT_GLOBALHEADER != 0 {
-                (*c).flags |= AV_CODEC_FLAG_GLOBAL_HEADER as i32;
-            }
-
-            let opts: *mut *mut AVDictionary = &mut std::ptr::null_mut();
-
-            let codec_options = match encoder_options.codec_params {
-                Some(options) => Some(options),
-                None if !(*codec).name.is_null() => {
-                    let codec_name = CStr::from_ptr((*codec).name).to_string_lossy();
-
-                    match codec_name.as_ref() {
-                        "libx264" => Some(
-                            [
-                                ("preset", "ultrafast"),
-                                ("tune", "animation"),
-                                ("profile", "main"),
-                                ("bframes", "2"),
-                                ("crf", "23"),
-                            ]
-                            .as_slice(),
-                        ),
-                        "libx265" => Some(
-                            [
-                                ("preset", "ultrafast"),
-                                ("tune", "animation"),
-                                ("profile", "main"),
-                                ("crf", "23"),
-                                ("x265-params", "log-level=none"),
-                            ]
-                            .as_slice(),
-                        ),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            };
-
-            if let Some(codec_params) = codec_options {
-                for (param, value) in codec_params {
-                    let c_param =
-                        CString::new(*param).map_err(RenderEncodingError::CStringError)?;
-                    let c_value =
-                        CString::new(*value).map_err(RenderEncodingError::CStringError)?;
-
-                    av_dict_set(opts, c_param.as_ptr(), c_value.as_ptr(), 0);
-                }
-            }
-
-            ffmpeg_loggable_action!(avcodec_open2(c, codec, opts));
+            open_video_encoder(
+                c,
+                codec,
+                (width, height, fps),
+                (*(*oc).oformat).flags & AVFMT_GLOBALHEADER != 0,
+                encoder_options,
+                input,
+                thread_count,
+            )?;
             ffmpeg_loggable_action!(avcodec_parameters_from_context((*st).codecpar, c));
 
             if let Some((tag, options)) = encoder_options.tag.zip((*st).codecpar.as_mut()) {
                 options.codec_tag = tag as u32;
             }
 
-            av_dict_free(opts);
             Ok(Stream {
                 st,
                 enc: c,

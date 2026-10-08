@@ -129,10 +129,44 @@ fn gpu_context_options() -> gpu::ContextOptions {
     gpu_context_opts
 }
 
+impl SkiaMetalCtx {
+    /// A new Skia context on the device.
+    pub(crate) fn create_context(&self) -> FFramesRendererResult<DirectContext> {
+        gpu::direct_contexts::make_metal(&self.backend, Some(&gpu_context_options()))
+            .ok_or_else(|| FFramesRendererError::Skia("Failed to create GPU context".to_string()))
+    }
+
+    /// The `id<MTLDevice>` of the context.
+    #[cfg(target_os = "macos")]
+    pub(crate) fn device_ptr(&self) -> *mut std::ffi::c_void {
+        self.device.as_ptr().cast()
+    }
+}
+
 impl SkiaBackend for SkiaMetalCtx {
+    #[cfg(target_os = "macos")]
+    fn negotiate_hardware_frames(
+        &self,
+        encoder: &fframes::VideoEncoderInfo<'_>,
+    ) -> Option<fframes::EncoderInput> {
+        crate::frame_export::videotoolbox::negotiate(self, encoder)
+    }
+
+    #[cfg(target_os = "macos")]
+    fn hardware_frame_target(
+        &self,
+        input: &fframes::EncoderInput,
+        width: i32,
+        height: i32,
+    ) -> FFramesRendererResult<(DirectContext, Box<dyn crate::HardwareFrameTarget>)> {
+        let (gpu, target) = crate::frame_export::videotoolbox::VideoToolboxFrameTarget::new(
+            self, input, width, height,
+        )?;
+        Ok((gpu, Box::new(target)))
+    }
+
     fn create_skia_surface(&self) -> FFramesRendererResult<(Surface, Option<DirectContext>)> {
-        let mut gpu_context =
-            gpu::direct_contexts::make_metal(&self.backend, Some(&gpu_context_options())).unwrap();
+        let mut gpu_context = self.create_context()?;
 
         let texture_descriptor = TextureDescriptor::new();
         texture_descriptor.set_width(self.width as u64);

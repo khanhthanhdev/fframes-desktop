@@ -2,33 +2,49 @@
 
 use fframes::usvgr;
 use fframes::usvgr::tiny_skia_path;
-use skia_safe::{self, Paint, PathBuilder};
+use skia_safe::{self, Paint};
 
-/// Convert a `tiny_skia_path::Path` to a `skia_safe::Path`.
-pub fn convert_path(path: &tiny_skia_path::Path) -> skia_safe::Path {
-    let mut builder = PathBuilder::new();
+/// Reuses conversion buffers and submits all path segments in one Skia call.
+#[derive(Default)]
+pub(super) struct PathConverter {
+    points: Vec<skia_safe::Point>,
+    verbs: Vec<skia_safe::PathVerb>,
+}
 
-    for segment in path.segments() {
-        match segment {
-            tiny_skia_path::PathSegment::MoveTo(p) => {
-                builder.move_to((p.x, p.y));
-            }
-            tiny_skia_path::PathSegment::LineTo(p) => {
-                builder.line_to((p.x, p.y));
-            }
-            tiny_skia_path::PathSegment::QuadTo(p1, p2) => {
-                builder.quad_to((p1.x, p1.y), (p2.x, p2.y));
-            }
-            tiny_skia_path::PathSegment::CubicTo(p1, p2, p3) => {
-                builder.cubic_to((p1.x, p1.y), (p2.x, p2.y), (p3.x, p3.y));
-            }
-            tiny_skia_path::PathSegment::Close => {
-                builder.close();
-            }
+impl PathConverter {
+    pub(super) fn convert(&mut self, path: &tiny_skia_path::Path) -> skia_safe::Path {
+        self.points.clear();
+        self.points.extend(
+            path.points()
+                .iter()
+                .map(|p| skia_safe::Point::new(p.x, p.y)),
+        );
+        self.verbs.clear();
+        self.verbs
+            .extend(path.verbs().iter().map(|verb| match verb {
+                tiny_skia_path::PathVerb::Move => skia_safe::PathVerb::Move,
+                tiny_skia_path::PathVerb::Line => skia_safe::PathVerb::Line,
+                tiny_skia_path::PathVerb::Quad => skia_safe::PathVerb::Quad,
+                tiny_skia_path::PathVerb::Cubic => skia_safe::PathVerb::Cubic,
+                tiny_skia_path::PathVerb::Close => skia_safe::PathVerb::Close,
+            }));
+        let converted = skia_safe::Path::raw(
+            &self.points,
+            &self.verbs,
+            &[],
+            skia_safe::PathFillType::Winding,
+            false,
+        );
+        // A single unusually large path must not permanently retain its scratch space.
+        if self.points.capacity() * std::mem::size_of::<skia_safe::Point>()
+            + self.verbs.capacity() * std::mem::size_of::<skia_safe::PathVerb>()
+            > 512 * 1024
+        {
+            self.points = Vec::new();
+            self.verbs = Vec::new();
         }
+        converted
     }
-
-    builder.detach()
 }
 
 /// Convert a usvgr Paint + opacity to a Skia Paint.

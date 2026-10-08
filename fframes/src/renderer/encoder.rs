@@ -1,5 +1,6 @@
 use super::{
     FFramesLogger,
+    frame_export::{EncoderInput, VideoFrame},
     renderer_error::{self, RenderEncodingError},
     stream,
     stream::Stream,
@@ -285,6 +286,33 @@ impl Encoder {
         logger: &Arc<dyn FFramesLogger>,
     ) -> RenderEncodingResult<Self> {
         unsafe {
+            Self::new_with_input(
+                output,
+                width,
+                height,
+                fps,
+                filename,
+                render_options,
+                &EncoderInput::software(render_options.video_encoder_options.pixel_format),
+                logger,
+            )
+        }
+    }
+
+    /// Like [`Self::new`] with the video encoder opened for the frames a rendering backend
+    /// negotiated (`FFramesRenderBackend::negotiate_encoder_input`).
+    #[allow(clippy::too_many_arguments)]
+    pub unsafe fn new_with_input(
+        output: EncoderOutput,
+        width: i32,
+        height: i32,
+        fps: i32,
+        filename: &Path,
+        render_options: &RenderOptions,
+        input: &EncoderInput,
+        logger: &Arc<dyn FFramesLogger>,
+    ) -> RenderEncodingResult<Self> {
+        unsafe {
             av_log_set_level(logger.get_libav_log_level());
 
             let c_filename = CString::new(filename.to_string_lossy().as_ref())
@@ -307,6 +335,7 @@ impl Encoder {
                 fps,
                 oc,
                 &render_options.video_encoder_options,
+                input,
                 // Segments already encode in parallel. Letting each encoder auto-size
                 // its own thread pool multiplies both threads and buffered frames.
                 i32::from(matches!(output, EncoderOutput::IntermediateChunk)),
@@ -364,21 +393,29 @@ impl Encoder {
         }: &EncoderFrame,
         customize_frame: F,
     ) -> RenderEncodingResult<()> {
+        unsafe { Self::send_raw_frame(stream, *frame, *packet, customize_frame) }
+    }
+
+    unsafe fn send_raw_frame<F: Fn(*mut AVPacket) -> i32>(
+        stream: &stream::Stream,
+        frame: *mut AVFrame,
+        packet: *mut AVPacket,
+        customize_frame: F,
+    ) -> RenderEncodingResult<()> {
         unsafe {
-            let avcodec_send_frame = avcodec_send_frame(stream.enc, *frame);
-            let mut status = avcodec_send_frame;
+            let mut status = avcodec_send_frame(stream.enc, frame);
 
             if status < 0 {
                 let error_description = av_error_to_string(status);
 
                 return Err(renderer_error::RenderEncodingError::CantEncodeFrame {
                     error: error_description,
-                    pts: Some((*(*frame)).pts),
+                    pts: Some((*frame).pts),
                 });
             }
 
             while status >= 0 {
-                status = avcodec_receive_packet(stream.enc, *packet);
+                status = avcodec_receive_packet(stream.enc, packet);
 
                 if status == AVERROR_EOF || status == FFMPEG_AVERROR(EAGAIN) {
                     break;
@@ -388,11 +425,11 @@ impl Encoder {
                     let error_description = av_error_to_string(status);
                     return Err(renderer_error::RenderEncodingError::CantEncodeFrame {
                         error: format!("avcodec_receive_packet failed: {error_description}"),
-                        pts: Some((*(*frame)).pts),
+                        pts: Some((*frame).pts),
                     });
                 }
 
-                let write_status = customize_frame(*packet);
+                let write_status = customize_frame(packet);
                 if write_status < 0 {
                     let error_description = av_error_to_string(write_status);
                     return Err(renderer_error::RenderEncodingError::CantWriteFrame(
@@ -415,6 +452,39 @@ impl Encoder {
             let oc = self.oc;
 
             self.send_customizable_frame_packet(stream, frame, |packet| {
+                // Encoders may omit duration; video frames use a 1/fps time base.
+                if matches!(stream.variant, stream::StreamVariant::Video) && (*packet).duration == 0
+                {
+                    (*packet).duration = 1;
+                }
+                av_packet_rescale_ts(packet, (*stream.enc).time_base, (*stream.st).time_base);
+
+                (*packet).stream_index = (*stream.st).index;
+                av_interleaved_write_frame(oc, packet)
+            })
+        }
+    }
+
+    /// Encodes a frame of the video stream with `pts` in frames and writes the packets
+    /// that are ready into the file. `packet` is scratch space that is reused between calls.
+    pub unsafe fn send_video_frame(
+        &self,
+        frame: &VideoFrame,
+        pts: i64,
+        packet: *mut AVPacket,
+    ) -> RenderEncodingResult<()> {
+        unsafe {
+            let stream = &self.video_stream;
+            let oc = self.oc;
+            (*frame.as_ptr()).pts = pts;
+
+            Self::send_raw_frame(stream, frame.as_ptr(), packet, |packet| {
+                // VideoToolbox can return packets without a duration. Our video time
+                // base is one frame, including the final packet: otherwise MP4 can
+                // end its edit list at that frame's PTS and discard the last picture.
+                if (*packet).duration == 0 {
+                    (*packet).duration = 1;
+                }
                 av_packet_rescale_ts(packet, (*stream.enc).time_base, (*stream.st).time_base);
 
                 (*packet).stream_index = (*stream.st).index;
@@ -452,6 +522,10 @@ impl Encoder {
                     });
                 }
 
+                if matches!(stream.variant, stream::StreamVariant::Video) && (*packet).duration == 0
+                {
+                    (*packet).duration = 1;
+                }
                 av_packet_rescale_ts(packet, (*stream.enc).time_base, (*stream.st).time_base);
                 (*packet).stream_index = (*stream.st).index;
                 let status = av_interleaved_write_frame(self.oc, packet);
@@ -485,6 +559,79 @@ unsafe impl Sync for Encoder {}
 mod tests {
     use super::*;
     use crate::{FFramesLoggerVariant, renderer::fframes_logger::make_logger};
+
+    #[test]
+    fn mp4_preserves_final_frame_duration() {
+        let directory =
+            std::env::temp_dir().join(format!("fframes-duration-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("out.mp4");
+        let logger = make_logger(FFramesLoggerVariant::Silent);
+        let options = RenderOptions {
+            video_encoder_options: EncoderOptions {
+                preferred_encoder: Some("libx264"),
+                codec_params: Some(&[("preset", "medium"), ("threads", "1")]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        unsafe {
+            {
+                let encoder = Encoder::new(
+                    EncoderOutput::Final { with_audio: false },
+                    64,
+                    64,
+                    30,
+                    &path,
+                    &options,
+                    &logger,
+                )
+                .unwrap_or_else(|err| panic!("test encoder: {err}"));
+                let mut frame = EncoderFrame::new(&encoder.video_stream)
+                    .unwrap_or_else(|err| panic!("test frame: {err}"));
+                for pts in 0..4 {
+                    frame.fill_from_rgba_pixmap(&[128; 64 * 64 * 4]);
+                    frame.set_pts(pts);
+                    encoder
+                        .send_frame(&encoder.video_stream, &frame)
+                        .unwrap_or_else(|err| panic!("test encode: {err}"));
+                }
+                encoder
+                    .flush_stream(&encoder.video_stream)
+                    .unwrap_or_else(|err| panic!("test drain: {err}"));
+            }
+            let filename = CString::new(path.to_str().unwrap()).unwrap();
+            let mut input = std::ptr::null_mut();
+            assert_eq!(
+                avformat_open_input(
+                    &raw mut input,
+                    filename.as_ptr(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut()
+                ),
+                0
+            );
+            assert!(avformat_find_stream_info(input, std::ptr::null_mut()) >= 0);
+            let stream = *(*input).streams;
+            let frames = av_rescale_q(
+                (*stream).duration,
+                (*stream).time_base,
+                AVRational { num: 1, den: 30 },
+            );
+            let mut packet = av_packet_alloc();
+            let mut count = 0;
+            while av_read_frame(input, packet) >= 0 {
+                assert_eq!((*packet).flags & AV_PKT_FLAG_DISCARD, 0);
+                count += 1;
+                av_packet_unref(packet);
+            }
+            av_packet_free(&raw mut packet);
+            avformat_close_input(&raw mut input);
+            assert_eq!(count, 4);
+            assert_eq!(frames, 4);
+        }
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     #[test]
     fn parallel_segments_limit_codec_threads_and_allow_overrides() {

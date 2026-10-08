@@ -1,0 +1,202 @@
+{
+  "measured_at": "2026-10-02",
+  "machine": {
+    "model": "Apple M5 Max",
+    "logical_cpus": 18,
+    "memory_gib": 128
+  },
+  "workload": {
+    "nodes": 100000,
+    "circles": 99000,
+    "text": 1000,
+    "width": 3840,
+    "height": 2160,
+    "frames": 300,
+    "fps": 30,
+    "filters": 0,
+    "animated_radii": 10000,
+    "source_sha256": {
+      "run.mjs": "668124daafccd402aa972f8da831ddc888959dd3efa0e95962d1b7e017fd65d2",
+      "web.mjs": "de0fa5d65e1cfa6c840dab0d7f96b6f047972fc3263f1b7cdfe14dd5c7e78985",
+      "ffmpeg.mjs": "a9d9f053f1bf8722df28a50353886352af34b19a12761d9ef846e451385ce27a",
+      "browser.jsx": "6e8184feaf37b3d092fff9da262d51c627c4220bfbada778c57e56ba587bf65b",
+      "process.mjs": "b53dd8865bc7d0f124e764e55361cefad92ec11821ceb23264b6d6ee3e490d43",
+      "scene.jsx": "cf278fd1af9195d146c707c76035f63c7e6f2a2b7a73e642ab0f1972e3ed4b5b",
+      "report.mjs": "66b37f3c091d799caa492ceeb36c8a92d518e71bc926d0c891564e974cb59781",
+      "package.json": "e83f1eb8f0bfb174fa72f596150f83c7a62b770a92a6313473d8c9a6add79b91",
+      "server.jsx": "fffe47a1df4ed8df7414b5c925b9d091abf4053d266f9822d29d4200bac0089f",
+      "main.rs": "528327d57167ec47016861ee11b9a348146727de8410d641c12ae6aaefd94580"
+    }
+  },
+  "measurement": "One complete 300-frame H.264 MP4 export per pipeline after three warm-up frames; no audio. Build, media preparation, bundling, browser launch, warm-up and MediaBunny OPFS-to-host copy excluded.",
+  "source": {
+    "fframes_base_commit": "68ef9722d54443d4058cf2d2e051159cfe684b8e",
+    "usvgr_base_commit": "8657f976ce221dcffaf28c2a5de5103e922b30eb",
+    "usvgr_commit": "1c2a088217eb3365e965fd8dbd62acf265a07d33",
+    "fframes_renderer_commit": "04865260b13f66fa5004b472b95877990882de9a",
+    "benchmark_note": "Source hashes describe the measured scene before identifier, formatting and metadata cleanup. The circle animation math is unchanged."
+  },
+  "versions": {
+    "remotion": "4.0.529",
+    "react": "19.2.0",
+    "mediabunny": "1.56.1"
+  },
+  "browser_graphics": {
+    "remotion-ffmpeg": "Default headless Chrome: software rasterization; VideoToolbox hardware encoding.",
+    "remotion-mediabunny": "Chrome reported ANGLE Metal on Apple M5 Max; WebCodecs prefer-hardware."
+  },
+  "records": [
+    {
+      "engine": "fframes-gpu",
+      "status": "ok",
+      "load_before": [6.36572265625, 11.033203125, 9.80810546875],
+      "load_after": [7.29248046875, 11.080078125, 9.8388671875],
+      "audio": false,
+      "backend": "skia-metal",
+      "cache": {
+        "geometry_bytes": 51200000,
+        "geometry_capacity": 100000,
+        "text_capacity": 100000
+      },
+      "concurrency": {
+        "encoder_threads": 18,
+        "policy": "MaxPerformance"
+      },
+      "encoder": "h264_videotoolbox",
+      "export_ms": 7225.018333,
+      "ffmpeg": "46d8f46",
+      "fps": 30,
+      "frames": 300,
+      "hardware_encoding": true,
+      "nodes": 100000,
+      "video": {
+        "codec_name": "h264",
+        "width": 3840,
+        "height": 2160,
+        "avg_frame_rate": "30/1",
+        "duration": "10.000000",
+        "nb_frames": "300"
+      }
+    },
+    {
+      "engine": "remotion-ffmpeg",
+      "status": "ok",
+      "load_before": [7.29248046875, 11.080078125, 9.8388671875],
+      "load_after": [252.47412109375, 94.68212890625, 42.4697265625],
+      "export_ms": 109227.19979099999,
+      "encoder": "h264_videotoolbox",
+      "hardware_encoding": true,
+      "renderer": "@remotion/renderer renderMedia",
+      "concurrency": 18,
+      "browser": "Google Chrome for Testing 149.0.7790.0",
+      "chromium_options": {
+        "disableWebSecurity": false
+      },
+      "video": {
+        "codec_name": "h264",
+        "width": 3840,
+        "height": 2160,
+        "avg_frame_rate": "30/1",
+        "duration": "10.000000",
+        "nb_frames": "300",
+        "side_data_list": [{}]
+      },
+      "fframes_gpu_speedup": 15.117913167376871
+    },
+    {
+      "engine": "remotion-mediabunny",
+      "status": "ok",
+      "load_before": [7.0947265625, 26.22314453125, 29.8193359375],
+      "load_after": [4.73095703125, 18.8232421875, 26.37890625],
+      "export_ms": 121132.09999999404,
+      "bytes": 66626599,
+      "encoder": "webcodecs-h264",
+      "audio": false,
+      "hardware_acceleration_preference": "prefer-hardware",
+      "codec_configuration": {
+        "alpha": "discard",
+        "bitrate": 8000000,
+        "bitrateMode": "variable",
+        "codec": "avc1.640033",
+        "contentHint": "",
+        "framerate": 30,
+        "hardwareAcceleration": "prefer-hardware",
+        "height": 2160,
+        "latencyMode": "quality",
+        "width": 3840
+      },
+      "renderer": "@remotion/web-renderer renderMediaOnWeb",
+      "browser": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/155.0.0.0 Safari/537.36",
+      "gpu": "ANGLE (Apple, ANGLE Metal Renderer: Apple M5 Max, Unspecified Version)",
+      "output": "OPFS MP4; validation copy excluded",
+      "explicit_frame_duration": true,
+      "warmup_ms": 1370.800000011921,
+      "concurrency": 1,
+      "video": {
+        "codec_name": "h264",
+        "width": 3840,
+        "height": 2160,
+        "avg_frame_rate": "30/1",
+        "duration": "10.000000",
+        "nb_frames": "300"
+      },
+      "fframes_gpu_speedup": 16.76564603950245
+    },
+    {
+      "engine": "fframes",
+      "status": "ok",
+      "load_before": [4.5869140625, 5.21435546875, 10.197265625],
+      "load_after": [41.6064453125, 17.11474609375, 14.341796875],
+      "audio": false,
+      "backend": "cpu",
+      "cache": {
+        "layer_capacity": 20,
+        "text_capacity": 100000
+      },
+      "concurrency": {
+        "render_threads": 18
+      },
+      "encoder": "libx264",
+      "export_ms": 69740.38620899999,
+      "ffmpeg": "46d8f46",
+      "fps": 30,
+      "frames": 300,
+      "hardware_encoding": false,
+      "nodes": 100000,
+      "video": {
+        "codec_name": "h264",
+        "width": 3840,
+        "height": 2160,
+        "avg_frame_rate": "30/1",
+        "duration": "10.000000",
+        "nb_frames": "300"
+      },
+      "fframes_gpu_speedup": 9.652624117293017
+    }
+  ],
+  "concurrency_check": {
+    "engine": "remotion-ffmpeg",
+    "status": "ok",
+    "load_before": [155.59375, 86.3046875, 41.24365234375],
+    "load_after": [73.6611328125, 78.32763671875, 43.3857421875],
+    "export_ms": 98759.18274999999,
+    "encoder": "h264_videotoolbox",
+    "hardware_encoding": true,
+    "renderer": "@remotion/renderer renderMedia",
+    "concurrency": 8,
+    "browser": "Google Chrome for Testing 149.0.7790.0",
+    "chromium_options": {
+      "disableWebSecurity": false
+    },
+    "video": {
+      "codec_name": "h264",
+      "width": 3840,
+      "height": 2160,
+      "avg_frame_rate": "30/1",
+      "duration": "10.000000",
+      "nb_frames": "300",
+      "side_data_list": [{}]
+    },
+    "fframes_gpu_speedup": 13.669056353659496
+  }
+}

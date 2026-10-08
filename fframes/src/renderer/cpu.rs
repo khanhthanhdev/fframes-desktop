@@ -1,6 +1,7 @@
 use super::{
-    FrameRenderer, FrameScheduler, SegmentWriter, get_thread_count,
-    render_backend::FFramesRenderBackend, renderer_error::RenderEncodingError,
+    EncoderFrameRenderer, EncoderInput, FrameRenderer, FrameScheduler, RgbaFrameConverter,
+    SegmentWriter, VideoFrame, get_thread_count, render_backend::FFramesRenderBackend,
+    renderer_error::RenderEncodingError,
 };
 use crate::{
     AbortSignal, AudioTimelineSamples, Frame, RenderOptions, ResolvedRenderingTimeline, TextCache,
@@ -57,9 +58,78 @@ impl Default for CpuRenderingBackend {
     }
 }
 
+/// The CPU rasterizer as an [`EncoderFrameRenderer`]: tiny-skia draws premultiplied RGBA
+/// that is converted into the encoder's pixel format with [`RgbaFrameConverter`].
+pub struct CpuEncoderFrameRenderer {
+    pixmap: svgr::tiny_skia::Pixmap,
+    cache: SvgrCache,
+    pixmap_pool: PixmapPool,
+    context: svgr::Context,
+    converter: RgbaFrameConverter,
+}
+
+impl CpuEncoderFrameRenderer {
+    /// `cache_capacity` is the number of static subtrees kept rasterized between frames.
+    pub fn new(
+        cache_capacity: usize,
+        input: &EncoderInput,
+        width: u32,
+        height: u32,
+    ) -> Result<Self, RenderEncodingError> {
+        let pixmap = svgr::tiny_skia::Pixmap::new(width, height)
+            .ok_or_else(|| RenderEncodingError::CantAllocate("pixmap".to_owned()))?;
+
+        Ok(Self {
+            context: svgr::Context::new_from_pixmap_unsafe(&pixmap),
+            pixmap,
+            cache: SvgrCache::new(cache_capacity),
+            pixmap_pool: PixmapPool::new(),
+            converter: RgbaFrameConverter::for_input(input, width as i32, height as i32)?,
+        })
+    }
+}
+
+impl EncoderFrameRenderer for CpuEncoderFrameRenderer {
+    fn render_tree(
+        &mut self,
+        tree: &usvgr::Tree,
+        background: crate::Color,
+    ) -> FFramesRendererResult<VideoFrame> {
+        self.pixmap.fill(Color::from_rgba8(
+            background.r,
+            background.g,
+            background.b,
+            background.a,
+        ));
+
+        svgr::render(
+            tree,
+            super::fit_transform(tree, self.pixmap.width(), self.pixmap.height()),
+            &mut self.pixmap.as_mut(),
+            &mut self.cache,
+            &self.pixmap_pool,
+            &self.context,
+        );
+
+        self.converter
+            .convert(self.pixmap.data())
+            .map_err(|err| FFramesRendererError::from_chunk(0, err))
+    }
+}
+
 impl FFramesRenderBackend for CpuRenderingBackend {
-    fn frame_renderer(&self) -> Option<Box<dyn FrameRenderer + '_>> {
-        Some(Box::new(super::CpuFrameRenderer::new(self.cache_capacity)))
+    fn frame_renderer(&self) -> Option<impl FrameRenderer + '_> {
+        Some(super::CpuFrameRenderer::new(self.cache_capacity))
+    }
+
+    fn encoder_frame_renderer(
+        &self,
+        input: &EncoderInput,
+        width: u32,
+        height: u32,
+    ) -> FFramesRendererResult<impl EncoderFrameRenderer + '_> {
+        CpuEncoderFrameRenderer::new(self.cache_capacity, input, width, height)
+            .map_err(|err| FFramesRendererError::from_chunk(0, err))
     }
 
     fn render<'a, 'media: 'a, TVideo: Video + Sync + Sized>(
@@ -85,13 +155,6 @@ impl FFramesRenderBackend for CpuRenderingBackend {
             std::fs::create_dir(directory)?;
         }
 
-        let background_color = Color::from_rgba8(
-            TVideo::BACKGROUND_COLOR.r,
-            TVideo::BACKGROUND_COLOR.g,
-            TVideo::BACKGROUND_COLOR.b,
-            TVideo::BACKGROUND_COLOR.a,
-        );
-
         // The scheduler and segments work in output frames; `frame_offset` maps them back to
         // video frames when only a range is rendered.
         let frame_range = render_options.output_frame_range(ctx.duration_in_frames);
@@ -116,24 +179,22 @@ impl FFramesRenderBackend for CpuRenderingBackend {
             render_options,
             &logger,
         );
+        let encoder_input = writer
+            .encoder_info()
+            .and_then(|encoder| self.negotiate_encoder_input(&encoder))
+            .map_err(|err| FFramesRendererError::RenderChunkError(0, err))?;
+        let writer = writer.with_encoder_input(encoder_input);
         let failed = AtomicBool::new(false);
 
         let render_worker = |worker: usize| -> FFramesRendererResult<()> {
-            let pixmap_pool = PixmapPool::new();
             let worker_local_decoders = VideoDecodersWorker::new(1);
-            let mut svgr_cache = SvgrCache::new(self.cache_capacity);
             let break_lines_cache = TextCache::new(self.text_cache_capacity);
             let mut converter_cache = usvgr::Cache::new_with_text_cache(self.text_cache_capacity);
-
-            let mut pixmap =
-                svgr::tiny_skia::Pixmap::new(video_size.width as u32, video_size.height as u32)
-                    .ok_or_else(|| {
-                        FFramesRendererError::RenderChunkError(
-                            worker,
-                            RenderEncodingError::CantAllocate("pixmap".to_owned()),
-                        )
-                    })?;
-            let svgr_ctx = svgr::Context::new_from_pixmap_unsafe(&pixmap);
+            let mut renderer = self.encoder_frame_renderer(
+                writer.encoder_input(),
+                video_size.width as u32,
+                video_size.height as u32,
+            )?;
 
             let mut rendered_frames = 0;
             while let Some(claim) = scheduler.claim(worker) {
@@ -144,7 +205,6 @@ impl FFramesRenderBackend for CpuRenderingBackend {
                     return Err(FFramesRendererError::Aborted);
                 }
 
-                pixmap.fill(background_color);
                 let video_frame = claim.frame + frame_offset;
                 let svg = super::render_frame_guarded(
                     video,
@@ -160,17 +220,10 @@ impl FFramesRenderBackend for CpuRenderingBackend {
 
                 let rtree = svg.into_svg_tree(usvg_options, &mut converter_cache, font_db)?;
 
-                svgr::render(
-                    &rtree,
-                    super::fit_transform(&rtree, pixmap.width(), pixmap.height()),
-                    &mut pixmap.as_mut(),
-                    &mut svgr_cache,
-                    &pixmap_pool,
-                    &svgr_ctx,
-                );
+                let frame = renderer.render_tree(&rtree, TVideo::BACKGROUND_COLOR)?;
 
                 writer
-                    .submit(claim, pixmap.data())
+                    .submit_frame(claim, frame)
                     .map_err(|err| FFramesRendererError::RenderChunkError(worker, err))?;
                 logger.log_frame(rendered_frames, worker);
                 rendered_frames += 1;

@@ -4,8 +4,10 @@ bench=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$bench/../.." && pwd)
 invocation_dir=$PWD
 if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  echo "Usage: $0 [--chrome PATH] [--out DIR]"
-  echo "Runs the fixed 100,000-element benchmark: 30 frames, 3 warm-up frames, 3 rounds."
+  echo "Usage: $0 [--chrome PATH] [--ffmpeg-chrome PATH] [--out DIR]"
+  echo "Runs 4K, 99,000 circles and 1,000 text nodes: 300 frames, 3 warm-up frames, 1 round."
+  echo "Measures wall-clock time to render and finish a complete H.264 MP4."
+  echo "Compares fframes CPU, Skia GPU, Remotion + FFmpeg, and Remotion + MediaBunny."
   exit 0
 fi
 cd "$root"

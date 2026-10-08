@@ -42,6 +42,8 @@ struct VideoStreamInfo {
     width: i32,
     height: i32,
     pixel_format: AVPixelFormat,
+    color_space: AVColorSpace,
+    color_range: AVColorRange,
     time_base: AVRational,
     frame_rate: AVRational,
     duration: i64,
@@ -53,6 +55,8 @@ struct SwsScaler {
     height: i32,
     sws_ctx: *mut SwsContext,
     options: Option<FrameConvertOptions>,
+    source_format: Option<AVPixelFormat>,
+    source_color: Option<(AVColorSpace, AVColorRange)>,
     frame_data_len: usize,
     video_stream_info: VideoStreamInfo,
     linesize: [i32; 7],
@@ -72,9 +76,10 @@ impl SwsScaler {
     unsafe fn init_sws_context(
         video_stream_info: &VideoStreamInfo,
         source_pix_fmt: AVPixelFormat,
+        source_color: (AVColorSpace, AVColorRange),
         target_width: i32,
         target_height: i32,
-    ) -> *mut SwsContext {
+    ) -> Result<*mut SwsContext> {
         unsafe {
             let flags = if video_stream_info.width > target_width
                 || video_stream_info.height > target_height
@@ -88,7 +93,7 @@ impl SwsScaler {
                 0
             };
 
-            sws_getContext(
+            let ctx = sws_getContext(
                 video_stream_info.width,
                 video_stream_info.height,
                 source_pix_fmt,
@@ -99,7 +104,75 @@ impl SwsScaler {
                 ptr::null_mut(),
                 ptr::null_mut(),
                 ptr::null_mut(),
-            )
+            );
+            if ctx.is_null() {
+                return Err(FFramesMediaError::LibAVAllocationError("scaling context"));
+            }
+
+            // sws_getContext defaults to BT.601, even for tagged BT.709 input.
+            // Keep its pixel-format defaults (notably full-range YUVJ) when the
+            // source does not specify a range. RGBA output always uses full range.
+            let mut input_table = ptr::null_mut();
+            let mut output_table = ptr::null_mut();
+            let mut input_range = 0;
+            let mut output_range = 0;
+            let mut brightness = 0;
+            let mut contrast = 0;
+            let mut saturation = 0;
+            let ret = sws_getColorspaceDetails(
+                ctx,
+                &raw mut input_table,
+                &raw mut input_range,
+                &raw mut output_table,
+                &raw mut output_range,
+                &raw mut brightness,
+                &raw mut contrast,
+                &raw mut saturation,
+            );
+            if ret < 0 {
+                sws_freeContext(ctx);
+                return Err(FFramesMediaError::LibAVAudioDecodingError((
+                    ret,
+                    "Could not read scaling color settings".to_string(),
+                )));
+            }
+
+            let coefficients = match source_color.0 {
+                AVColorSpace::AVCOL_SPC_BT709 => SWS_CS_ITU709,
+                AVColorSpace::AVCOL_SPC_FCC => SWS_CS_FCC,
+                AVColorSpace::AVCOL_SPC_BT470BG | AVColorSpace::AVCOL_SPC_SMPTE170M => {
+                    SWS_CS_ITU601
+                }
+                AVColorSpace::AVCOL_SPC_SMPTE240M => SWS_CS_SMPTE240M,
+                AVColorSpace::AVCOL_SPC_BT2020_NCL => SWS_CS_BT2020,
+                _ => SWS_CS_DEFAULT,
+            };
+            match source_color.1 {
+                AVColorRange::AVCOL_RANGE_JPEG => input_range = 1,
+                AVColorRange::AVCOL_RANGE_MPEG => input_range = 0,
+                _ => {}
+            }
+            // This selects the YUV matrix and range, not transfer-function or
+            // color-primary conversion (for example HDR tone mapping).
+            let ret = sws_setColorspaceDetails(
+                ctx,
+                sws_getCoefficients(coefficients),
+                input_range,
+                output_table,
+                1,
+                brightness,
+                contrast,
+                saturation,
+            );
+            if ret < 0 {
+                sws_freeContext(ctx);
+                return Err(FFramesMediaError::LibAVAudioDecodingError((
+                    ret,
+                    "Could not configure scaling color settings".to_string(),
+                )));
+            }
+
+            Ok(ctx)
         }
     }
 
@@ -121,6 +194,8 @@ impl SwsScaler {
             width: video_stream_info.width,
             sws_ctx: std::ptr::null_mut(),
             options: None,
+            source_format: None,
+            source_color: None,
             video_stream_info,
         }
     }
@@ -128,23 +203,30 @@ impl SwsScaler {
     unsafe fn reinit_sws_context(
         &mut self,
         pix_fmt: AVPixelFormat,
+        source_color: (AVColorSpace, AVColorRange),
         options: Option<FrameConvertOptions>,
-    ) {
-        if !self.sws_ctx.is_null() {
-            sws_freeContext(self.sws_ctx);
-        }
-
+    ) -> Result<()> {
         let new_width = options.map_or(self.video_stream_info.width, |o| o.resize.width as i32);
         let new_height = options.map_or(self.video_stream_info.height, |o| o.resize.height as i32);
 
-        self.sws_ctx =
-            Self::init_sws_context(&self.video_stream_info, pix_fmt, new_width, new_height);
+        let ctx = Self::init_sws_context(
+            &self.video_stream_info,
+            pix_fmt,
+            source_color,
+            new_width,
+            new_height,
+        )?;
+        sws_freeContext(self.sws_ctx);
+        self.sws_ctx = ctx;
+        self.source_format = Some(pix_fmt);
+        self.source_color = Some(source_color);
         self.width = new_width;
         self.height = new_height;
         self.options = options;
 
         self.frame_data_len = new_width as usize * new_height as usize * PIX_FMT_SIZE;
         self.linesize = Self::calculate_linesize(new_width);
+        Ok(())
     }
 
     unsafe fn convert(
@@ -154,8 +236,23 @@ impl SwsScaler {
         rgba_dst: &mut [u8],
     ) -> Result<()> {
         let source_pix_fmt: AVPixelFormat = std::mem::transmute((*source_frame).format);
-        if self.sws_ctx.is_null() || self.options != options {
-            self.reinit_sws_context(source_pix_fmt, options);
+        // Decoded frame metadata takes precedence over the stream defaults and
+        // survives hardware transfers through av_frame_copy_props.
+        let color_space = match (*source_frame).colorspace {
+            AVColorSpace::AVCOL_SPC_UNSPECIFIED => self.video_stream_info.color_space,
+            color_space => color_space,
+        };
+        let color_range = match (*source_frame).color_range {
+            AVColorRange::AVCOL_RANGE_UNSPECIFIED => self.video_stream_info.color_range,
+            color_range => color_range,
+        };
+        let source_color = (color_space, color_range);
+        if self.sws_ctx.is_null()
+            || self.options != options
+            || self.source_format != Some(source_pix_fmt)
+            || self.source_color != Some(source_color)
+        {
+            self.reinit_sws_context(source_pix_fmt, source_color, options)?;
         }
 
         let ret = sws_scale(
@@ -183,6 +280,9 @@ impl SwsScaler {
 pub struct FFmpegDecoder {
     pub current_loop: i64,
     hw_frame: *mut AVFrame,
+    /// Frames are received here and moved into the target frame, so the newest decoded frame
+    /// survives `avcodec_receive_frame` returning EOF (which unrefs the frame it is given).
+    recv_frame: *mut AVFrame,
     frame_buf: Arc<FFmpegFrameBuf>,
     fmt_ctx: *mut AVFormatContext,
     video_stream_info: VideoStreamInfo,
@@ -194,6 +294,8 @@ pub struct FFmpegDecoder {
     last_offset: Option<i64>,
     /// A null packet has been sent; receive delayed frames until decoder EOF.
     draining: bool,
+    /// The target frame holds a frame decoded since the last seek.
+    has_decoded_frame: bool,
 }
 
 unsafe impl Send for FFmpegDecoder {}
@@ -566,6 +668,12 @@ impl FFmpegDecoder {
                 ptr::null_mut()
             };
 
+            let recv_frame = av_frame_alloc();
+            if recv_frame.is_null() {
+                avformat_close_input(&raw mut fmt_ctx);
+                return Err(FFramesMediaError::LibAVAllocationError("av_frame"));
+            }
+
             let custom_time_base = AVRational {
                 num: 1,
                 den: target_fps as i32,
@@ -581,6 +689,7 @@ impl FFmpegDecoder {
                 pkt,
                 fmt_ctx,
                 hw_frame,
+                recv_frame,
                 frame_buf: Arc::new(FFmpegFrameBuf::new(
                     filename.to_string_lossy().to_string(),
                     video_stream_info,
@@ -593,6 +702,7 @@ impl FFmpegDecoder {
                 current_loop: 0,
                 last_offset: None,
                 draining: false,
+                has_decoded_frame: false,
             })
         }
     }
@@ -660,6 +770,8 @@ impl FFmpegDecoder {
                 width: (*video_dec_ctx).width,
                 height: (*video_dec_ctx).height,
                 pixel_format: (*video_dec_ctx).pix_fmt,
+                color_space: (*video_dec_ctx).colorspace,
+                color_range: (*video_dec_ctx).color_range,
                 time_base: (*stream).time_base,
                 duration: (*stream).duration,
                 frame_rate: (*stream).r_frame_rate,
@@ -695,6 +807,7 @@ impl FFmpegDecoder {
             (*self.frame_buf.latest_av_frame).pts = -1;
             avcodec_flush_buffers(self.video_stream_info.codec_ctx);
             self.draining = false;
+            self.has_decoded_frame = false;
             av_packet_unref(self.pkt);
 
             Ok(())
@@ -750,6 +863,19 @@ impl FFmpegDecoder {
 
                 av_frame_copy_props(self.frame_buf.latest_av_frame, self.hw_frame);
             }
+            // The decoder fell back to software decoding: the frame it returned already
+            // holds the pixels. Keep a reference in the target too, since EOF may need
+            // to present it again when the output frame rate exceeds the clip's rate.
+            _ if target_frame != self.frame_buf.latest_av_frame => {
+                av_frame_unref(self.frame_buf.latest_av_frame);
+                let ret = av_frame_ref(self.frame_buf.latest_av_frame, target_frame);
+                if ret < 0 {
+                    return Err(FFramesMediaError::LibAVAudioDecodingError((
+                        ret,
+                        "Error retaining software decoded frame".to_string(),
+                    )));
+                }
+            }
             _ => (),
         }
 
@@ -793,16 +919,29 @@ impl FFmpegDecoder {
             loop {
                 // A previous call may have returned with more decoded frames queued.
                 // Consume them before sending another packet (which could return EAGAIN).
-                let ret = avcodec_receive_frame(self.video_stream_info.codec_ctx, target_frame);
+                let ret = avcodec_receive_frame(self.video_stream_info.codec_ctx, self.recv_frame);
                 match ret {
                     0 => {
+                        av_frame_unref(target_frame);
+                        av_frame_move_ref(target_frame, self.recv_frame);
+                        self.has_decoded_frame = true;
                         if (*target_frame).pts >= target_pts {
                             self.transfer_hardware_surface_data(target_frame)?;
                             return Ok(true);
                         }
                         continue;
                     }
-                    AVERROR_EOF => return Ok(false),
+                    AVERROR_EOF => {
+                        // The target lies after the last frame's timestamp but before the end of
+                        // the stream (e.g. a 24 fps clip sampled at 30 fps): the last frame is
+                        // still the one on screen, so return it instead of reporting the end.
+                        let shows_last_frame =
+                            self.has_decoded_frame && offset < self.duration_in_frames;
+                        if shows_last_frame {
+                            self.transfer_hardware_surface_data(target_frame)?;
+                        }
+                        return Ok(shows_last_frame);
+                    }
                     val if val == AVERROR(EAGAIN) && !self.draining => {}
                     _ => {
                         return Err(FFramesMediaError::LibAVAudioDecodingError((
@@ -851,6 +990,8 @@ impl FFmpegDecoder {
 impl Drop for FFmpegDecoder {
     fn drop(&mut self) {
         unsafe {
+            av_frame_free(&raw mut self.recv_frame);
+            av_frame_free(&raw mut self.hw_frame);
             avcodec_free_context(&raw mut self.video_stream_info.codec_ctx);
             avformat_close_input(&raw mut self.fmt_ctx);
             av_packet_free(&raw mut self.pkt);
@@ -938,7 +1079,18 @@ unsafe extern "C" fn get_hw_format(
             p = p.add(1);
         }
 
+        // The device has no decoder for this stream (a driver without the codec, an
+        // unsupported profile). The formats that are left decode in software.
         eprintln!("Failed to get HW surface format, falling back to software decoding");
+        let mut p = pix_fmts;
+        while !p.is_null() && *p != AVPixelFormat::AV_PIX_FMT_NONE {
+            let desc = av_pix_fmt_desc_get(*p);
+            if !desc.is_null() && (*desc).flags & AV_PIX_FMT_FLAG_HWACCEL as u64 == 0 {
+                return *p;
+            }
+            p = p.add(1);
+        }
+
         AVPixelFormat::AV_PIX_FMT_NONE
     }
 }
@@ -980,4 +1132,303 @@ unsafe fn find_hw_out_source_format(frame: *mut AVFrame) -> Option<AVPixelFormat
     av_freep((&raw mut formats).cast::<c_void>());
 
     Some(first_format)
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::*;
+    use crate::video_types::ResizeVideoFrame;
+
+    const WIDTH: i32 = 32;
+    const HEIGHT: i32 = 16;
+
+    struct TestFrame(*mut AVFrame);
+
+    impl TestFrame {
+        fn new(format: AVPixelFormat) -> Self {
+            unsafe {
+                let frame = av_frame_alloc();
+                assert!(!frame.is_null());
+                (*frame).width = WIDTH;
+                (*frame).height = HEIGHT;
+                (*frame).format = format as i32;
+                assert_eq!(av_frame_get_buffer(frame, 32), 0);
+                Self(frame)
+            }
+        }
+
+        fn fill(&mut self, yuv: [u8; 3], space: AVColorSpace, range: AVColorRange) {
+            unsafe {
+                (*self.0).colorspace = space;
+                (*self.0).color_range = range;
+                for (plane, value) in yuv.into_iter().enumerate() {
+                    for row in 0..HEIGHT {
+                        ptr::write_bytes(
+                            (*self.0).data[plane]
+                                .offset((row * (*self.0).linesize[plane]) as isize),
+                            value,
+                            WIDTH as usize,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    impl Drop for TestFrame {
+        fn drop(&mut self) {
+            unsafe { av_frame_free(&raw mut self.0) }
+        }
+    }
+
+    fn scaler(space: AVColorSpace, range: AVColorRange) -> SwsScaler {
+        SwsScaler::new(VideoStreamInfo {
+            hw_pix_fmt: None,
+            stream_index: 0,
+            codec_ctx: ptr::null_mut(),
+            width: WIDTH,
+            height: HEIGHT,
+            pixel_format: AVPixelFormat::AV_PIX_FMT_YUV444P,
+            color_space: space,
+            color_range: range,
+            time_base: AVRational { num: 1, den: 30 },
+            frame_rate: AVRational { num: 30, den: 1 },
+            duration: 1,
+        })
+    }
+
+    // Independent Y'CbCr equations; tolerate libswscale's integer rounding.
+    fn expected_rgb(yuv: [u8; 3], bt709: bool, full_range: bool) -> [u8; 4] {
+        let (kr, kb) = if bt709 {
+            (0.2126, 0.0722)
+        } else {
+            (0.299, 0.114)
+        };
+        let kg = 1.0 - kr - kb;
+        let (y, cb, cr) = if full_range {
+            (
+                f64::from(yuv[0]),
+                f64::from(yuv[1]) - 128.0,
+                f64::from(yuv[2]) - 128.0,
+            )
+        } else {
+            (
+                (f64::from(yuv[0]) - 16.0) * 255.0 / 219.0,
+                (f64::from(yuv[1]) - 128.0) * 255.0 / 224.0,
+                (f64::from(yuv[2]) - 128.0) * 255.0 / 224.0,
+            )
+        };
+        let rgb = [
+            y + 2.0 * (1.0 - kr) * cr,
+            y - 2.0 * kb * (1.0 - kb) / kg * cb - 2.0 * kr * (1.0 - kr) / kg * cr,
+            y + 2.0 * (1.0 - kb) * cb,
+        ];
+        [
+            rgb[0].round().clamp(0.0, 255.0) as u8,
+            rgb[1].round().clamp(0.0, 255.0) as u8,
+            rgb[2].round().clamp(0.0, 255.0) as u8,
+            255,
+        ]
+    }
+
+    fn assert_conversion(
+        scaler: &mut SwsScaler,
+        frame: &TestFrame,
+        options: Option<FrameConvertOptions>,
+        expected: [u8; 4],
+    ) {
+        let width = options.map_or(WIDTH as usize, |o| o.resize.width as usize);
+        let height = options.map_or(HEIGHT as usize, |o| o.resize.height as usize);
+        let mut rgba = vec![0; width * height * 4];
+        unsafe { scaler.convert(options, frame.0, &mut rgba).unwrap() };
+        for pixel in rgba.as_chunks::<4>().0 {
+            for (actual, expected) in pixel.iter().zip(expected) {
+                assert!(actual.abs_diff(expected) <= 2, "{pixel:?} != {expected:?}");
+            }
+            assert_eq!(pixel[3], 255);
+        }
+    }
+
+    #[test]
+    fn converts_bt709_and_bt601_with_limited_and_full_range() {
+        let mut scaler = scaler(
+            AVColorSpace::AVCOL_SPC_UNSPECIFIED,
+            AVColorRange::AVCOL_RANGE_UNSPECIFIED,
+        );
+        let mut frame = TestFrame::new(AVPixelFormat::AV_PIX_FMT_YUV444P);
+        for space in [
+            AVColorSpace::AVCOL_SPC_BT709,
+            AVColorSpace::AVCOL_SPC_SMPTE170M,
+        ] {
+            for range in [
+                AVColorRange::AVCOL_RANGE_MPEG,
+                AVColorRange::AVCOL_RANGE_JPEG,
+            ] {
+                for yuv in [
+                    [81, 90, 240],
+                    [145, 54, 34],
+                    [41, 240, 110],
+                    [16, 128, 128],
+                    [235, 128, 128],
+                ] {
+                    frame.fill(yuv, space, range);
+                    assert_conversion(
+                        &mut scaler,
+                        &frame,
+                        None,
+                        expected_rgb(
+                            yuv,
+                            space == AVColorSpace::AVCOL_SPC_BT709,
+                            range == AVColorRange::AVCOL_RANGE_JPEG,
+                        ),
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn frame_metadata_overrides_stream_defaults_and_survives_resize() {
+        let mut scaler = scaler(
+            AVColorSpace::AVCOL_SPC_BT709,
+            AVColorRange::AVCOL_RANGE_JPEG,
+        );
+        let mut frame = TestFrame::new(AVPixelFormat::AV_PIX_FMT_YUV444P);
+        let yuv = [100, 90, 180];
+        for (space, range, bt709, full_range) in [
+            (
+                AVColorSpace::AVCOL_SPC_UNSPECIFIED,
+                AVColorRange::AVCOL_RANGE_UNSPECIFIED,
+                true,
+                true,
+            ),
+            (
+                AVColorSpace::AVCOL_SPC_SMPTE170M,
+                AVColorRange::AVCOL_RANGE_MPEG,
+                false,
+                false,
+            ),
+            (
+                AVColorSpace::AVCOL_SPC_BT709,
+                AVColorRange::AVCOL_RANGE_MPEG,
+                true,
+                false,
+            ),
+            (
+                AVColorSpace::AVCOL_SPC_UNSPECIFIED,
+                AVColorRange::AVCOL_RANGE_UNSPECIFIED,
+                true,
+                true,
+            ),
+        ] {
+            frame.fill(yuv, space, range);
+            for options in [
+                None,
+                Some(FrameConvertOptions {
+                    resize: ResizeVideoFrame {
+                        width: 16,
+                        height: 8,
+                    },
+                }),
+                None,
+            ] {
+                assert_conversion(
+                    &mut scaler,
+                    &frame,
+                    options,
+                    expected_rgb(yuv, bt709, full_range),
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn rgb_and_rgba_keep_pixel_values_and_alpha() {
+        let mut scaler = scaler(
+            AVColorSpace::AVCOL_SPC_UNSPECIFIED,
+            AVColorRange::AVCOL_RANGE_UNSPECIFIED,
+        );
+        for (format, channels) in [
+            (AVPixelFormat::AV_PIX_FMT_RGB24, 3),
+            (AVPixelFormat::AV_PIX_FMT_RGBA, 4),
+            (AVPixelFormat::AV_PIX_FMT_RGB24, 3),
+        ] {
+            let frame = TestFrame::new(format);
+            let mut expected = Vec::new();
+            for row in 0..HEIGHT {
+                for column in 0..WIDTH {
+                    let pixel = [
+                        (column * 8) as u8,
+                        (row * 16) as u8,
+                        (255 - column * 8) as u8,
+                        if channels == 4 { (row * 16) as u8 } else { 255 },
+                    ];
+                    expected.extend_from_slice(&pixel);
+                    unsafe {
+                        ptr::copy_nonoverlapping(
+                            pixel.as_ptr(),
+                            (*frame.0).data[0].offset(
+                                (row * (*frame.0).linesize[0] + column * channels) as isize,
+                            ),
+                            channels as usize,
+                        );
+                    }
+                }
+            }
+            for (space, range) in [
+                (
+                    AVColorSpace::AVCOL_SPC_UNSPECIFIED,
+                    AVColorRange::AVCOL_RANGE_UNSPECIFIED,
+                ),
+                (AVColorSpace::AVCOL_SPC_RGB, AVColorRange::AVCOL_RANGE_JPEG),
+                (
+                    AVColorSpace::AVCOL_SPC_BT709,
+                    AVColorRange::AVCOL_RANGE_MPEG,
+                ),
+            ] {
+                let mut actual = vec![0; expected.len()];
+                unsafe {
+                    (*frame.0).colorspace = space;
+                    (*frame.0).color_range = range;
+                    scaler.convert(None, frame.0, &mut actual).unwrap();
+                }
+                assert_eq!(actual, expected);
+            }
+        }
+    }
+
+    #[test]
+    fn unspecified_metadata_keeps_bt601_and_pixel_format_range_defaults() {
+        let mut scaler = scaler(
+            AVColorSpace::AVCOL_SPC_UNSPECIFIED,
+            AVColorRange::AVCOL_RANGE_UNSPECIFIED,
+        );
+        let yuv = [100, 90, 180];
+        for format in [
+            AVPixelFormat::AV_PIX_FMT_YUV444P,
+            AVPixelFormat::AV_PIX_FMT_YUVJ444P,
+            AVPixelFormat::AV_PIX_FMT_YUV444P,
+        ] {
+            let mut frame = TestFrame::new(format);
+            // First apply explicit metadata, then ensure unspecified metadata
+            // resets the cached matrix/range rather than retaining that state.
+            frame.fill(
+                yuv,
+                AVColorSpace::AVCOL_SPC_BT709,
+                AVColorRange::AVCOL_RANGE_JPEG,
+            );
+            assert_conversion(&mut scaler, &frame, None, expected_rgb(yuv, true, true));
+            frame.fill(
+                yuv,
+                AVColorSpace::AVCOL_SPC_UNSPECIFIED,
+                AVColorRange::AVCOL_RANGE_UNSPECIFIED,
+            );
+            assert_conversion(
+                &mut scaler,
+                &frame,
+                None,
+                expected_rgb(yuv, false, format == AVPixelFormat::AV_PIX_FMT_YUVJ444P),
+            );
+        }
+    }
 }

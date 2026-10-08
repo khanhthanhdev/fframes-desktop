@@ -70,6 +70,12 @@ impl fmt::Display for RenderEncodingError {
     }
 }
 
+impl fmt::Debug for RenderEncodingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{self}")
+    }
+}
+
 pub type RenderEncodingResult<T> = Result<T, RenderEncodingError>;
 
 pub enum FFramesRendererError {

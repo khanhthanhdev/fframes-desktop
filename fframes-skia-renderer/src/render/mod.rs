@@ -11,21 +11,22 @@ mod convert;
 mod filters;
 mod fingerprint;
 mod image;
+mod occlusion;
+mod resources;
 mod shader;
 
 pub use shader::compile_shader;
 
-use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::sync::Arc;
 
-use fframes::usvgr;
+use fframes::usvgr::{self, ahash::AHashMap};
 use skia_safe::{Canvas, Matrix};
 
-use convert::{convert_blend_mode, convert_path, to_skia_paint, to_skia_stroke_paint};
+use convert::{PathConverter, convert_blend_mode, to_skia_paint, to_skia_stroke_paint};
 use fingerprint::{
-    exact_content_fingerprint, fill_fingerprint, group_fingerprint, image_fingerprint,
-    path_geometry_fingerprint, stroke_fingerprint,
+    exact_content_fingerprint, exact_path_fingerprint, fill_fingerprint, group_fingerprint,
+    image_fingerprint, path_geometry_fingerprint, stroke_fingerprint,
 };
 use image::SkiaImage;
 
@@ -44,15 +45,15 @@ struct Cached<T> {
 /// getting stolen back into `current`, so the cache is bounded by roughly two
 /// frames worth of entries.
 struct Generational<T> {
-    current: HashMap<u64, Cached<T>>,
-    previous: HashMap<u64, Cached<T>>,
+    current: AHashMap<u64, Cached<T>>,
+    previous: AHashMap<u64, Cached<T>>,
 }
 
 impl<T> Default for Generational<T> {
     fn default() -> Self {
         Self {
-            current: HashMap::new(),
-            previous: HashMap::new(),
+            current: AHashMap::new(),
+            previous: AHashMap::new(),
         }
     }
 }
@@ -118,8 +119,10 @@ impl<T> Generational<T> {
 ///
 /// Paths, paints and pictures are keyed by `static_hash` — a stable
 /// content-identity hash assigned at compile time by the `svgr!` macro to
-/// nodes whose lexical content never changes.  Nodes without a `static_hash`
-/// are frame-dependent and are converted fresh each frame.  Images are keyed
+/// nodes whose lexical content never changes. Dynamic paths, fills, and strokes
+/// share converted resources by resolved content, with exact equality checks
+/// and bounded retention. Transforms and group compositing are applied when
+/// drawing, so sharing resources does not change painter order. Images are keyed
 /// by the address of their `Arc<PreloadedImageData>`; the cache entry holds
 /// a clone of the `Arc`, so the address can not be recycled while the entry
 /// exists.  Every entry is validated with a runtime [`fingerprint`] of the
@@ -127,8 +130,15 @@ impl<T> Generational<T> {
 /// (see [`Generational`]).
 #[derive(Default)]
 pub struct RenderCache {
+    #[cfg(test)]
+    disable_occlusion: bool,
     /// `static_hash` → converted `skia_safe::Path`
     paths: Generational<skia_safe::Path>,
+    path_converter: PathConverter,
+    // Bounded reuse for dynamic paths and styles on both raster and GPU surfaces.
+    geometry: resources::ResourceCache<resources::Geometry, { 4 * 1024 * 1024 }>,
+    fills: resources::ResourceCache<resources::Fill, { 256 * 1024 }>,
+    strokes: resources::ResourceCache<resources::Stroke, { 256 * 1024 }>,
     /// `static_hash` → recorded `skia_safe::Picture` of an entire static
     /// group.  Replaying a picture is dramatically cheaper than re-traversing
     /// the subtree and re-issuing every draw call.
@@ -146,7 +156,7 @@ pub struct RenderCache {
     filtered_layers: Generational<FilteredLayer>,
     /// `static_hash` → whether the static subtree contains filters, such subtrees are
     /// not recorded as pictures so the filtered groups inside can be rasterized.
-    static_has_filters: HashMap<u64, bool>,
+    static_has_filters: AHashMap<u64, bool>,
 }
 
 struct FilteredLayer {
@@ -162,8 +172,22 @@ impl RenderCache {
         Self::default()
     }
 
+    /// Creates a cache with explicit dynamic geometry entry and memory limits.
+    pub fn with_config(config: crate::SkiaCacheConfig) -> Self {
+        Self {
+            geometry: resources::ResourceCache::with_limits(
+                config.geometry_capacity,
+                config.geometry_bytes,
+            ),
+            ..Default::default()
+        }
+    }
+
     fn begin_frame(&mut self) {
         self.paths.begin_frame();
+        self.geometry.begin_frame();
+        self.fills.begin_frame();
+        self.strokes.begin_frame();
         self.pictures.begin_frame();
         self.fill_paints.begin_frame();
         self.stroke_paints.begin_frame();
@@ -190,7 +214,21 @@ impl RenderCache {
     /// Convert a path, reusing the cached conversion for static paths.
     fn convert_path(&mut self, path: &usvgr::Path) -> skia_safe::Path {
         let Some(hash) = path.static_hash() else {
-            return convert_path(path.data());
+            let data = path.data();
+            let key = exact_path_fingerprint(data);
+            if let Some(geometry) = self.geometry.get(key)
+                && geometry.source == *data
+            {
+                return geometry.path.clone();
+            }
+            let converted = self.path_converter.convert(data);
+            let bytes = (std::mem::size_of_val(data.points()) + data.verbs().len()) * 2 + 256;
+            self.geometry
+                .insert_with(key, bytes, || resources::Geometry {
+                    source: data.clone(),
+                    path: converted.clone(),
+                });
+            return converted;
         };
 
         let fingerprint = path_geometry_fingerprint(path.data());
@@ -199,7 +237,7 @@ impl RenderCache {
         }
 
         self.paths
-            .insert(hash, fingerprint, convert_path(path.data()))
+            .insert(hash, fingerprint, self.path_converter.convert(path.data()))
             .clone()
     }
 }
@@ -220,8 +258,11 @@ pub fn render_tree(tree: &usvgr::Tree, canvas: &Canvas, cache: &mut RenderCache)
 }
 
 fn render_nodes(parent: &usvgr::Group, canvas: &Canvas, cache: &mut RenderCache) {
-    for node in parent.children() {
-        render_node(node, canvas, cache);
+    let visible = occlusion::visible_nodes(parent, canvas, cache);
+    for (i, node) in parent.children().iter().enumerate() {
+        if visible.as_ref().is_none_or(|visible| visible[i]) {
+            render_node(node, canvas, cache);
+        }
     }
 }
 
@@ -231,7 +272,16 @@ fn render_node(node: &usvgr::Node, canvas: &Canvas, cache: &mut RenderCache) {
             render_group(group, canvas, cache);
         }
         usvgr::Node::Path(path) => {
-            render_path(path, canvas, cache);
+            render_path_with_alpha(path, None, canvas, cache, 1.0);
+        }
+        usvgr::Node::FastShape(fast_shape) => {
+            render_path_with_alpha(
+                fast_shape.path(),
+                Some(fast_shape.kind()),
+                canvas,
+                cache,
+                1.0,
+            );
         }
         usvgr::Node::Image(image) => {
             render_image(image, canvas, cache);
@@ -579,7 +629,19 @@ fn render_folded_opacity(
 
     match child {
         usvgr::Node::Path(path) if path.fill().is_none() || path.stroke().is_none() => {
-            render_path_with_alpha(path, canvas, cache, alpha);
+            render_path_with_alpha(path, None, canvas, cache, alpha);
+            true
+        }
+        usvgr::Node::FastShape(fast_shape)
+            if fast_shape.path().fill().is_none() || fast_shape.path().stroke().is_none() =>
+        {
+            render_path_with_alpha(
+                fast_shape.path(),
+                Some(fast_shape.kind()),
+                canvas,
+                cache,
+                alpha,
+            );
             true
         }
         usvgr::Node::Image(image) => match image.kind() {
@@ -681,7 +743,14 @@ fn build_clip_group(
 
     for child in group.children() {
         let contribution = match child {
-            usvgr::Node::Path(path) => {
+            usvgr::Node::Path(_) | usvgr::Node::FastShape(_) => {
+                let (path, fast_shape) = match child {
+                    usvgr::Node::FastShape(fast_shape) => {
+                        (fast_shape.path(), Some(fast_shape.kind()))
+                    }
+                    usvgr::Node::Path(path) => (&**path, None),
+                    _ => unreachable!(),
+                };
                 if path.visibility() != usvgr::Visibility::Visible {
                     continue;
                 }
@@ -692,7 +761,7 @@ fn build_clip_group(
                             usvgr::FillRule::EvenOdd => skia_safe::PathFillType::EvenOdd,
                         });
 
-                let mut sk_path = cache.convert_path(path);
+                let mut sk_path = geometry_path(path, fast_shape, cache);
                 sk_path.set_fill_type(fill_type);
                 Some(sk_path.make_transform(transform))
             }
@@ -769,14 +838,14 @@ fn apply_mask(mask: &usvgr::Mask, canvas: &Canvas, cache: &mut RenderCache) {
     }
 }
 
-fn render_path(path: &usvgr::Path, canvas: &Canvas, cache: &mut RenderCache) {
-    render_path_with_alpha(path, canvas, cache, 1.0);
-}
-
 /// Renders a path with its paints faded by `alpha`, which is how an opacity group
 /// holding only this path looks when the path does not overlap itself.
+///
+/// `fast_shape` is set for [`usvgr::FastShape`] nodes: Skia then draws the oval or rounded rect
+/// analytically instead of tessellating `path`'s cubics on the CPU.
 fn render_path_with_alpha(
     path: &usvgr::Path,
+    fast_shape: Option<usvgr::FastShapeKind>,
     canvas: &Canvas,
     cache: &mut RenderCache,
     alpha: f32,
@@ -786,30 +855,98 @@ fn render_path_with_alpha(
     }
 
     if path.paint_order() == usvgr::PaintOrder::FillAndStroke {
-        fill_path(path, canvas, cache, alpha);
-        stroke_path(path, canvas, cache, alpha);
+        fill_path(path, fast_shape, canvas, cache, alpha);
+        stroke_path(path, fast_shape, canvas, cache, alpha);
     } else {
-        stroke_path(path, canvas, cache, alpha);
-        fill_path(path, canvas, cache, alpha);
+        stroke_path(path, fast_shape, canvas, cache, alpha);
+        fill_path(path, fast_shape, canvas, cache, alpha);
     }
 }
 
 fn draw_path_with_alpha(
     canvas: &Canvas,
-    path: &skia_safe::Path,
+    geometry: &Geometry,
     paint: &skia_safe::Paint,
     alpha: f32,
 ) {
     if alpha < 1.0 {
         let mut paint = paint.clone();
         paint.set_alpha_f(paint.alpha_f() * alpha);
-        canvas.draw_path(path, &paint);
+        geometry.draw(canvas, &paint);
     } else {
-        canvas.draw_path(path, paint);
+        geometry.draw(canvas, paint);
     }
 }
 
-fn fill_path(path: &usvgr::Path, canvas: &Canvas, cache: &mut RenderCache, alpha: f32) {
+/// What a path node draws. A fast shape's oval or rounded rect is drawn directly, without
+/// building a Skia path.
+enum Geometry {
+    Path(skia_safe::Path),
+    Oval(skia_safe::Rect),
+    RRect(skia_safe::RRect),
+}
+
+impl Geometry {
+    fn draw(&self, canvas: &Canvas, paint: &skia_safe::Paint) {
+        match self {
+            Geometry::Path(path) => canvas.draw_path(path, paint),
+            Geometry::Oval(rect) => canvas.draw_oval(rect, paint),
+            Geometry::RRect(rrect) => canvas.draw_rrect(rrect, paint),
+        };
+    }
+}
+
+/// [`geometry_path`] for drawing. Dashed strokes keep the path: Skia dashes an oval or rounded
+/// rect drawn directly along its default path, which for a rounded rect starts on the left edge
+/// instead of where SVG's starts.
+fn geometry(
+    path: &usvgr::Path,
+    fast_shape: Option<usvgr::FastShapeKind>,
+    dashed: bool,
+    cache: &mut RenderCache,
+) -> Geometry {
+    match fast_shape {
+        Some(usvgr::FastShapeKind::Ellipse(rect)) if !dashed => Geometry::Oval(to_rect(rect)),
+        Some(usvgr::FastShapeKind::RoundRect { rect, rx, ry }) if !dashed => {
+            Geometry::RRect(skia_safe::RRect::new_rect_xy(to_rect(rect), rx, ry))
+        }
+        _ => Geometry::Path(geometry_path(path, fast_shape, cache)),
+    }
+}
+
+/// Skia path of a path, or of the shape a [`usvgr::FastShape`] keeps.
+fn geometry_path(
+    path: &usvgr::Path,
+    fast_shape: Option<usvgr::FastShapeKind>,
+    cache: &mut RenderCache,
+) -> skia_safe::Path {
+    match fast_shape {
+        // Skia's default oval starts at the rightmost point and goes clockwise, like SVG's.
+        Some(usvgr::FastShapeKind::Ellipse(rect)) => skia_safe::Path::oval(to_rect(rect), None),
+        // Index 0 starts at the end of the top-left corner, where the SVG spec's `rect` path
+        // starts, so dashes line up (the default starts on the left edge).
+        Some(usvgr::FastShapeKind::RoundRect { rect, rx, ry }) => {
+            skia_safe::Path::rrect_with_start_index(
+                skia_safe::RRect::new_rect_xy(to_rect(rect), rx, ry),
+                skia_safe::PathDirection::CW,
+                0,
+            )
+        }
+        None => cache.convert_path(path),
+    }
+}
+
+fn to_rect(rect: usvgr::NonZeroRect) -> skia_safe::Rect {
+    skia_safe::Rect::from_ltrb(rect.left(), rect.top(), rect.right(), rect.bottom())
+}
+
+fn fill_path(
+    path: &usvgr::Path,
+    fast_shape: Option<usvgr::FastShapeKind>,
+    canvas: &Canvas,
+    cache: &mut RenderCache,
+    alpha: f32,
+) {
     let Some(fill) = path.fill() else { return };
 
     let bounds = path.data().bounds();
@@ -822,8 +959,11 @@ fn fill_path(path: &usvgr::Path, canvas: &Canvas, cache: &mut RenderCache, alpha
         usvgr::FillRule::EvenOdd => skia_safe::PathFillType::EvenOdd,
     };
 
-    let mut sk_path = cache.convert_path(path);
-    sk_path.set_fill_type(fill_type);
+    let mut sk_path = geometry(path, fast_shape, false, cache);
+    // Ovals and rounded rects do not overlap themselves, so the fill rule does not matter.
+    if let Geometry::Path(sk_path) = &mut sk_path {
+        sk_path.set_fill_type(fill_type);
+    }
 
     let anti_alias = path.rendering_mode().use_shape_antialiasing();
     let cache_key = path
@@ -837,6 +977,15 @@ fn fill_path(path: &usvgr::Path, canvas: &Canvas, cache: &mut RenderCache, alpha
         return;
     }
 
+    let dynamic_key = (cache_key.is_none() && !matches!(fill.paint(), usvgr::Paint::Pattern(_)))
+        .then(|| fill_fingerprint(fill, anti_alias));
+    if let Some(cached) = dynamic_key.and_then(|key| cache.fills.get(key))
+        && cached.matches(fill, anti_alias)
+    {
+        draw_path_with_alpha(canvas, &sk_path, &cached.paint, alpha);
+        return;
+    }
+
     let Some(mut paint) = to_skia_paint(fill.paint(), fill.opacity(), anti_alias, cache) else {
         return;
     };
@@ -846,13 +995,29 @@ fn fill_path(path: &usvgr::Path, canvas: &Canvas, cache: &mut RenderCache, alpha
 
     if let Some((hash, fingerprint)) = cache_key {
         cache.fill_paints.insert(hash, fingerprint, paint);
+    } else if let Some(key) = dynamic_key {
+        cache
+            .fills
+            .insert_with(key, resources::paint_bytes(fill.paint()), || {
+                resources::Fill {
+                    source: fill.clone(),
+                    anti_alias,
+                    paint,
+                }
+            });
     }
 }
 
-fn stroke_path(path: &usvgr::Path, canvas: &Canvas, cache: &mut RenderCache, alpha: f32) {
+fn stroke_path(
+    path: &usvgr::Path,
+    fast_shape: Option<usvgr::FastShapeKind>,
+    canvas: &Canvas,
+    cache: &mut RenderCache,
+    alpha: f32,
+) {
     let Some(stroke) = path.stroke() else { return };
 
-    let sk_path = cache.convert_path(path);
+    let sk_path = geometry(path, fast_shape, stroke.dasharray().is_some(), cache);
 
     let anti_alias = path.rendering_mode().use_shape_antialiasing();
     let cache_key = path
@@ -864,6 +1029,15 @@ fn stroke_path(path: &usvgr::Path, canvas: &Canvas, cache: &mut RenderCache, alp
         return;
     }
 
+    let dynamic_key = (cache_key.is_none() && !matches!(stroke.paint(), usvgr::Paint::Pattern(_)))
+        .then(|| stroke_fingerprint(stroke, anti_alias));
+    if let Some(cached) = dynamic_key.and_then(|key| cache.strokes.get(key))
+        && cached.matches(stroke, anti_alias)
+    {
+        draw_path_with_alpha(canvas, &sk_path, &cached.paint, alpha);
+        return;
+    }
+
     let Some(paint) = to_skia_stroke_paint(stroke, anti_alias, cache) else {
         return;
     };
@@ -872,6 +1046,17 @@ fn stroke_path(path: &usvgr::Path, canvas: &Canvas, cache: &mut RenderCache, alp
 
     if let Some((hash, fingerprint)) = cache_key {
         cache.stroke_paints.insert(hash, fingerprint, paint);
+    } else if let Some(key) = dynamic_key {
+        cache.strokes.insert_with(
+            key,
+            resources::paint_bytes(stroke.paint())
+                + stroke.dasharray().map_or(0, std::mem::size_of_val),
+            || resources::Stroke {
+                source: stroke.clone(),
+                anti_alias,
+                paint,
+            },
+        );
     }
 }
 

@@ -1,5 +1,8 @@
 mod skia_pipeline;
 
+mod cache;
+pub use cache::SkiaCacheConfig;
+
 mod backends;
 pub use backends::*;
 
@@ -14,6 +17,11 @@ pub use instant_rendering::*;
 
 mod frame_renderer;
 pub use frame_renderer::*;
+
+mod frame_export;
+pub use frame_export::{
+    FrameExportPath, HardwareFrameTarget, SkiaEncoderFrameRenderer, SkiaFrameExport,
+};
 
 pub mod render;
 

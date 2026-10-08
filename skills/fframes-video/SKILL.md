@@ -24,6 +24,10 @@ open the real-time preview window, and look at frames, contact sheets and loudne
 files you can read. Read `references/design.md` before designing, `references/api.md` while
 writing code and `references/audio.md` for sound.
 
+When matching a supplied video, first follow the reference-analysis guidance in
+`references/design.md`. Its cuts, pacing and motion take precedence over the design defaults
+below; fast edits and intentional black frames may be part of the requested result.
+
 ## 1. Install
 
 Rust from <https://rustup.rs>, then the system libraries ffmpeg is built with:
@@ -84,7 +88,6 @@ my-video/
   src/lib.rs        # the video (from the template)
   src/main.rs       # the command line
   media/            # fonts, images and audio compiled into the binary (one starter font)
-  tests/frames.rs   # frame snapshots and a check of every frame for problems
   README.md         # the commands below
 ```
 
@@ -96,6 +99,25 @@ R() { cargo run --release -- "$@"; }
 ```
 
 ## 3. The loop
+
+**Do not write tests at all when using this skill.** Do not create unit, integration,
+snapshot or visual-regression tests, test modules, or test harnesses. Validate the video
+with `inspect`, rendered frames, contact sheets, audio checks and the native preview.
+
+**For the GPU backend, offer the native preview before a full render.** Do not render the
+whole video as a routine review step. Once the changes are ready to review:
+
+1. Show a complete command in a copyable shell code block, using the actual project path and
+   package name; do not require the user to have defined the `$R` helper. For example:
+   `cd /absolute/path/to/fframes && cargo run --release -p my-video -- preview 0s`.
+2. Explicitly offer to run that preview for the user. If they have already authorized
+   opening or refreshing the preview, show the command and continue within that authorization.
+
+After a requested change, set the command's start time to a specific second at or just before
+the changed section, with enough lead-in to see its entrance or transition. For example,
+`preview 8.5s` lets the user review a change around 9 seconds without replaying the beginning.
+State which section they will see. Render the full video when the user requests the final
+export; do not require another confirmation if that request is already explicit.
 
 After every change:
 
@@ -115,21 +137,17 @@ After every change:
    path and spacing of a movement: easing, overshoot, stagger.
 6. `$R preview Intro` opens a real-time window with sound for the user to watch (space
    play/pause, h/l seek a second, j/k step a frame, q quit). It blocks until closed, so start
-   it in the background or ask the user to run it. Offer it whenever the user wants to see
-   the video; you review with strips and frames, the user watches in the preview.
-7. `$R render Intro --draft` encodes one scene at half resolution in about a second;
-   `$R render` writes the final `out.mp4`.
+   it in the background when running it for the user. Show the command and offer to launch
+   it as described above; after edits, use a specific second near the change.
+
+When an encoded sample is needed, `$R render Intro --draft` encodes one scene at half
+resolution. `$R render` writes the full video for a requested final export.
 
 Rules:
 - Look at the PNGs before saying anything looks good.
 - Prefer `strip` to many `frame` calls; add `--scale 0.5` when composition is all you need.
 - Add `--json` when parsing output: the result goes to stdout, progress to stderr.
 - Keep `--release`: debug builds render many times slower.
-- `cargo test` compares settled frames with approved snapshots in `_frame_snapshots/` and
-  fails if any frame has warnings. The first run only creates the snapshots: look at the PNGs
-  before committing them, a created baseline is not a reviewed one.
-  `FFRAMES_UPDATE_SNAPSHOTS=1 cargo test` accepts intended changes. Snapshot the middle of a
-  scene (`Intro@3s`), not its end where it fades out.
 
 ### Addressing time
 
@@ -183,9 +201,15 @@ impl Video for MyVideo<'_> {
 ```
 
 - One scene per idea, 2-6 s each. Inside a scene `frame.seconds()` counts from the scene start.
-- Animate with `frame.animate(&fframes::timeline!(at 0.2 => 0.8, animate 0.0_f32 => 1.0, Easing::EaseOut))`
-  and springs, `Easing::Spring { mass: 1.0, stiffness: 180.0, damping: 20.0 }`. Leave the end
-  time off a spring so it settles on its own.
+- Default to `frame.animate(fframes::timeline!(...))` directly in `svgr!` attributes for
+  motion with fixed values. `svgr!` lifts these animations into cached statics. Define easings
+  inline in the timeline, including `Easing::Spring { mass: 1.0, stiffness: 180.0, damping: 20.0 }`;
+  named easing constants are optional. Leave the end time off a spring so it settles on its own.
+- For dynamic values or calls outside that optimized pattern (including `animate_loop`),
+  construct timelines once on `self` and sample them by reference. Use cached
+  `AnimationRuntime` values for starts that change after construction or custom/subframe
+  clocks. Camera parameters and shader uniforms can use these APIs too; do not duplicate
+  springs or tween interpolation. See `references/design.md` and `references/api.md`.
 - Markup without `{}` is cached across frames. Keep decoration literal and put animated values
   on a wrapping `<g transform={..} opacity={..}>`.
 - `render_frame` runs for every frame on several threads: no panics, file reads or heavy work
@@ -196,7 +220,8 @@ impl Video for MyVideo<'_> {
 - Measure text rather than guess: `frame.text_width`, `frame.text_fit(.., TextOverflow::Ellipsis)`,
   `frame.text_break_lines` for paragraphs. `inspect` catches text leaving the canvas, not text
   leaving its own box, so check boxes in a `frame` PNG.
-- GPU shaders (SkSL or Shadertoy GLSL) run on the Skia backend through `fframes::Shader`; see
+- GPU shaders (SkSL or Shadertoy GLSL) run on the Skia backend through `fframes::Shader`; they
+  take images and synced video frames as input (green-screen keying, color grading). See
   `references/api.md`.
 
 ## 5. Making it look good
@@ -208,8 +233,9 @@ The short version of `references/design.md`:
 - Elements enter with a spring or ease-out over 300-600 ms and leave faster, with ease-in over
   200-300 ms. Related items stagger by 60-120 ms. Give the viewer 1-2 s to read after the
   motion settles, and never move everything at once.
-- Cross-fade scenes (`fn overlap(&self) -> Overlap { Overlap::Previous(0.4) }`) or carry an
-  element across the cut. Keep a little motion during holds so they do not look frozen.
+- Cross-fade scenes (`fn overlap(&self) -> Overlap { Overlap::Previous(0.4) }`; the overlap
+  is added to the scene's `duration()`, see `references/api.md`) or carry an element across
+  the cut. Keep a little motion during holds so they do not look frozen.
 - At 1920x1080: titles 96-140 px, body 44-60 px, at most about 8 words per line and 3 lines per
   card. Portrait 1080x1920 is watched on a phone: same pixel sizes or larger, content inside
   the middle 80% because platform UI covers the top and bottom.
@@ -238,12 +264,13 @@ the user listen in `$R preview`.
 1. `$R inspect --fail-on warning` passes, or the remaining warnings are understood entrances.
 2. A strip of every scene looks right and key frames are checked at full size.
 3. `$R audio analyze` shows sensible levels.
-4. `$R render -o out.mp4`, then confirm size, frame count and audio with
+4. For GPU work awaiting review, show the preview command and offer to run it at the relevant
+   second. When the user requests the final export, run `$R render -o out.mp4`, then confirm
+   size, frame count and audio with
    `ffprobe -v error -show_entries stream=codec_type,width,height,nb_frames,duration out.mp4`.
-5. Run `cargo test` if the project keeps snapshots, and commit `_frame_snapshots/*.png`.
 
-Tell the user the output path, the duration, the path of a strip image and the `preview`
-command to watch it.
+For preview review, provide the concrete preview command, its start time and the offer to
+launch it. After final export, provide the output path and duration.
 
 ## Troubleshooting
 

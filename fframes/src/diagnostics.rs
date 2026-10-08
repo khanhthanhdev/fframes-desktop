@@ -284,10 +284,10 @@ fn inspect_group(group: &usvgr::Group, width: f32, height: f32, out: &mut Vec<Di
                     });
                 }
             }
-            usvgr::Node::Path(path) => {
-                if !path.abs_transform().is_finite() {
+            usvgr::Node::Path(_) | usvgr::Node::FastShape(_) => {
+                if !node.abs_transform().is_finite() {
                     out.push(Diagnostic::InvalidTransform {
-                        id: path.id().to_owned(),
+                        id: node.id().to_owned(),
                     });
                 }
             }
@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(collected, vec![Diagnostic::EmptyFrame]);
 
         let ((), nothing) = collect(|| ());
-        assert!(nothing.is_empty());
+        assert_eq!(nothing, Vec::<Diagnostic>::new());
     }
 
     #[test]
