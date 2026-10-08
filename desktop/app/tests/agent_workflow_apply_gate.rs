@@ -41,6 +41,7 @@ fn an_unqualified_platform_retains_the_candidate_and_blocks_apply() {
     w.assert_clean();
 }
 
+#[cfg(unix)]
 #[test]
 fn cli_project_tools_remain_available_without_the_mcp_route() {
     for (options, why) in [
@@ -101,4 +102,34 @@ fn cli_project_tools_remain_available_without_the_mcp_route() {
         w.wait_task(None);
         w.assert_clean();
     }
+}
+
+#[cfg(not(unix))]
+#[test]
+fn cli_project_tools_report_the_unsupported_local_broker() {
+    let w = World::with(Options {
+        mcp: studio_agent_spike::McpStdioSupport::Unsupported,
+        ..Options::default()
+    });
+    w.submit(&serde_json::json!({"hang": true}));
+    w.wait_phase(TaskPhase::Editing);
+    w.wait_prompts(1);
+
+    let params: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(w.agent.join("session-params.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(params["mcpServers"].as_array().unwrap().is_empty());
+
+    let snapshot = w.wait("the unsupported broker notice", |snapshot| {
+        snapshot.mcp.note.as_deref().is_some_and(|note| {
+            note.contains("unix domain sockets and is unsupported on this platform")
+        })
+    });
+    assert!(!snapshot.mcp.active && !snapshot.mcp.cli_active);
+    assert!(snapshot.mcp.capability_file.is_none());
+    assert_eq!(snapshot.resources.broker_grants, 0);
+    w.wf().stop().unwrap();
+    w.wait_task(None);
+    w.assert_clean();
 }
