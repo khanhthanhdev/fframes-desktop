@@ -24,6 +24,8 @@ thread_local! {
 #[cfg(not(target_arch = "wasm32"))]
 mod audio_decoder;
 #[cfg(not(target_arch = "wasm32"))]
+pub use audio_decoder::AudioDecoder;
+#[cfg(not(target_arch = "wasm32"))]
 mod video_decoder;
 #[cfg(not(target_arch = "wasm32"))]
 pub use ffmpeg_sys_fframes;

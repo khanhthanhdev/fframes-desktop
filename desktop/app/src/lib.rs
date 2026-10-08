@@ -7,6 +7,7 @@ pub mod candidate_runner;
 pub mod canvas_view;
 pub mod conversation_panel;
 mod evidence_preview;
+pub mod export_service;
 pub mod frame_image;
 pub mod selection_spike;
 pub mod setup_view;

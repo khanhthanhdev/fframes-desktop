@@ -78,9 +78,9 @@ fn build_key_separates_every_input_that_changes_the_bytes() {
     let mut toolchain = m.clone();
     toolchain.rust_toolchain.channel = "nightly".into();
     distinct(BuildKey::worker(&project, &env_of(&toolchain)));
-    let mut target = m.clone();
-    target.target_triple = "aarch64-apple-darwin".into();
-    distinct(BuildKey::worker(&project, &env_of(&target)));
+    let mut target = base.clone();
+    target.target_triple = "another-native-target".into();
+    distinct(target.clone());
     // Package / worker entry.
     let mut package = project.clone();
     package.manifest.entry.package = "other-package".into();
@@ -124,7 +124,7 @@ fn build_key_separates_every_input_that_changes_the_bytes() {
     let other_toolchain = BuildKey::worker(&project, &env_of(&toolchain));
     assert_ne!(other_toolchain.toolchain, base.toolchain);
     assert_eq!(other_toolchain.sdk_id, base.sdk_id);
-    let other_target = BuildKey::worker(&project, &env_of(&target));
+    let other_target = target;
     assert_ne!(other_target.target_triple, base.target_triple);
     assert_eq!(other_target.toolchain, base.toolchain);
     let mut entry = project.clone();

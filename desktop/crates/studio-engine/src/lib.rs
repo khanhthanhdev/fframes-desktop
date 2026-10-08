@@ -7,6 +7,8 @@ pub mod canvas_selection;
 pub mod controller;
 pub mod diagnostics;
 pub mod edit_transaction;
+#[path = "export-source.rs"]
+pub mod export_source;
 pub mod journal;
 pub mod playback_clock;
 pub mod preset_state;
@@ -31,6 +33,7 @@ pub use edit_transaction::{
     ApplyGate, Boundary, ConflictReport, Fault, FileDelta, FileState, NoHooks, PlanError,
     PromotionError, TaskRevisionRecord, TransactionHooks, TransactionKind,
 };
+pub use export_source::FrozenExportSource;
 pub use playback_clock::*;
 pub use preset_state::{
     PresetAction, PresetPlan, PresetProvenance, PresetRequest, PresetStateError, ProjectStyle,

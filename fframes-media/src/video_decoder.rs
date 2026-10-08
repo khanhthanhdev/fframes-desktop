@@ -186,6 +186,7 @@ pub struct FFmpegDecoder {
     frame_buf: Arc<FFmpegFrameBuf>,
     fmt_ctx: *mut AVFormatContext,
     video_stream_info: VideoStreamInfo,
+    has_audio_stream: bool,
     pkt: *mut AVPacket,
     custom_time_base: AVRational,
     duration_in_frames: i64,
@@ -446,6 +447,42 @@ impl FFmpegDecoder {
         Arc::clone(&self.frame_buf)
     }
 
+    pub fn get_stream_width(&self) -> u32 {
+        self.video_stream_info.width as u32
+    }
+
+    pub fn get_stream_height(&self) -> u32 {
+        self.video_stream_info.height as u32
+    }
+
+    /// An offset immediately before the reported end, in the decoder's target time base.
+    pub fn get_last_frame_offset(&self) -> Option<i64> {
+        let frame_rate = self.video_stream_info.frame_rate;
+        if self.duration_in_frames <= 0 || frame_rate.num <= 0 || frame_rate.den <= 0 {
+            return None;
+        }
+        let source_frame_duration = unsafe {
+            av_rescale_q(
+                1,
+                AVRational {
+                    num: frame_rate.den,
+                    den: frame_rate.num,
+                },
+                self.custom_time_base,
+            )
+        };
+        (source_frame_duration > 0).then(|| {
+            self.duration_in_frames
+                .saturating_sub(source_frame_duration)
+                .max(0)
+        })
+    }
+
+    /// Whether the input container includes an audio stream.
+    pub fn has_audio_stream(&self) -> bool {
+        self.has_audio_stream
+    }
+
     pub fn get_decoded_image_in_buf(&self, pts: i64) -> Option<Arc<PreloadedImageData>> {
         let buf = unsafe { self.frame_buf.data_buf.get().as_ref() }?;
         let image = buf.iter().find(|i| i.pts == pts)?;
@@ -499,6 +536,14 @@ impl FFmpegDecoder {
             }
 
             let video_stream_info = Self::open_codec_context(fmt_ctx)?;
+            let has_audio_stream = av_find_best_stream(
+                fmt_ctx,
+                AVMediaType::AVMEDIA_TYPE_AUDIO,
+                -1,
+                -1,
+                ptr::null_mut(),
+                0,
+            ) >= 0;
             let pkt = av_packet_alloc();
             if pkt.is_null() {
                 avformat_close_input(&raw mut fmt_ctx);
@@ -542,6 +587,7 @@ impl FFmpegDecoder {
                     buffer_size,
                 )?),
                 video_stream_info,
+                has_audio_stream,
                 custom_time_base,
                 duration_in_frames,
                 current_loop: 0,

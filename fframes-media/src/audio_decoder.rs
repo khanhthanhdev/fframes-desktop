@@ -320,6 +320,41 @@ impl AudioDecoder {
         Ok((sample_rate, channels.swap_remove(0)))
     }
 
+    /// Decodes a bounded prefix of the audio stream for container/export
+    /// qualification without allocating memory proportional to the whole video.
+    pub fn decode_preview_samples(&mut self, max_samples: usize) -> Result<(u32, Vec<Vec<f32>>)> {
+        if max_samples == 0 {
+            return Err(FFramesMediaError::AudioDecodingError(
+                "preview sample limit must be greater than zero".into(),
+            ));
+        }
+        unsafe {
+            let mut samples = vec![Vec::new(); self.out_channels];
+            while samples[0].len() < max_samples {
+                let status = av_read_frame(self.fmt_context, self.avpkt);
+                if status < 0 {
+                    break;
+                }
+                let result = if (*self.avpkt).stream_index == self.stream_idx {
+                    self.decode_packet(&mut samples)
+                } else {
+                    Ok(())
+                };
+                av_packet_unref(self.avpkt);
+                result?;
+            }
+            if samples.first().is_none_or(Vec::is_empty) {
+                return Err(FFramesMediaError::AudioDecodingError(
+                    "audio stream contains no decodable samples".into(),
+                ));
+            }
+            for channel in &mut samples {
+                channel.truncate(max_samples);
+            }
+            Ok((self.out_sample_rate, samples))
+        }
+    }
+
     /// Decodes the whole file, one buffer per output channel.
     pub fn decode_all_channels(&mut self) -> Result<(u32, Vec<Vec<f32>>)> {
         unsafe {
