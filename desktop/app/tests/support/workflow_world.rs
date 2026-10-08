@@ -152,10 +152,13 @@ impl World {
 
     fn with(options: Options) -> Self {
         let temp = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
         let runtime = tempfile::Builder::new()
             .prefix("fft")
             .tempdir_in("/tmp")
             .unwrap();
+        #[cfg(not(unix))]
+        let runtime = tempfile::tempdir().unwrap();
         let root = temp.path().join("video");
         let (sdk, manifest, limit) = match &options.real {
             Some((sdk, manifest)) => {
