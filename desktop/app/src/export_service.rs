@@ -479,7 +479,8 @@ mod tests {
     fn export_destination_must_be_mp4_in_an_existing_parent() {
         let temporary = tempfile::tempdir().unwrap();
         let target = temporary.path().join("movie.mp4");
-        assert_eq!(prepare_destination(&target).unwrap(), target);
+        let expected = temporary.path().canonicalize().unwrap().join("movie.mp4");
+        assert_eq!(prepare_destination(&target).unwrap(), expected);
         assert!(prepare_destination(&temporary.path().join("movie.mov")).is_err());
         assert!(prepare_destination(&temporary.path().join("missing/movie.mp4")).is_err());
     }
