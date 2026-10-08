@@ -52,6 +52,8 @@ fn an_unqualified_platform_retains_the_candidate_and_blocks_apply() {
             matches!(&row.kind, RowKind::Notice { text, .. } if text.starts_with("Exported the candidate"))
         })
     });
+    w.wf().discard().unwrap();
+    assert_eq!(w.wait_task(None).phase, TaskPhase::Cancelled);
     w.assert_clean();
 }
 
