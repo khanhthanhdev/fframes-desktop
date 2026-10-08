@@ -19,12 +19,15 @@ fn an_unqualified_platform_retains_the_candidate_and_blocks_apply() {
     let original = w.source("src/lib.rs");
     w.submit(&good("apply remains blocked"));
 
-    let task = w.wait("candidate review or validation failure", |snapshot| {
-        snapshot
-            .task
-            .as_ref()
-            .is_some_and(|task| matches!(task.phase, TaskPhase::AwaitingReview | TaskPhase::Failed))
-    });
+    let task = w
+        .wait("candidate review or validation failure", |snapshot| {
+            snapshot.task.as_ref().is_some_and(|task| {
+                matches!(task.phase, TaskPhase::AwaitingReview | TaskPhase::Failed)
+            })
+        })
+        .task
+        .clone()
+        .unwrap();
     assert_eq!(
         task.phase,
         TaskPhase::AwaitingReview,
