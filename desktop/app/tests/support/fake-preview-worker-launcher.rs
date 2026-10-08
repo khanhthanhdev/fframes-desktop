@@ -4,7 +4,7 @@ use std::{
 };
 
 fn main() {
-    let mut worker = Command::new("python3");
+    let mut worker = Command::new("python");
     worker
         .arg("fake-preview-worker.py")
         .args(env::args_os().skip(1))
