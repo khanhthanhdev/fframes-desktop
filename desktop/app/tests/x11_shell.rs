@@ -20,6 +20,8 @@
 //! Requires `Xvfb` and `xdotool`. The window is 1280x800 at the origin, and the click
 //! positions below are that layout's controls; a layout change must update them (the test
 //! then fails loudly, it never passes by accident).
+#![cfg(unix)]
+
 use serde_json::Value;
 use std::{
     fs,

@@ -461,6 +461,7 @@ impl World {
 
 impl Drop for World {
     fn drop(&mut self) {
+        #[cfg(unix)]
         // Reap any helper a test deliberately left behind.
         for name in ["helper.pid", "escape.pid"] {
             if let Ok(text) = fs::read_to_string(self.agent.join(name)) {
@@ -475,6 +476,7 @@ impl Drop for World {
     }
 }
 
+#[cfg(unix)]
 fn pid_alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }

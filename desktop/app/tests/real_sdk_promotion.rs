@@ -11,6 +11,8 @@
 //!         --test real_sdk_promotion -- --ignored --nocapture
 //!
 //! Skipped runs are not qualification.
+#![cfg(unix)]
+
 use fframes_studio::{
     build_service::{BuildLimits, BuildService},
     candidate_runner::{CandidateRun, CandidateRunConfig, RunScopes, run_candidate_validation},

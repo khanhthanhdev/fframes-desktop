@@ -945,6 +945,7 @@ fn an_unqualified_adapter_blocks_capture_and_retains_the_draft_locked() {
     w.assert_clean();
 }
 
+#[cfg(unix)]
 #[test]
 fn an_escaped_writer_blocks_apply_retains_the_draft_and_locks_it_until_acknowledged() {
     let w = World::new();
@@ -1000,6 +1001,7 @@ fn an_escaped_writer_blocks_apply_retains_the_draft_and_locks_it_until_acknowled
     assert_eq!(next.phase, TaskPhase::Accepted, "{:?}", next.error);
 }
 
+#[cfg(unix)]
 #[test]
 fn a_plain_helper_inside_the_process_group_is_reaped_and_does_not_block_capture() {
     let w = World::new();
@@ -1665,6 +1667,7 @@ fn twenty_four_edit_and_failed_task_cycles_leak_no_process_capability_or_lease()
 
 // ---- Stage 4a review regressions ---------------------------------------------------------------------------------------------------------------------
 
+#[cfg(unix)]
 fn escaped_pids(w: &World) -> Vec<i32> {
     fs::read_to_string(w.agent.join("escape.pid"))
         .unwrap_or_default()
@@ -1673,6 +1676,7 @@ fn escaped_pids(w: &World) -> Vec<i32> {
         .collect()
 }
 
+#[cfg(unix)]
 fn kill_escaped(w: &World) {
     for pid in escaped_pids(w) {
         unsafe { libc::kill(pid, libc::SIGKILL) };
@@ -1700,6 +1704,7 @@ fn every_row(w: &World) -> std::collections::BTreeMap<u64, Arc<Row>> {
 }
 
 /// A successor is refused while the draft may still be written, until the user confirms.
+#[cfg(unix)]
 fn assert_successor_refused_then_unlocked(w: &World, previous: &AgentTaskId) {
     assert!(
         matches!(w.draft_state(), Some(DraftState::UnsafeWriter { .. })),
@@ -1726,6 +1731,7 @@ fn assert_successor_refused_then_unlocked(w: &World, previous: &AgentTaskId) {
     assert_eq!(next.phase, TaskPhase::Accepted, "{:?}", next.error);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_escaped_writer_locks_the_draft_when_the_user_stops_the_task() {
     let w = World::new();
@@ -1743,6 +1749,7 @@ fn an_escaped_writer_locks_the_draft_when_the_user_stops_the_task() {
     assert_successor_refused_then_unlocked(&w, &task.id);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_escaped_writer_locks_the_draft_when_the_provider_fails() {
     let w = World::new();
@@ -1759,6 +1766,7 @@ fn an_escaped_writer_locks_the_draft_when_the_provider_fails() {
     assert_successor_refused_then_unlocked(&w, &task.id);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_escaped_writer_locks_the_draft_when_the_project_closes() {
     let mut w = World::new();
@@ -1788,6 +1796,7 @@ fn an_escaped_writer_locks_the_draft_when_the_project_closes() {
     assert_eq!(next.phase, TaskPhase::Accepted, "{:?}", next.error);
 }
 
+#[cfg(unix)]
 #[test]
 fn an_escaped_writer_locks_the_draft_when_stop_cancels_the_quiescence() {
     let w = World::new();
@@ -2461,6 +2470,7 @@ fn without_any_tool_route_no_capability_exists_and_the_snapshot_says_so() {
     w.assert_clean();
 }
 
+#[cfg(unix)]
 #[test]
 fn a_history_page_never_blocks_the_caller_or_the_actor_when_the_log_read_blocks() {
     use std::os::unix::ffi::OsStrExt;
