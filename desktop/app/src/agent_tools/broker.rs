@@ -35,11 +35,13 @@
 //! executing call's `cancelled` closure turns true when its connection drops, the grant
 //! is revoked or expires, or the broker shuts down. A panicking backend becomes an
 //! `internal` error and the worker survives.
+#[cfg(unix)]
 use super::{
-    MAX_QUEUED_CALLS, MAX_REQUEST_BYTES, MAX_TEXT_REPLY_BYTES, TOOL_WORKERS, TaskLiveness,
-    ToolBinding, ToolDispatcher, ToolError, ToolErrorCode,
+    MAX_QUEUED_CALLS, MAX_REQUEST_BYTES, MAX_TEXT_REPLY_BYTES, TOOL_WORKERS, ToolError,
+    ToolErrorCode,
     client::{LineRead, LineReader},
 };
+use super::{TaskLiveness, ToolBinding, ToolDispatcher};
 use std::{
     io,
     path::{Path, PathBuf},
@@ -112,11 +114,13 @@ pub enum BrokerError {
     },
 }
 
+#[cfg(unix)]
 fn io_error(context: &'static str) -> impl FnOnce(io::Error) -> BrokerError {
     move |source| BrokerError::Io { context, source }
 }
 
 /// Hex of random bytes, from the OS RNG through `uuid` (v4 = `getrandom`).
+#[cfg(unix)]
 fn random_bytes_32() -> [u8; 32] {
     let mut out = [0u8; 32];
     out[..16].copy_from_slice(uuid::Uuid::new_v4().as_bytes());
@@ -124,6 +128,7 @@ fn random_bytes_32() -> [u8; 32] {
     out
 }
 
+#[cfg(unix)]
 fn hex(bytes: &[u8]) -> String {
     use std::fmt::Write;
     bytes.iter().fold(String::new(), |mut out, byte| {
@@ -132,6 +137,7 @@ fn hex(bytes: &[u8]) -> String {
     })
 }
 
+#[cfg(unix)]
 fn unhex_32(text: &str) -> Option<[u8; 32]> {
     let bytes = text.as_bytes();
     if bytes.len() != 64 {

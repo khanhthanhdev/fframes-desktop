@@ -12,10 +12,9 @@
 //!
 //! This module also owns the whole `studio-tools` command-line behavior
 //! ([`run_cli`]) so the binary stays a three-line `main`.
-use super::{
-    MAX_REQUEST_BYTES, MAX_TEXT_REPLY_BYTES, TOOL_NAMES, ToolError, ToolErrorCode,
-    tool_descriptions,
-};
+#[cfg(unix)]
+use super::{MAX_REQUEST_BYTES, MAX_TEXT_REPLY_BYTES};
+use super::{TOOL_NAMES, ToolError, ToolErrorCode, tool_descriptions};
 use serde_json::{Value, json};
 use std::{
     ffi::OsString,
@@ -36,10 +35,14 @@ pub const EXIT_TOOL_ERROR: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_UNAVAILABLE: i32 = 3;
 
+#[cfg(unix)]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(unix)]
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(unix)]
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// A reply is at most the bounded JSON text plus the framing around it.
+#[cfg(unix)]
 const MAX_REPLY_LINE_BYTES: usize = MAX_TEXT_REPLY_BYTES + 4096;
 
 /// Why a client could not be created.
