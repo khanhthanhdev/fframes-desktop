@@ -82,9 +82,9 @@ fn cli_project_tools_remain_available_without_the_mcp_route() {
             snapshot.mcp
         );
         assert_eq!(snapshot.resources.broker_grants, 1);
-        let capability = snapshot.mcp.capability_file.unwrap();
+        let capability = snapshot.mcp.capability_file.as_ref().unwrap();
         assert!(capability.is_file());
-        let output = run_studio_tools(&capability, "project_context");
+        let output = run_studio_tools(capability, "project_context");
         assert!(
             output.status.success(),
             "{}",
