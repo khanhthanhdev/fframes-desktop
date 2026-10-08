@@ -1255,6 +1255,7 @@ impl ProcessTreeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::sync::Barrier;
 
     #[test]
