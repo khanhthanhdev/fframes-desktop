@@ -113,6 +113,17 @@ def append_jsonl(name, value):
     write_file(root / name, json.dumps(value) + "\n", "a")
 
 
+def canonical_path(path):
+    path = os.path.realpath(path)
+    if os.name == "nt":
+        if path.startswith("\\\\?\\UNC\\"):
+            path = "\\\\" + path[8:]
+        elif path.startswith("\\\\?\\"):
+            path = path[4:]
+        return os.path.normcase(os.path.normpath(path))
+    return path
+
+
 def bump(name):
     """Atomically increments the integer counter file; returns the value BEFORE the increment."""
     with open(root / ".counters.lock", "a+b") as lock:
@@ -212,7 +223,7 @@ def handle(line):
         record("session-params.json", params)
         record(f"session-params-{start_index}.json", params)
         cwd = params.get("cwd")
-        if not isinstance(cwd, str) or os.path.realpath(cwd) != os.path.realpath(os.getcwd()):
+        if not isinstance(cwd, str) or canonical_path(cwd) != canonical_path(os.getcwd()):
             send({"id": rid, "error": {"code": -32602, "message": f"cwd {cwd!r} != process cwd {os.getcwd()!r}"}})
         elif INIT_MODE == "auth":
             send({"id": rid, "error": {"code": -32000, "message": "Authentication required"}})
