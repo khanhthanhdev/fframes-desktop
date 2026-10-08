@@ -20,7 +20,11 @@ import zipfile
 
 
 def signal_kill():
-    return signal.SIGKILL
+    # Fake process-table tests compare the requested signal without delivering it.
+    return getattr(signal, "SIGKILL", signal.SIGTERM)
+
+
+EXE_SUFFIX = ".exe" if os.name == "nt" else ""
 
 
 def load(name):
@@ -433,14 +437,16 @@ class InstalledHelperTests(unittest.TestCase):
     def installed_package(self, root, helpers=packaging.PACKAGED_BINARIES):
         release = root / "release"
         release.mkdir()
+        suffix = EXE_SUFFIX
         for name in packaging.PACKAGED_BINARIES:
-            program = release / name
-            program.write_text(f"#!/bin/sh\necho {name}\n")
+            program = release / f"{name}{suffix}"
+            program.write_text(f"#!{sys.executable}\nprint({name!r})\n")
             program.chmod(0o755)
         output = root / "pkg"
         (output / "bin").mkdir(parents=True)
-        packaging.install_binaries(release, output / "bin", helpers, "")
-        packaging.write_inventory(output, "x86_64-unknown-linux-gnu", False)
+        packaging.install_binaries(release, output / "bin", helpers, suffix)
+        target = "x86_64-pc-windows-msvc" if os.name == "nt" else "x86_64-unknown-linux-gnu"
+        packaging.write_inventory(output, target, False)
         archive = shutil.make_archive(str(output), "zip", root, "pkg")
         installed = root / "installed"
         extract_preserving_modes(archive, installed)
@@ -449,26 +455,32 @@ class InstalledHelperTests(unittest.TestCase):
     def test_installed_package_has_both_helpers_next_to_the_application(self):
         with tempfile.TemporaryDirectory() as temp:
             package = self.installed_package(Path(temp))
-            app = package / "bin" / "fframes-studio"
-            packaging.verify_helpers(app, "")
+            suffix = EXE_SUFFIX
+            app = package / "bin" / f"fframes-studio{suffix}"
+            packaging.verify_helpers(app, suffix)
             for name in packaging.HELPER_BINARIES:
-                sibling = packaging.sibling_binary(app, name, "")
-                self.assertEqual(sibling, package / "bin" / name)
-                self.assertTrue(os.access(sibling, os.X_OK), name)
+                sibling = packaging.sibling_binary(app, name, suffix)
+                self.assertEqual(sibling, package / "bin" / f"{name}{suffix}")
+                self.assertTrue(sibling.is_file(), name)
+                if os.name != "nt":
+                    self.assertTrue(os.access(sibling, os.X_OK), name)
                 # Runs from the installed location with no repository on its path.
-                run = subprocess.run([str(sibling)], cwd=temp, env={"PATH": "/usr/bin:/bin"}, capture_output=True, text=True)
+                command = [sys.executable, str(sibling)] if os.name == "nt" else [str(sibling)]
+                path = os.environ.get("PATH", "") if os.name == "nt" else "/usr/bin:/bin"
+                run = subprocess.run(command, cwd=temp, env={"PATH": path}, capture_output=True, text=True)
                 self.assertEqual(run.stdout.strip(), name)
             inventory = {item["path"]: item for item in json.loads((package / "inventory.json").read_text())["files"]}
             for name in packaging.PACKAGED_BINARIES:
-                self.assertIn(f"bin/{name}", inventory)
-                digest = hashlib.sha256((package / "bin" / name).read_bytes()).hexdigest()
-                self.assertEqual(inventory[f"bin/{name}"]["sha256"], digest)
+                relative = f"bin/{name}{suffix}"
+                self.assertIn(relative, inventory)
+                digest = hashlib.sha256((package / relative).read_bytes()).hexdigest()
+                self.assertEqual(inventory[relative]["sha256"], digest)
 
     def test_a_package_without_a_helper_is_refused(self):
         with tempfile.TemporaryDirectory() as temp:
             package = self.installed_package(Path(temp), helpers=("fframes-studio", "studio_setup", "studio-tools"))
             with self.assertRaisesRegex(ValueError, "studio-mcp"):
-                packaging.verify_helpers(package / "bin" / "fframes-studio", "")
+                packaging.verify_helpers(package / "bin" / f"fframes-studio{EXE_SUFFIX}", EXE_SUFFIX)
 
     def test_python_lookup_mirrors_the_rust_sibling_lookup(self):
         source = (assembly.ROOT / "desktop/app/src/agent_tools.rs").read_text()
@@ -481,7 +493,8 @@ class InstalledHelperTests(unittest.TestCase):
 
     def test_built_helpers_start_from_an_installed_directory(self):
         debug = assembly.ROOT / "desktop/target/debug"
-        built = [debug / name for name in packaging.HELPER_BINARIES]
+        suffix = EXE_SUFFIX
+        built = [debug / f"{name}{suffix}" for name in packaging.HELPER_BINARIES]
         if not all(path.is_file() for path in built):
             self.skipTest("run `cargo build --locked -p fframes-studio` first: the helpers are not built")
         with tempfile.TemporaryDirectory() as temp:
@@ -489,14 +502,15 @@ class InstalledHelperTests(unittest.TestCase):
             installed.mkdir(parents=True)
             for path in built:
                 shutil.copy2(path, installed)
-            (installed / "fframes-studio").write_text("#!/bin/sh\n")
-            (installed / "fframes-studio").chmod(0o755)
-            packaging.verify_helpers(installed / "fframes-studio", "")
-            env = {"PATH": "/usr/bin:/bin"}
-            tools = subprocess.run([str(installed / "studio-tools"), "--help"], cwd=temp, env=env, capture_output=True, text=True)
+            app = installed / f"fframes-studio{suffix}"
+            app.write_text("#!/bin/sh\n")
+            app.chmod(0o755)
+            packaging.verify_helpers(app, suffix)
+            env = {"PATH": os.environ.get("PATH", "") if os.name == "nt" else "/usr/bin:/bin"}
+            tools = subprocess.run([str(installed / f"studio-tools{suffix}"), "--help"], cwd=temp, env=env, capture_output=True, text=True)
             self.assertEqual(tools.returncode, 0, tools.stderr)
             self.assertIn("--capability", tools.stdout)
-            mcp = subprocess.run([str(installed / "studio-mcp"), "--protocol"], cwd=temp, env=env, capture_output=True, text=True)
+            mcp = subprocess.run([str(installed / f"studio-mcp{suffix}"), "--protocol"], cwd=temp, env=env, capture_output=True, text=True)
             self.assertEqual(mcp.returncode, 0, mcp.stderr)
             self.assertIn("2025-06-18", mcp.stdout)
 
@@ -697,7 +711,10 @@ class M3LedgerTests(unittest.TestCase):
             record, ledger, directory = self.copied(root)
             gate = self.passing(root, record, directory, "auth_two_edit_undo_restart")
             # A development measurement (fixture-only) in an authentic gate.
-            development = next(directory.glob("*.json"))
+            development = directory / "summary.json"
+            development_record = json.loads(development.read_text())
+            self.assertEqual(development_record["evidence_kind"], "development")
+            self.assertIs(development_record["fixture_only"], True)
             gate["evidence"] = [self.entry(root, development)]
             with self.assertRaisesRegex(ValueError, "contract|development evidence|not authentic"):
                 self.write(ledger, record)
@@ -1017,6 +1034,7 @@ class HarnessTests(unittest.TestCase):
         with self.assertRaisesRegex(harness.HarnessError, "fixture"):
             harness.preflight_adapter(args)
 
+    @unittest.skipUnless(hasattr(socket, "AF_UNIX"), "requires Unix domain sockets")
     def test_an_occupied_endpoint_is_refused_and_left_alone(self):
         with tempfile.TemporaryDirectory() as temp:
             occupied = Path(temp) / "guard.sock"
@@ -1035,6 +1053,7 @@ class HarnessTests(unittest.TestCase):
             guard.release()
             self.assertFalse(occupied.exists())
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "requires Linux process groups and /proc")
     def test_only_harness_owned_processes_are_ever_stopped(self):
         owned = harness.Owned("test-run", harness.Redactor([]))
         with self.assertRaisesRegex(harness.HarnessError, "not harness-owned"):
@@ -1107,6 +1126,7 @@ class HarnessTests(unittest.TestCase):
         self.assertEqual(owned.shutdown(), [])
         self.assertEqual(table.sent, [], "a retired group number must never be signalled")
 
+    @unittest.skipUnless(hasattr(signal, "SIGKILL"), "requires POSIX SIGKILL")
     def test_a_stale_group_entry_whose_number_was_reused_signals_nothing_unproven(self):
         table = self.FakeTable()
         owned = harness.Owned("run", harness.Redactor([]), table)
