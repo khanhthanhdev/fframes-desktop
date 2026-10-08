@@ -16,6 +16,14 @@ use studio_project::lifecycle::sync_directory;
 
 const MAX_ENTRY_BYTES: usize = 1024 * 1024;
 
+fn truncate_and_sync(path: &std::path::Path, length: u64) -> std::io::Result<()> {
+    // The journal's append handle lacks the write-data permission Windows requires
+    // for SetEndOfFile, so repair truncates through a dedicated write handle.
+    let file = OpenOptions::new().write(true).open(path)?;
+    file.set_len(length)?;
+    file.sync_all()
+}
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Entry {
@@ -74,8 +82,7 @@ fn scan_lifecycle(
             if repair {
                 let quarantine = path.with_extension(format!("tail-{}", uuid::Uuid::new_v4()));
                 studio_project::lifecycle::atomic_write(&quarantine, &line)?;
-                file.set_len(offset)?;
-                file.sync_all()?;
+                truncate_and_sync(path, offset)?;
                 quarantined_tail = Some(quarantine);
             }
             break;
@@ -409,8 +416,7 @@ fn scan_task_journal(
             if repair {
                 let quarantine = path.with_extension(format!("tail-{}", uuid::Uuid::new_v4()));
                 studio_project::lifecycle::atomic_write(&quarantine, &line)?;
-                file.set_len(offset)?;
-                file.sync_all()?;
+                truncate_and_sync(path, offset)?;
                 replay.quarantined_tail = Some(quarantine);
             } else {
                 replay.ignored_tail_bytes = line.len();
