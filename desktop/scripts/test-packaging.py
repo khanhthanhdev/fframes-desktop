@@ -34,6 +34,7 @@ def load(name):
 
 assembly = load("assemble-phase-zero-sdk")
 packaging = load("package-phase-zero")
+finalizing = load("finalize-native-package")
 debian_packaging = load("package-linux-deb")
 qualification = load("validate-qualification")
 harness = load("qualify-m3-agent")
@@ -296,6 +297,122 @@ class ArtifactTests(unittest.TestCase):
             }
             with self.assertRaisesRegex(ValueError, "physical live-output"):
                 self.validate_temp_record(root, record)
+
+    def test_finalizer_rehashes_signed_files_and_replaces_the_archive(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = root / "fframes-studio-x86_64-pc-windows-msvc"
+            binary = package / "bin/fframes-studio.exe"
+            binary.parent.mkdir(parents=True)
+            binary.write_bytes(b"unsigned executable")
+            qualification_record = {
+                "target_platform": {"triple": "x86_64-pc-windows-msvc"},
+                "build_evidence": {"sdk_included": True},
+            }
+            (package / "qualification.json").write_text(json.dumps(qualification_record))
+            packaging.write_inventory(package, "x86_64-pc-windows-msvc", True)
+            archive = Path(shutil.make_archive(str(package), "zip", root, package.name))
+            original_archive = archive.read_bytes()
+
+            binary.write_bytes(b"authenticode-signed executable")
+            finalizing.finalize(package)
+
+            inventory = json.loads((package / "inventory.json").read_text())
+            file_records = {item["path"]: item for item in inventory["files"]}
+            expected_digest = hashlib.sha256(binary.read_bytes()).hexdigest()
+            self.assertEqual(file_records["bin/fframes-studio.exe"]["sha256"], expected_digest)
+            self.assertNotIn("inventory.json", file_records)
+            self.assertNotEqual(archive.read_bytes(), original_archive)
+            with zipfile.ZipFile(archive) as bundle:
+                self.assertEqual(
+                    bundle.read(f"{package.name}/bin/fframes-studio.exe"),
+                    b"authenticode-signed executable",
+                )
+                archived_inventory = json.loads(bundle.read(f"{package.name}/inventory.json"))
+                self.assertEqual(archived_inventory["files"], inventory["files"])
+            self.assertEqual(
+                sorted(path.name for path in root.glob(f".{package.name}.*.zip")),
+                [],
+            )
+
+    @unittest.skipIf(os.name == "nt", "symlink creation may require elevated Windows privileges")
+    def test_finalizer_refuses_symlinks_inside_package(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            package = root / "package"
+            package.mkdir()
+            (package / "qualification.json").write_text(
+                json.dumps(
+                    {
+                        "target_platform": {"triple": "x86_64-unknown-linux-gnu"},
+                        "build_evidence": {"sdk_included": False},
+                    }
+                )
+            )
+            outside = root / "outside"
+            outside.write_text("outside package")
+            (package / "linked-file").symlink_to(outside)
+
+            with self.assertRaisesRegex(ValueError, "symlink"):
+                finalizing.finalize(package)
+
+    def test_release_workflow_requires_native_signing_for_tag_or_opt_in_builds(self):
+        workflow = (assembly.ROOT / ".github/workflows/desktop-release.yml").read_text()
+        mac_signing = (assembly.ROOT / "desktop/scripts/sign-macos-package.sh").read_text()
+        windows_signing = (assembly.ROOT / "desktop/scripts/sign-windows-package.ps1").read_text()
+
+        for secret in (
+            "APPLE_DEVELOPER_ID_P12_BASE64",
+            "APPLE_DEVELOPER_ID_P12_PASSWORD",
+            "APPLE_DEVELOPER_IDENTITY",
+            "APPLE_NOTARY_KEY_P8_BASE64",
+            "APPLE_NOTARY_KEY_ID",
+            "APPLE_NOTARY_ISSUER_ID",
+        ):
+            self.assertIn(secret, workflow)
+            self.assertIn(secret, mac_signing)
+        for secret in ("WINDOWS_CODESIGN_PFX_BASE64", "WINDOWS_CODESIGN_PFX_PASSWORD"):
+            self.assertIn(secret, workflow)
+            self.assertIn(secret, windows_signing)
+
+        self.assertIn("inputs.sign_artifacts == true", workflow)
+        self.assertIn("github.event_name == 'push'", workflow)
+        self.assertIn("codesign --verify --deep --strict", mac_signing)
+        self.assertIn("notarytool submit", mac_signing)
+        self.assertIn("stapler staple", mac_signing)
+        self.assertIn("verify /pa /all /v", windows_signing)
+        self.assertIn("attestations: write", workflow)
+        self.assertIn("id-token: write", workflow)
+        self.assertIn("actions/attest-build-provenance@v3", workflow)
+        self.assertLess(
+            workflow.index("Sign and notarize macOS app package"),
+            workflow.index("Attest native app package provenance"),
+        )
+        self.assertLess(
+            workflow.index("Sign Windows executables and FFmpeg DLLs"),
+            workflow.index("Attest native app package provenance"),
+        )
+        self.assertLess(
+            workflow.index("Check macOS signing credentials before building"),
+            workflow.index("Focused tests and lint"),
+        )
+        self.assertLess(
+            workflow.index("Check Windows signing credentials before building"),
+            workflow.index("Focused tests and lint"),
+        )
+        mac_preflight = workflow.split("Check macOS signing credentials before building", 1)[1].split(
+            "Check Windows signing credentials before building", 1
+        )[0]
+        windows_preflight = workflow.split("Check Windows signing credentials before building", 1)[1].split(
+            "Set native build directory", 1
+        )[0]
+        self.assertIn("APPLE_DEVELOPER_ID_P12_BASE64", mac_preflight)
+        self.assertNotIn("WINDOWS_CODESIGN_PFX_BASE64", mac_preflight)
+        self.assertIn("WINDOWS_CODESIGN_PFX_BASE64", windows_preflight)
+        self.assertNotIn("APPLE_DEVELOPER_ID_P12_BASE64", windows_preflight)
+        mac_packager = (assembly.ROOT / "desktop/scripts/package-phase-zero.py").read_text()
+        self.assertIn('"CFBundleInfoDictionaryVersion": "6.0"', mac_packager)
+        self.assertIn('"CFBundleVersion": "0.1.0"', mac_packager)
 
 
 def extract_preserving_modes(archive, destination):
