@@ -1,7 +1,9 @@
 //! Shared fixture: fake SDK tree, projects, and a counting injectable compiler that can
-//! install the deterministic python preview worker as the isolated worker binary.
+//! install the deterministic Python preview worker as the isolated worker binary.
 #![allow(dead_code)]
 use fframes_studio::build_service::{BuildKey, CompileEnvironment, CompileRequest, Compiler};
+#[cfg(windows)]
+use std::sync::OnceLock;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -23,6 +25,41 @@ pub const FAKE_WORKER: &str = concat!(
     "/tests/support/fake-preview-worker.py"
 );
 pub const FAKE_CONFIG: &str = "fframes-fake-worker.json";
+
+#[cfg(windows)]
+fn windows_fake_worker_launcher() -> Result<PathBuf, String> {
+    static LAUNCHER_DIR: OnceLock<Result<tempfile::TempDir, String>> = OnceLock::new();
+    let directory = LAUNCHER_DIR
+        .get_or_init(|| {
+            let directory = tempfile::Builder::new()
+                .prefix("ffw-")
+                .tempdir()
+                .map_err(|error| {
+                    format!("cannot create fake worker launcher directory: {error}")
+                })?;
+            let path = directory.path().join("fake-preview-worker.exe");
+            let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+            let source = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/support/fake-preview-worker-launcher.rs"
+            );
+            let output = std::process::Command::new(rustc)
+                .args(["--edition=2024", source, "-o"])
+                .arg(&path)
+                .output()
+                .map_err(|error| format!("cannot compile fake worker launcher: {error}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "cannot compile fake worker launcher: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Ok(directory)
+        })
+        .as_ref()
+        .map_err(Clone::clone)?;
+    Ok(directory.path().join("fake-preview-worker.exe"))
+}
 
 pub fn fake_sdk(root: &Path) -> PathBuf {
     let sdk = root.join("sdk");
@@ -152,7 +189,15 @@ impl Compiler for FakeCompiler {
                 build.worker_target,
                 std::env::consts::EXE_SUFFIX
             ));
-            fs::copy(FAKE_WORKER, &target).map_err(|e| e.to_string())?;
+            #[cfg(windows)]
+            let worker = {
+                fs::copy(FAKE_WORKER, build.root.join("fake-preview-worker.py"))
+                    .map_err(|e| e.to_string())?;
+                windows_fake_worker_launcher()?
+            };
+            #[cfg(not(windows))]
+            let worker = PathBuf::from(FAKE_WORKER);
+            fs::copy(worker, &target).map_err(|e| e.to_string())?;
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
