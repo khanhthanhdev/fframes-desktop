@@ -1492,6 +1492,7 @@ fn concurrent_calls_on_distinct_revisions_never_exceed_the_worker_bound() {
 
 /// Runs `studio-mcp` against `capability`, feeding `requests`, and returns every stdout
 /// line parsed as JSON (stdout must hold nothing else).
+#[cfg(unix)]
 fn mcp_session(capability: &Path, requests: &[Value]) -> Vec<Value> {
     use std::io::Write;
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_studio-mcp"))
