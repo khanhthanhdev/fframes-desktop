@@ -112,16 +112,13 @@ pub fn materialize_in_environment(
             ));
         }
     }
-    let build_key = app_builds
-        .join(String::from(project.manifest.project_id.clone()))
-        .join(project.inventory.revision.as_str())
-        .join(compatibility.digest())
-        .join(&compatibility.target_triple);
-    fs::create_dir_all(&build_key).map_err(|e| error(&build_key, e.to_string()))?;
+    // Keep the transient tree shallow: Windows can reject a child process whose working
+    // directory inherits the former project/revision/compatibility/triple nesting.
+    fs::create_dir_all(app_builds).map_err(|e| error(app_builds, e.to_string()))?;
     let staging = tempfile::Builder::new()
         .prefix("build-")
-        .tempdir_in(&build_key)
-        .map_err(|e| error(&build_key, e.to_string()))?;
+        .tempdir_in(app_builds)
+        .map_err(|e| error(app_builds, e.to_string()))?;
     let root = staging.path().join("project");
     fs::create_dir(&root).map_err(|e| error(&root, e.to_string()))?;
     let mut buffer = [0; 64 * 1024];

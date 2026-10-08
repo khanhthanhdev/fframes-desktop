@@ -38,6 +38,10 @@ fn overlay_keeps_source_and_sdk_unchanged_and_rejects_external_dependencies() {
             .target_dir
             .starts_with(temp.path().join("builds"))
     );
+    assert_eq!(
+        build.root.parent().unwrap().parent().unwrap(),
+        temp.path().join("builds")
+    );
     assert!(
         fs::read_to_string(build.root.join("Cargo.toml"))
             .unwrap()
