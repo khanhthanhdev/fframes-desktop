@@ -1301,6 +1301,7 @@ fn mcp_session_config_passes_only_the_capability_path() {
     assert!(fframes_studio::agent_tools::mcp_server_for(&grant, Path::new("studio-mcp")).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn cli_through_the_broker_reaches_the_real_backend_and_stops_after_the_task_ends() {
     use fframes_studio::agent_tools::broker::{BrokerConfig, ToolBroker};
@@ -1515,6 +1516,7 @@ fn mcp_session(capability: &Path, requests: &[Value]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(unix)]
 #[test]
 fn cli_and_mcp_agree_on_revision_artifact_hashes_and_errors_over_the_real_backend() {
     use fframes_studio::agent_tools::broker::{BrokerConfig, ToolBroker};
