@@ -40,7 +40,6 @@ is DESIGNED to seal the producer). `tool_interleave` emits every tool call,
 then every update, then every completion (instead of card by card).
 """
 import base64
-import fcntl
 import json
 import os
 import pathlib
@@ -51,6 +50,11 @@ import subprocess
 import sys
 import threading
 import time
+
+if os.name == "nt":
+    import msvcrt
+else:
+    import fcntl
 
 root = pathlib.Path(sys.argv[1])
 PID = os.getpid()
@@ -111,8 +115,18 @@ def append_jsonl(name, value):
 
 def bump(name):
     """Atomically increments the integer counter file; returns the value BEFORE the increment."""
-    with open(root / ".counters.lock", "a") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+    with open(root / ".counters.lock", "a+b") as lock:
+        if os.name == "nt":
+            # msvcrt locks a byte range from the current file position. Ensure
+            # that byte exists before taking the lock, then always lock byte 0.
+            lock.seek(0, os.SEEK_END)
+            if lock.tell() == 0:
+                lock.write(b"\0")
+                lock.flush()
+            lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             path = root / name
             try:
@@ -122,7 +136,11 @@ def bump(name):
             write_file(path, str(value + 1))
             return value
         finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+            if os.name == "nt":
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_UN)
 
 
 def update(body):
