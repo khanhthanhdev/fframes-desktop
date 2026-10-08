@@ -90,8 +90,8 @@ fn contained_dependency_with_absolute_path_is_rewritten_to_copied_workspace() {
     fs::write(
         root.join("Cargo.toml"),
         format!(
-            "{cargo}\n[dependencies.helper]\npath = \"{}\"\n",
-            helper.display()
+            "{cargo}\n[dependencies.helper]\npath = {}\n",
+            toml::Value::String(helper.to_string_lossy().into_owned())
         ),
     )
     .unwrap();
@@ -105,10 +105,18 @@ fn contained_dependency_with_absolute_path_is_rewritten_to_copied_workspace() {
     )
     .unwrap();
 
-    let materialized_cargo = fs::read_to_string(build.root.join("Cargo.toml")).unwrap();
-    assert!(!materialized_cargo.contains(&helper.to_string_lossy().to_string()));
+    let materialized_cargo: toml::Value = fs::read_to_string(build.root.join("Cargo.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
     let copied_helper = build.root.join("helper");
-    assert!(materialized_cargo.contains(&copied_helper.to_string_lossy().to_string()));
+    let rewritten_path = materialized_cargo["dependencies"]["helper"]["path"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        std::path::Path::new(rewritten_path),
+        copied_helper.as_path()
+    );
 }
 
 #[test]
