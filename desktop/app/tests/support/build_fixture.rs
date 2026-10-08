@@ -208,7 +208,16 @@ impl Compiler for FakeCompiler {
             };
             #[cfg(not(windows))]
             let worker = PathBuf::from(FAKE_WORKER);
-            fs::copy(worker, &target).map_err(|e| e.to_string())?;
+            fs::copy(&worker, &target).map_err(|e| e.to_string())?;
+            #[cfg(windows)]
+            {
+                let python_path = worker
+                    .parent()
+                    .ok_or_else(|| "fake worker launcher has no parent directory".to_owned())?
+                    .join("python-executable.path");
+                let target_python_path = target.with_file_name("python-executable.path");
+                fs::copy(python_path, target_python_path).map_err(|e| e.to_string())?;
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
