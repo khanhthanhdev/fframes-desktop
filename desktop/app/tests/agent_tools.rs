@@ -2278,9 +2278,20 @@ fn finish(command: &mut Command) -> Finished {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn cmdline(child: &Child) -> String {
     let bytes = fs::read(format!("/proc/{}/cmdline", child.id())).expect("child is alive");
     String::from_utf8_lossy(&bytes).replace('\0', " ")
+}
+
+#[cfg(target_os = "macos")]
+fn cmdline(child: &Child) -> String {
+    let output = Command::new("ps")
+        .args(["-p", &child.id().to_string(), "-o", "command="])
+        .output()
+        .expect("ps is available");
+    assert!(output.status.success(), "ps could not inspect child argv");
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 struct McpChild {
