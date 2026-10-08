@@ -37,6 +37,17 @@ fn windows_fake_worker_launcher() -> Result<PathBuf, String> {
                 .map_err(|error| {
                     format!("cannot create fake worker launcher directory: {error}")
                 })?;
+            let python = std::env::var_os("pythonLocation")
+                .map(PathBuf::from)
+                .map(|location| location.join("python.exe"))
+                .filter(|path| path.is_file())
+                .or_else(|| std::env::var_os("PYTHON").map(PathBuf::from))
+                .unwrap_or_else(|| PathBuf::from("python"));
+            fs::write(
+                directory.path().join("python-executable.path"),
+                python.to_string_lossy().as_bytes(),
+            )
+            .map_err(|error| format!("cannot record fake worker Python executable: {error}"))?;
             let path = directory.path().join("fake-preview-worker.exe");
             let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
             let source = concat!(

@@ -1,12 +1,22 @@
 use std::{
     env,
+    path::PathBuf,
     process::{Command, Stdio},
 };
 
 fn main() {
-    let mut worker = Command::new("python");
+    let python = env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("python-executable.path")))
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("python"));
+    let mut worker = Command::new(python);
+    let script = env::current_dir()
+        .map(|directory| directory.join("fake-preview-worker.py"))
+        .unwrap_or_else(|_| PathBuf::from("fake-preview-worker.py"));
     worker
-        .arg("fake-preview-worker.py")
+        .arg(script)
         .args(env::args_os().skip(1))
         .stdin(Stdio::inherit())
         .stdout(Stdio::inherit())
