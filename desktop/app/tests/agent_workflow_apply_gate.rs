@@ -1,7 +1,7 @@
 //! On platforms without qualified no-clobber publication, a validated candidate remains
 //! reviewable and exportable while Apply stays blocked.
 #![cfg(not(target_os = "linux"))]
-#![allow(unused_imports)]
+#![allow(dead_code, unused_imports)]
 include!("support/workflow_world.rs");
 
 fn run_studio_tools(capability: &std::path::Path, tool: &str) -> std::process::Output {
