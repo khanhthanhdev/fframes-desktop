@@ -2,7 +2,10 @@
 //! (`tests/support/acp-agent.py`), the deterministic fake preview worker and the engine's
 //! real controller. The peer proves transport and workflow only; it never qualifies a
 //! provider, an adapter or authentication.
-
+//!
+//! These end-to-end cases exercise Apply and Undo, which remain disabled off Linux until
+//! the platform's no-clobber publication primitives are qualified.
+#![cfg(target_os = "linux")]
 #![allow(unused_imports)]
 
 use fframes_studio_protocol::{EditorFrameStatus, PreviewIdentity};

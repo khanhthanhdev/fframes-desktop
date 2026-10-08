@@ -9,7 +9,10 @@
 //! - Continuation choices (ContinueDraft vs RestartFromAccepted)
 //! - Session manifest persistence, atomic writes, credential redaction, and restoration lifecycle
 //! - Session save failure handling and visible persistence disabling
-
+//!
+//! The provider-switch workflow cases also apply edits, which is only enabled on Linux until
+//! no-clobber source publication is qualified on the other platforms.
+#![cfg(target_os = "linux")]
 #![allow(dead_code, unused_imports)]
 
 use fframes_studio_protocol::PreviewIdentity;
