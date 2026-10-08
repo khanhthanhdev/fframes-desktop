@@ -5,8 +5,7 @@ use std::{
 };
 
 use studio_project::{
-    OpenProject, ProjectError, ProjectPath, SourceInventory,
-    lifecycle::{atomic_write, read_cargo},
+    OpenProject, ProjectError, ProjectPath, SourceInventory, lifecycle::read_cargo,
 };
 use studio_sdk::{CompatibilityManifest, environment::SdkEnvironment};
 
@@ -191,7 +190,14 @@ pub fn materialize_in_environment(
     if !vendor.is_dir() {
         return Err(error(&vendor, "SDK vendor directory missing".into()));
     }
-    atomic_write(&root.join(".cargo/config.toml"), format!("[source.crates-io]\nreplace-with = \"studio-vendor\"\n[source.studio-vendor]\ndirectory = {}\n", toml::Value::String(vendor.to_string_lossy().into_owned())).as_bytes())?;
+    let cargo_config_path = root.join(".cargo/config.toml");
+    let cargo_config = format!(
+        "[source.crates-io]\nreplace-with = \"studio-vendor\"\n[source.studio-vendor]\ndirectory = {}\n",
+        toml::Value::String(vendor.to_string_lossy().into_owned())
+    );
+    // This file is also inside the private staging tree; a failed write discards that tree.
+    fs::write(&cargo_config_path, cargo_config.as_bytes())
+        .map_err(|e| error(&cargo_config_path, e.to_string()))?;
     // SDK path substitution has a distinct graph/lock, never overwrite the portable lock.
     if root.join("Cargo.lock").exists() {
         fs::remove_file(root.join("Cargo.lock")).map_err(|e| error(&root, e.to_string()))?;
