@@ -773,6 +773,24 @@ mod tests {
     use flate2::Compression;
     use flate2::write::GzEncoder;
 
+    fn current_target_triple() -> &'static str {
+        if cfg!(all(
+            target_os = "linux",
+            target_arch = "x86_64",
+            target_env = "gnu"
+        )) {
+            "x86_64-unknown-linux-gnu"
+        } else if cfg!(all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc"
+        )) {
+            "x86_64-pc-windows-msvc"
+        } else {
+            "aarch64-apple-darwin"
+        }
+    }
+
     #[test]
     fn supplied_install_archives_must_exactly_match_manifest_identity() {
         let manifest = CompatibilityManifest::default_linux_x64();
@@ -1069,22 +1087,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let installer = SdkInstaller::new(tmp.path().join("sdk_home"));
         let mut manifest = CompatibilityManifest::default_linux_x64();
-        manifest.target_triple = if cfg!(all(
-            target_os = "linux",
-            target_arch = "x86_64",
-            target_env = "gnu"
-        )) {
-            "x86_64-unknown-linux-gnu"
-        } else if cfg!(all(
-            target_os = "windows",
-            target_arch = "x86_64",
-            target_env = "msvc"
-        )) {
-            "x86_64-pc-windows-msvc"
-        } else {
-            "aarch64-apple-darwin"
-        }
-        .into();
+        manifest.target_triple = current_target_triple().into();
 
         let artifacts: Vec<(SdkArtifact, PathBuf)> = Vec::new();
         let result = installer.install_from_local_artifacts_for_app(&manifest, &artifacts, "9.0.0");
@@ -1115,6 +1118,7 @@ mod tests {
         );
 
         let mut manifest = CompatibilityManifest::default_linux_x64();
+        manifest.target_triple = current_target_triple().into();
         manifest.artifacts[0].sha256 = toolchain_hash;
         manifest.artifacts[0].size_bytes = fs::metadata(&toolchain_tar).unwrap().len();
         manifest.artifacts[1].sha256 = ffmpeg_hash;

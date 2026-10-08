@@ -171,7 +171,7 @@ impl SdkDownloader {
             options.args(["--write-out", "%{url_effective}\n%{http_code}\n"]);
             options.arg("--");
             options.arg(&artifact.url);
-            options.stdout(Stdio::from(metadata_file.reopen()?));
+            options.stdout(Stdio::from(metadata_file.as_file().try_clone()?));
             options.stderr(Stdio::null());
             let child = scope.spawn(options).map_err(|error| {
                 DownloadError::Transport(format!("could not start HTTPS transfer: {error}"))
