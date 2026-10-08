@@ -69,7 +69,26 @@ Use fresh output directories. The [shell wrapper](../../desktop/scripts/build-ph
 
 Installation verifies compiler version/target, native libraries and complete SDK layout, then compiles and renders both the generated CPU template and annotated worker inside staging with the managed environment. Failed verification removes staging and preserves active. Each compiler/build/render process has a deadline, concurrently drained bounded output, and owned descendant cleanup. Only verified candidates are promoted; promotion failure restores the old active directory.
 
-Packaging creates the native app, setup companion, worker source/font notices, SDK, inventory/checksums and a zip. Windows includes FFmpeg DLLs; macOS includes an unsigned `.app`; Unix records native dependency inventory. Omitting `--sdk-bundle` produces an app-only artifact, with SDK/setup gates still unmet. The [CI matrix](../../.github/workflows/desktop-phase-zero.yml) builds on Linux x64, Windows x64 MSVC and macOS arm64, assembles the native SDK and retains pending qualification records. Its Linux job additionally runs the isolated X11 procedure and retains evidence. The remote workflow has not been executed by this local implementation session.
+Packaging creates the native app, setup companion, worker source/font notices, SDK, inventory/checksums and a zip. Windows includes FFmpeg DLLs; macOS includes an unsigned `.app`; Unix records native dependency inventory. Omitting `--sdk-bundle` produces an app-only artifact, with SDK/setup gates still unmet. The [CI matrix](../../.github/workflows/desktop-phase-zero.yml) builds on Linux x64, Windows x64 MSVC and macOS arm64, assembles the native SDK and retains pending qualification records. Its Linux job additionally runs the isolated X11 procedure and retains evidence. Feasibility/CI artifacts remain unsigned; the separate [Desktop Release workflow](../../.github/workflows/desktop-release.yml) signs tag builds and opt-in manual release builds before upload.
+
+### Native release signing
+
+Tag builds sign the macOS and Windows packages. A manual Desktop Release run can opt in with `sign_artifacts`; setting `consumer_release` also requires signing when it builds fresh artifacts. macOS uses a Developer ID Application certificate, notarizes the app bundle, staples the accepted ticket, verifies Gatekeeper assessment, and refreshes the package inventory/archive after signatures are applied. Windows Authenticode-signs the app executables and runtime DLLs in the package's `bin/` directory, timestamps signatures, verifies each file, then refreshes inventory/archive. GitHub artifact attestations provide provenance for each target ZIP and the Linux `.deb`; these attestations do not replace platform code signing.
+
+Configure these repository Actions secrets before requesting signed builds:
+
+| Secret | Value |
+| --- | --- |
+| `APPLE_DEVELOPER_ID_P12_BASE64` | Base64-encoded Developer ID Application `.p12` certificate |
+| `APPLE_DEVELOPER_ID_P12_PASSWORD` | Password protecting that `.p12` |
+| `APPLE_DEVELOPER_IDENTITY` | Exact `Developer ID Application: ... (TEAMID)` identity in the certificate |
+| `APPLE_NOTARY_KEY_P8_BASE64` | Base64-encoded App Store Connect notarization API `.p8` key |
+| `APPLE_NOTARY_KEY_ID` | Notarization API key ID |
+| `APPLE_NOTARY_ISSUER_ID` | App Store Connect issuer UUID |
+| `WINDOWS_CODESIGN_PFX_BASE64` | Base64-encoded Authenticode code-signing `.pfx` certificate |
+| `WINDOWS_CODESIGN_PFX_PASSWORD` | Password protecting that `.pfx` |
+
+The signing scripts require the secrets, validate/import the expected certificate type, and fail before artifact retention if credentials are missing or invalid. Certificates and temporary key material are removed in cleanup handlers; secret values are never printed. Do not put credentials in the repository, qualification ledger, package inventory, or workflow inputs. The current checkout has no signing secrets configured, so signed macOS/Windows release runs are not yet executable here. Linux has no Authenticode/Developer ID equivalent: the workflow uses GitHub OIDC-backed artifact attestations, not a claim that the Linux binaries are platform code-signed. Consumer publication remains separately blocked until trusted release keys and all target qualification gates are configured.
 
 ## Reproduce isolated Linux evidence
 
