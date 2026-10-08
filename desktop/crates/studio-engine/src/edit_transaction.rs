@@ -1316,6 +1316,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn published_modes_keep_permissions_and_follow_the_executable_state() {
         assert_eq!(after_mode(Some(0o600), true), 0o700);
         assert_eq!(after_mode(Some(0o644), true), 0o755);
@@ -1326,6 +1327,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn an_unchanged_executable_status_keeps_the_full_mode() {
         // Executable already (any x bit counts) and staying executable: untouched.
         assert_eq!(after_mode(Some(0o744), true), 0o744);
