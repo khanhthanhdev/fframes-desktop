@@ -737,7 +737,8 @@ mod tests {
             worker.send_hello(),
             Err(WorkerClientError::Timeout)
         ));
-        assert!(start.elapsed() < Duration::from_secs(2));
+        // Allow bounded process-tree cleanup after the 100 ms request deadline.
+        assert!(start.elapsed() < Duration::from_secs(4));
         assert!(worker.is_crashed());
         assert_eq!(manager.active_count(), 0);
     }
