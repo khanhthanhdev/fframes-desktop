@@ -19,7 +19,18 @@ fn an_unqualified_platform_retains_the_candidate_and_blocks_apply() {
     let original = w.source("src/lib.rs");
     w.submit(&good("apply remains blocked"));
 
-    let task = w.wait_phase(TaskPhase::AwaitingReview);
+    let task = w.wait("candidate review or validation failure", |snapshot| {
+        snapshot
+            .task
+            .as_ref()
+            .is_some_and(|task| matches!(task.phase, TaskPhase::AwaitingReview | TaskPhase::Failed))
+    });
+    assert_eq!(
+        task.phase,
+        TaskPhase::AwaitingReview,
+        "candidate validation did not reach review; agent prompts: {:?}",
+        w.evidence("prompts.jsonl")
+    );
     let review = task.review.as_ref().unwrap();
     assert!(
         review
