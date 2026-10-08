@@ -123,7 +123,10 @@ impl Compiler for FakeCompiler {
             request.environment.builds(),
             &|| scope.is_shutdown(),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            eprintln!("FakeCompiler materialization failed: {e:?}");
+            e.to_string()
+        })?;
         if self.install_worker {
             let target = build.isolated_bin_dir.join(format!(
                 "{}{}",
