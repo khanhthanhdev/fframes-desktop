@@ -40,7 +40,26 @@ pub fn fake_sdk(root: &Path) -> PathBuf {
 }
 
 pub fn manifest() -> CompatibilityManifest {
-    CompatibilityManifest::default_linux_x64()
+    let target_triple = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("windows", "x86_64") => "x86_64-pc-windows-msvc",
+        ("macos", "aarch64") => "aarch64-apple-darwin",
+        _ => panic!(
+            "unsupported test host: {}-{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+    };
+    let mut manifest = CompatibilityManifest::default_linux_x64();
+    manifest.sdk_id = format!("studio-sdk-test-{target_triple}");
+    manifest.target_triple = target_triple.into();
+    manifest.arch = std::env::consts::ARCH.into();
+    manifest.os_baseline = format!("{} test runner", std::env::consts::OS);
+    manifest.rust_toolchain.targets = vec![target_triple.into()];
+    manifest
+        .validate_for_current_app_version(env!("CARGO_PKG_VERSION"))
+        .expect("fake SDK manifest must match the current test host");
+    manifest
 }
 
 pub fn create_project(root: &Path) -> OpenProject {
