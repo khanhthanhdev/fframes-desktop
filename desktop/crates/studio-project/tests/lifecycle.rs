@@ -38,7 +38,10 @@ fn create_move_and_refuse_nonempty() {
     fs::remove_file(moved.join("media/DMSans-Medium.ttf")).unwrap();
     let error = open(&moved).unwrap_err();
     assert_eq!(error.field, "asset");
-    assert_eq!(error.file, moved.join("media/DMSans-Medium.ttf"));
+    assert_eq!(
+        error.file,
+        reopened.root.join("media").join("DMSans-Medium.ttf")
+    );
     assert!(error.action.contains("Locate or restore"));
 }
 
