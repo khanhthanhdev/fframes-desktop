@@ -499,7 +499,7 @@ pub enum AdapterReadiness {
     Unchecked,
     Checking,
     Checked {
-        report: DiscoveryReport,
+        report: Box<DiscoveryReport>,
         at_unix: u64,
     },
 }

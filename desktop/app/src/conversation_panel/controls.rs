@@ -986,11 +986,11 @@ mod tests {
 
     fn checked(status: AdapterStatus) -> AdapterReadiness {
         AdapterReadiness::Checked {
-            report: DiscoveryReport {
+            report: Box::new(DiscoveryReport {
                 status,
                 executable: None,
                 initialized: None,
-            },
+            }),
             at_unix: 1,
         }
     }
