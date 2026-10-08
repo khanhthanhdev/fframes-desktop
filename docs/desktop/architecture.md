@@ -436,6 +436,8 @@ Keep the installer relatively small; download the tested SDK once during guided 
 
 Ship verified packages for each qualified platform, with runtime libraries, fonts, icons/file associations, checksums and signed updates. Pin app/SDK/worker protocol compatibility and retain one usable previous SDK for rollback. Imported custom dependencies may require extra builds; record this as an advanced compatibility path.
 
+The release-manifest v1 contract records source, target, app/SDK compatibility, protocols, runtime inventory and artifact hashes under a domain-separated Ed25519 signature. Verification rejects unknown signers, incompatible targets and replay except for an exact locally retained recovery pair. The current M7 ledger remains blocked for every platform; no production release key, signed feed or consumer-qualified installer is configured, so these contracts do not imply that updates or consumer publication are available.
+
 ## 11. Persistence and recovery
 
 Use an app-local database for project/session metadata and an append-only task journal for lifecycle/recovery. Large media, screenshots and build artifacts stay in files with retention limits. Keep portable project settings in the project rather than only in the database.

@@ -90,7 +90,7 @@ Qualification must also cover overlapping-scene selection, half-open ranges, thu
 
 ### M3 — Complete an agent edit transaction
 
-Execution detail: [Phase 3 agent editing transaction plan](../../plans/261004-0730-desktop-phase-three-agent-transactions/plan.md). Its four sequential execution stages belong to M3 and reuse M0 ACP/process evidence, M1 project/checkpoint recovery and M2 immutable preview/audio coordination. Implementation and authenticated-provider qualification remain pending; the plan preserves the recorded Linux development boundary.
+Execution detail: [Phase 3 agent editing transaction plan](../../plans/261004-0730-desktop-phase-three-agent-transactions/plan.md). Its four sequential execution stages belong to M3 and reuse M0 ACP/process evidence, M1 project/checkpoint recovery and M2 immutable preview/audio coordination. Agent transactions, the native conversation panel, tools, validation, promotion and Undo are implemented locally, with passing development gates in the [M3 ledger](../../desktop/qualification/m3-results.json). An authenticated adapter handshake does not qualify the full editing workflow; authentic-provider, physical-device and Windows/macOS qualification remain open.
 
 Implement the app-owned driver interface and ACP v1 client through the official SDK candidate. Build a process supervisor with GUI executable discovery, managed adapter paths, separate stderr handling, bounded logs, auth/setup feedback and cancellation cleanup.
 
@@ -139,6 +139,20 @@ Implement an agent picker and task handoff with a stopped previous writer, curre
 **Acceptance:** create/edit/export with each advertised connector. Demonstrate a Claude-to-Codex or equivalent handoff with no overlapping writers and a correct retained project. Resume a supported session after app restart; unsupported restoration creates a new session with explicit project context rather than silently losing continuity.
 
 ### M7 — Installers and consumer release
+
+Execution detail: [Phase 7 installers and consumer release qualification plan](../../plans/261007-2054-desktop-phase-seven-packaging-release-qualification/plan.md). Its five sequential execution stages reuse the implemented M0–M6 development foundation; they do not imply that providers or platforms are already release-qualified. Stage 1 is in progress: compatibility/signature/evidence contracts and fail-closed publication guards are implemented, while installed-location qualification and codec/source-distribution review remain open. A Linux HEVC smoke render revealed a host `libx265.so.199` dependency not included in the SDK; stages 2–5 have not started.
+
+| Execution stage | Deliverable | Depends on |
+| --- | --- | --- |
+| 1 | Release compatibility/trust/evidence contracts and native package baseline | Implemented M0–M6 |
+| 2 | Guided provider/prerequisite setup, verified SDK acquisition and offline reuse | Stage 1 |
+| 3 | Accepted-revision MP4 export, bounded queue, progress/cancel and atomic output | Stages 1–2 |
+| 4 | Signed native installers, automatic idle updates and recoverable app/SDK rollback | Stages 1–3 |
+| 5 | Installed clean-machine authentic/physical qualification and gated publication | Stages 1–4; authentic provider evidence |
+
+Ship each platform independently when its evidence passes, while retaining the full macOS Apple Silicon, Windows x64 and Linux x64 scope. Updates install automatically only when Studio is idle and preserve active work and unsaved input. Uninstall retains projects, downloaded SDKs and app state by default; explicit app-data removal never deletes user source/media/export folders. These release policies were selected during M7 planning.
+
+The current phase-zero artifact/SDK assembly, local installer staging/rollback, immutable build leases and process ownership are reusable foundations. Existing ZIP publication, virtual-device development checks and provider initialization are insufficient consumer evidence. Native export, network SDK acquisition, trusted update metadata, consumer installers and clean-machine qualification remain execution work; see the [baseline and validation record](../../plans/reports/planning-261007-2054-m7-baseline-and-validation.md).
 
 Build the app, SDK/runtime packages and compatibility manifest on native CI runners. Produce signed/notarized macOS artifacts, a signed per-user Windows installer, and tested Linux packages. Include fonts and runtime libraries and verify launch from the installer rather than the build directory.
 
