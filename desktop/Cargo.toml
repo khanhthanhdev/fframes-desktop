@@ -21,6 +21,8 @@ fframes-studio-protocol = { path = "../fframes-studio-protocol" }
 studio-sdk = { path = "crates/studio-sdk" }
 studio-agent-spike = { path = "crates/studio-agent-spike" }
 sha2 = "0.10"
+semver = "1.0"
+ring = "0.17"
 tar = "0.4"
 flate2 = "1.0"
 tempfile = "3"

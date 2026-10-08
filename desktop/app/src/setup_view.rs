@@ -215,8 +215,19 @@ impl SetupView {
         sdk_home: &std::path::Path,
         processes: &ProcessTreeManager,
     ) -> Result<PathBuf, String> {
+        manifest
+            .validate_for_current_app_version(env!("CARGO_PKG_VERSION"))
+            .map_err(|error| format!("SDK compatibility rejected before setup: {error}"))?;
         let installer = SdkInstaller::new(sdk_home).with_process_manager(processes.clone());
-        let active_sdk = installer.active_sdk_dir();
+        installer
+            .recover_interrupted_install()
+            .map_err(|error| format!("Interrupted SDK install recovery failed: {error}"))?;
+        if let Some(active_sdk) = installer
+            .reusable_active_for_app(manifest, env!("CARGO_PKG_VERSION"), Some(processes))
+            .map_err(|error| format!("Installed SDK receipt check failed: {error}"))?
+        {
+            return Ok(active_sdk);
+        }
 
         // 1. Resolve artifacts strictly from manifest across candidate directories
         let mut candidate_artifact_dirs = vec![
@@ -241,10 +252,25 @@ impl SetupView {
                 .strip_prefix("file://artifacts/")
                 .or_else(|| artifact.url.strip_prefix("file://"))
                 .unwrap_or(&artifact.name);
+            let relative = PathBuf::from(filename);
+            if relative.as_os_str().is_empty()
+                || relative
+                    .components()
+                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err(format!(
+                    "SDK artifact '{}' has an unsafe local bundle path",
+                    artifact.name
+                ));
+            }
             let mut resolved = None;
             for dir in &candidate_artifact_dirs {
-                let candidate = dir.join(filename);
-                if candidate.exists() {
+                let root = dir.canonicalize().ok();
+                let candidate = dir.join(&relative).canonicalize().ok();
+                if let (Some(root), Some(candidate)) = (root, candidate)
+                    && candidate.starts_with(root)
+                    && candidate.is_file()
+                {
                     resolved = Some(candidate);
                     break;
                 }
@@ -258,22 +284,94 @@ impl SetupView {
             artifact_files.push((artifact.clone(), file_path));
         }
 
-        // 2. Validate existing SDK or install cleanly from local artifacts
-        let need_install = if active_sdk.exists() {
-            let candidate_report =
-                Doctor::verify_candidate_sdk_with_processes(&active_sdk, manifest, Some(processes));
-            !candidate_report.is_ready()
-        } else {
-            true
-        };
+        // 2. A non-receipted or incompatible active SDK is replaced only after the
+        // local bundle has been resolved and the new candidate passes build/render probes.
+        installer
+            .install_from_local_artifacts_for_app(
+                manifest,
+                &artifact_files,
+                env!("CARGO_PKG_VERSION"),
+            )
+            .map_err(|e| format!("SDK installation failed: {e}"))?;
 
-        if need_install {
-            installer
-                .install_from_local_artifacts(manifest, &artifact_files)
-                .map_err(|e| format!("SDK installation failed: {e}"))?;
+        Ok(installer.active_sdk_dir())
+    }
+
+    /// Explicit import path for a user-selected offline SDK bundle. No network lookup
+    /// occurs and a receipt-backed compatible active SDK can still be reused archive-free.
+    pub fn install_sdk_from_bundle(
+        bundle: &std::path::Path,
+        sdk_home: &std::path::Path,
+        processes: &ProcessTreeManager,
+    ) -> Result<PathBuf, String> {
+        let manifest_path = bundle.join("compatibility.json");
+        let json = fs::read_to_string(&manifest_path)
+            .map_err(|error| format!("SDK bundle manifest {}: {error}", manifest_path.display()))?;
+        let manifest = CompatibilityManifest::from_json_str(&json)
+            .map_err(|error| format!("SDK bundle manifest is invalid: {error}"))?;
+        manifest
+            .validate_for_current_app_version(env!("CARGO_PKG_VERSION"))
+            .map_err(|error| format!("SDK bundle is incompatible: {error}"))?;
+
+        let installer = SdkInstaller::new(sdk_home).with_process_manager(processes.clone());
+        installer
+            .recover_interrupted_install()
+            .map_err(|error| format!("Interrupted SDK install recovery failed: {error}"))?;
+        if let Some(active_sdk) = installer
+            .reusable_active_for_app(&manifest, env!("CARGO_PKG_VERSION"), Some(processes))
+            .map_err(|error| format!("Installed SDK receipt check failed: {error}"))?
+        {
+            return Ok(active_sdk);
         }
 
-        Ok(active_sdk)
+        let bundle_root = bundle
+            .canonicalize()
+            .map_err(|error| format!("SDK bundle folder is unavailable: {error}"))?;
+        let artifacts_dir = bundle_root
+            .join("artifacts")
+            .canonicalize()
+            .map_err(|error| format!("SDK bundle artifacts folder is unavailable: {error}"))?;
+        let mut artifacts = Vec::with_capacity(manifest.artifacts.len());
+        for artifact in &manifest.artifacts {
+            let filename = artifact
+                .url
+                .strip_prefix("file://artifacts/")
+                .ok_or_else(|| {
+                    format!(
+                        "SDK bundle artifact '{}' has a non-local URL",
+                        artifact.name
+                    )
+                })?;
+            let relative = PathBuf::from(filename);
+            if relative.as_os_str().is_empty()
+                || relative
+                    .components()
+                    .any(|component| !matches!(component, std::path::Component::Normal(_)))
+            {
+                return Err(format!(
+                    "SDK bundle artifact '{}' has an unsafe path",
+                    artifact.name
+                ));
+            }
+            let path = artifacts_dir.join(relative);
+            let canonical = path.canonicalize().map_err(|error| {
+                format!(
+                    "SDK bundle artifact '{}' is unavailable: {error}",
+                    artifact.name
+                )
+            })?;
+            if !canonical.starts_with(&artifacts_dir) || !canonical.is_file() {
+                return Err(format!(
+                    "SDK bundle artifact '{}' resolves outside its artifacts directory",
+                    artifact.name,
+                ));
+            }
+            artifacts.push((artifact.clone(), canonical));
+        }
+        installer
+            .install_from_local_artifacts_for_app(&manifest, &artifacts, env!("CARGO_PKG_VERSION"))
+            .map_err(|error| format!("SDK bundle installation failed: {error}"))?;
+        Ok(installer.active_sdk_dir())
     }
 
     fn execute_install_and_build_pipeline(

@@ -1,6 +1,8 @@
+use std::path::Path;
+
+use semver::{Version, VersionReq};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::path::Path;
 use thiserror::Error;
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
@@ -107,6 +109,12 @@ impl CompatibilityManifest {
         if self.sdk_id.is_empty() {
             return Err(ManifestError::Validation("sdk_id cannot be empty".into()));
         }
+        VersionReq::parse(&self.compatible_app_range).map_err(|error| {
+            ManifestError::Validation(format!(
+                "invalid compatible_app_range '{}': {error}",
+                self.compatible_app_range
+            ))
+        })?;
         if self
             .preview_contract_versions
             .iter()
@@ -165,6 +173,65 @@ impl CompatibilityManifest {
         Ok(())
     }
 
+    /// Validates the SDK against the app version and host target before setup or build.
+    pub fn validate_for_app(
+        &self,
+        app_version: &str,
+        host_target: &str,
+    ) -> Result<(), ManifestError> {
+        self.validate()?;
+
+        if self.target_triple != host_target {
+            return Err(ManifestError::TargetMismatch {
+                manifest_target: self.target_triple.clone(),
+                host_target: host_target.to_owned(),
+            });
+        }
+
+        let app_version = Version::parse(app_version).map_err(|error| {
+            ManifestError::Validation(format!("invalid app version '{app_version}': {error}"))
+        })?;
+        let compatible = VersionReq::parse(&self.compatible_app_range)
+            .expect("compatible_app_range was parsed by validate");
+        if !compatible.matches(&app_version) {
+            return Err(ManifestError::Validation(format!(
+                "SDK '{}' supports app versions '{}', not '{}'",
+                self.sdk_id, self.compatible_app_range, app_version
+            )));
+        }
+
+        Ok(())
+    }
+
+    /// Validates against the app version supplied by the Studio executable and its native target.
+    pub fn validate_for_current_app_version(&self, app_version: &str) -> Result<(), ManifestError> {
+        let target = if cfg!(all(
+            target_os = "linux",
+            target_arch = "x86_64",
+            target_env = "gnu"
+        )) {
+            "x86_64-unknown-linux-gnu"
+        } else if cfg!(all(
+            target_os = "windows",
+            target_arch = "x86_64",
+            target_env = "msvc"
+        )) {
+            "x86_64-pc-windows-msvc"
+        } else if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+            "aarch64-apple-darwin"
+        } else {
+            return Err(ManifestError::Validation(
+                "this Studio build target has no supported SDK compatibility identity".into(),
+            ));
+        };
+        self.validate_for_app(app_version, target)
+    }
+
+    /// Validates using the SDK crate version for standalone SDK consumers.
+    pub fn validate_for_current_app(&self) -> Result<(), ManifestError> {
+        self.validate_for_current_app_version(env!("CARGO_PKG_VERSION"))
+    }
+
     pub fn digest(&self) -> String {
         let serialized = serde_json::to_string(self).unwrap_or_default();
         let mut hasher = Sha256::new();
@@ -189,6 +256,32 @@ mod tests {
             .validate()
             .expect("default linux manifest is valid");
         assert!(!manifest.digest().is_empty());
+    }
+
+    #[test]
+    fn app_compatibility_range_is_validated_and_enforced() {
+        let manifest = CompatibilityManifest::default_linux_x64();
+        manifest
+            .validate_for_app("0.1.7", &manifest.target_triple)
+            .expect("matching application version should be accepted");
+        assert!(matches!(
+            manifest.validate_for_app("0.2.0", &manifest.target_triple),
+            Err(ManifestError::Validation(_))
+        ));
+        assert!(matches!(
+            manifest.validate_for_app("0.1.0", "aarch64-apple-darwin"),
+            Err(ManifestError::TargetMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn malformed_app_compatibility_range_is_rejected() {
+        let mut manifest = CompatibilityManifest::default_linux_x64();
+        manifest.compatible_app_range = "not a semver range".into();
+        assert!(matches!(
+            manifest.validate(),
+            Err(ManifestError::Validation(_))
+        ));
     }
 
     #[test]

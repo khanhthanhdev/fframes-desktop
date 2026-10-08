@@ -93,7 +93,11 @@ fn main() {
                         )
                     })
                     .collect();
-                SdkInstaller::new(&sdk_home).install_from_local_artifacts(&manifest, &artifacts)?;
+                SdkInstaller::new(&sdk_home).install_from_local_artifacts_for_app(
+                    &manifest,
+                    &artifacts,
+                    env!("CARGO_PKG_VERSION"),
+                )?;
                 Ok(PresentationQualification {
                     sdk_home,
                     project,

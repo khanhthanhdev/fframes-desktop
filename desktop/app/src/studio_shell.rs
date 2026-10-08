@@ -11,6 +11,7 @@ use crate::{
 use crate::{
     audio_service::{AudioEvent, AudioService, OutputDevice, OutputHandle},
     canvas_view::CanvasViewState,
+    export_service::{ExportControl, ExportProgress, export_mp4},
     frame_image::{ImagePresentationManager, create_render_image},
     preset_panel::{
         Catalog, PresetCommand, PresetEvent, PresetPanel, PresetPick, PresetReport, PresetView,
@@ -29,6 +30,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver, TryRecvError},
     },
     time::{Duration, Instant},
 };
@@ -90,6 +92,7 @@ enum Command {
     RemoveRecent(ProjectId),
     SelectSdk(PathBuf),
     InstallSdk,
+    ImportSdkBundle(PathBuf),
     Restore(PathBuf, studio_project::SourceRevision),
     Independent(PathBuf),
     /// A style-preset operation, fenced by the source revision the UI last showed.
@@ -102,10 +105,12 @@ enum Picker {
     Import,
     Asset,
     Sdk,
+    SdkBundle,
     Locate(ProjectId),
     PresetImport,
     PresetCss,
     PresetExport(String),
+    Export,
 }
 struct Backend {
     paths: Option<AppPaths>,
@@ -323,6 +328,17 @@ impl Backend {
                     self.compatibility
                         .as_ref()
                         .ok_or("SDK manifest unavailable")?,
+                    self.sdk_home.as_deref().ok_or("SDK home unavailable")?,
+                    &self.processes,
+                ) {
+                    self.sdk = "Failed · repair the reported installation error and retry".into();
+                    return Err(error);
+                }
+                self.check_sdk();
+            }
+            Command::ImportSdkBundle(bundle) => {
+                if let Err(error) = SetupView::install_sdk_from_bundle(
+                    &bundle,
                     self.sdk_home.as_deref().ok_or("SDK home unavailable")?,
                     &self.processes,
                 ) {
@@ -554,6 +570,10 @@ pub struct StudioShell {
     presentation_refresh_pending: bool,
     /// When the accepted source started waiting for a preview that nothing is preparing.
     awaiting_since: Option<Instant>,
+    export_events: Option<Receiver<ExportProgress>>,
+    export_status: Option<ExportProgress>,
+    export_cancelled: Option<Arc<ExportControl>>,
+    export_processes: Option<studio_bootstrap::ProcessTreeManager>,
 }
 
 /// The shell's side of the per-project agent workflow: which project it belongs to, how
@@ -801,6 +821,7 @@ impl StudioShell {
         let quit_audio = audio.clone();
         cx.on_app_quit(move |shell, cx| {
             shutdown.store(true, Ordering::Release);
+            shell.cancel_export(cx);
             quit_audio.shutdown();
             let audio = quit_audio.clone();
             let preview = shell.preview.take();
@@ -877,6 +898,10 @@ impl StudioShell {
             refresh_wanted: false,
             presentation_refresh_pending: false,
             awaiting_since: None,
+            export_events: None,
+            export_status: None,
+            export_cancelled: None,
+            export_processes: None,
             output_device: OutputDevice::Default,
             muted: false,
             resume_install: false,
@@ -901,6 +926,7 @@ impl StudioShell {
                     shell.tick_playback(cx);
                     shell.poll_preview(cx);
                     shell.poll_agent(cx);
+                    shell.poll_export(cx);
                     true
                 }) else {
                     break;
@@ -1242,6 +1268,16 @@ impl StudioShell {
     fn dispatch(&mut self, command: Command, cx: &mut Context<Self>) {
         if self.busy || self.closed.load(Ordering::Acquire) {
             return;
+        }
+        if matches!(
+            &command,
+            Command::Close
+                | Command::Create(_)
+                | Command::Import(_)
+                | Command::Open(_)
+                | Command::Locate(_, _)
+        ) {
+            self.cancel_export(cx);
         }
         if let Command::Open(path) | Command::Locate(path, _) = &command {
             self.failed_open = Some(path.clone());
@@ -2233,7 +2269,7 @@ impl StudioShell {
         let epoch = self.epoch;
         if matches!(
             kind,
-            Picker::Create | Picker::Restore | Picker::PresetExport(_)
+            Picker::Create | Picker::Restore | Picker::PresetExport(_) | Picker::Export
         ) {
             let home = std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
@@ -2244,6 +2280,7 @@ impl StudioShell {
                 Some(match kind {
                     Picker::Create => "New video",
                     Picker::PresetExport(_) => "Exported preset",
+                    Picker::Export => "Exported video.mp4",
                     _ => "Recovered video",
                 }),
             );
@@ -2267,6 +2304,8 @@ impl StudioShell {
                                 shell.run_preset(PresetCommand::Export { key, dest: path }, cx);
                             } else if matches!(kind, Picker::Create) {
                                 shell.dispatch(Command::Create(path), cx);
+                            } else if matches!(kind, Picker::Export) {
+                                shell.start_export(path, cx);
                             } else if let Some(accepted) = accepted {
                                 shell.dispatch(Command::Restore(path, accepted), cx);
                             }
@@ -2282,6 +2321,7 @@ impl StudioShell {
                 Picker::Asset => "Asset",
                 Picker::Import => "Import",
                 Picker::Sdk => "SDK",
+                Picker::SdkBundle => "Offline SDK bundle folder",
                 Picker::Locate(_) => "Locate",
                 Picker::PresetImport => "Import preset folder",
                 Picker::PresetCss => "CSS report",
@@ -2306,6 +2346,7 @@ impl StudioShell {
                                 Picker::Asset => Command::Asset(path),
                                 Picker::Import => Command::Import(path),
                                 Picker::Sdk => Command::SelectSdk(path),
+                                Picker::SdkBundle => Command::ImportSdkBundle(path),
                                 Picker::Locate(id) => Command::Locate(path, id),
                                 Picker::PresetImport => {
                                     return shell
@@ -2325,6 +2366,146 @@ impl StudioShell {
                 });
             }).detach();
         }
+    }
+
+    fn start_export(&mut self, destination: PathBuf, cx: &mut Context<Self>) {
+        if self.export_cancelled.is_some() {
+            return;
+        }
+        let (Some(controller), Some(paths), Some(sdk)) = (
+            self.presentation.controller.clone(),
+            self.presentation.paths.clone(),
+            self.presentation
+                .agent_sdk
+                .as_ref()
+                .map(|sdk| sdk.dir.clone()),
+        ) else {
+            self.export_status = Some(ExportProgress::Failed(
+                "Select a compatible installed SDK and open a project before exporting".into(),
+            ));
+            cx.notify();
+            return;
+        };
+        let control = Arc::new(ExportControl::default());
+        let processes = studio_bootstrap::ProcessTreeManager::new();
+        let (sender, receiver) = mpsc::sync_channel(16);
+        self.export_cancelled = Some(control.clone());
+        self.export_processes = Some(processes.clone());
+        self.export_events = Some(receiver);
+        self.export_status = Some(ExportProgress::Started {
+            revision: "capturing validated revision".into(),
+            label: "Preparing immutable project snapshot".into(),
+        });
+        let service = crate::worker_project::shared_build_service();
+        let spawn = std::thread::Builder::new()
+            .name("studio-mp4-export".into())
+            .spawn(move || {
+                let result = controller
+                    .lock()
+                    .freeze_export_source()
+                    .map_err(|error| error.to_string())
+                    .and_then(|source| {
+                        export_mp4(
+                            crate::export_service::ExportRequest {
+                                source,
+                                sdk,
+                                builds: paths.builds(),
+                                destination,
+                            },
+                            service,
+                            processes,
+                            control.clone(),
+                            |event| {
+                                let _ = sender.send(event);
+                            },
+                        )
+                    });
+                if let Err(error) = result {
+                    let event = if control.is_cancelled() {
+                        ExportProgress::Cancelled
+                    } else {
+                        ExportProgress::Failed(error)
+                    };
+                    let _ = sender.send(event);
+                }
+            });
+        if let Err(error) = spawn {
+            self.export_events = None;
+            self.export_cancelled = None;
+            self.export_processes = None;
+            self.export_status = Some(ExportProgress::Failed(format!(
+                "Could not start the export job: {error}"
+            )));
+        }
+        cx.notify();
+    }
+
+    fn poll_export(&mut self, cx: &mut Context<Self>) {
+        let Some(receiver) = &self.export_events else {
+            return;
+        };
+        let mut terminal = false;
+        loop {
+            match receiver.try_recv() {
+                Ok(event) => {
+                    terminal = matches!(
+                        event,
+                        ExportProgress::Complete { .. }
+                            | ExportProgress::Failed(_)
+                            | ExportProgress::Cancelled
+                    );
+                    self.export_status = Some(event);
+                    cx.notify();
+                    if terminal {
+                        break;
+                    }
+                }
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    terminal = true;
+                    if self
+                        .export_cancelled
+                        .as_ref()
+                        .is_some_and(|token| token.is_cancelled())
+                    {
+                        self.export_status = Some(ExportProgress::Cancelled);
+                    } else {
+                        self.export_status = Some(ExportProgress::Failed(
+                            "Export worker stopped without a completion result".into(),
+                        ));
+                    }
+                    cx.notify();
+                    break;
+                }
+            }
+        }
+        if terminal {
+            self.export_events = None;
+            self.export_cancelled = None;
+            self.export_processes = None;
+        }
+    }
+
+    fn cancel_export(&mut self, cx: &mut Context<Self>) {
+        let Some(cancelled) = &self.export_cancelled else {
+            return;
+        };
+        if !cancelled.request_cancel() {
+            if cancelled.is_publishing() {
+                self.export_status = Some(ExportProgress::Verifying);
+                cx.notify();
+            }
+            return;
+        }
+        if let Some(processes) = self.export_processes.clone() {
+            cx.background_executor()
+                .spawn(async move {
+                    processes.shutdown(Duration::ZERO);
+                })
+                .detach();
+        }
+        self.export_status = Some(ExportProgress::Cancelled);
+        cx.notify();
     }
     fn button(
         &self,
@@ -2593,6 +2774,16 @@ impl Render for StudioShell {
                     s.pick(Picker::Import, cx)
                 }))
                 .child(self.button(
+                    "export-mp4",
+                    "Export MP4…",
+                    enabled
+                        && project.is_some()
+                        && self.presentation.agent_sdk.is_some()
+                        && self.export_cancelled.is_none(),
+                    cx,
+                    |s, cx| s.pick(Picker::Export, cx),
+                ))
+                .child(self.button(
                     "close",
                     "Close project",
                     enabled && project.is_some(),
@@ -2703,6 +2894,46 @@ impl Render for StudioShell {
                         "Worker bridge missing · source remains navigable"
                     }),
             );
+            if let Some(status) = &self.export_status {
+                let message = match status {
+                    ExportProgress::Started { revision, label } => {
+                        format!("Export snapshot · {label} · {revision}")
+                    }
+                    ExportProgress::Rendering { done, total } => {
+                        format!("Rendering MP4 · {done}/{total} frames")
+                    }
+                    ExportProgress::Audio => "Writing and verifying audio".into(),
+                    ExportProgress::Warning(message) => format!("Export warning · {message}"),
+                    ExportProgress::Verifying => "Verifying MP4 before publication".into(),
+                    ExportProgress::Complete {
+                        destination,
+                        revision,
+                    } => format!("Exported {} · revision {}", destination.display(), revision),
+                    ExportProgress::Failed(message) => format!("Export failed · {message}"),
+                    ExportProgress::Cancelled => "Export cancelled · partial output removed".into(),
+                };
+                let mut status_row = div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_3()
+                    .py_2()
+                    .rounded_md()
+                    .bg(rgb(PANEL))
+                    .text_xs()
+                    .child(message);
+                if self.export_cancelled.is_some() {
+                    status_row = status_row.child(self.button(
+                        "cancel-export",
+                        "Cancel export",
+                        true,
+                        cx,
+                        |shell, cx| shell.cancel_export(cx),
+                    ));
+                }
+                center = center.child(status_row);
+            }
             if p.interrupted {
                 center = center.child(div().text_color(rgb(ACCENT)).child(if p.draft.is_some() {
                     "Interrupted job · retained draft available"
@@ -3111,6 +3342,13 @@ impl Render for StudioShell {
                     s.dispatch(Command::InstallSdk, cx)
                 }),
             )
+            .child(self.button(
+                "import-sdk-bundle",
+                "Import offline SDK bundle…",
+                enabled,
+                cx,
+                |s, cx| s.pick(Picker::SdkBundle, cx),
+            ))
             .child(self.button(
                 "sdk",
                 "Select installed SDK…",
