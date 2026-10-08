@@ -22,6 +22,10 @@ on:
         description: "Mark as prerelease"
         type: boolean
         default: false
+      consumer_release:
+        description: "Publish only targets proven eligible by the M7 ledger"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -77,7 +81,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm
+          sudo apt-get install -y clang libclang-dev cmake pkg-config dpkg-dev libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm
           llvm_lib="$(find /usr/lib -name "libclang.so" 2>/dev/null | head -n1)"
           if [ -n "$llvm_lib" ]; then
             echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
@@ -105,8 +109,11 @@ jobs:
       - name: Windows FFmpeg build dependency
         if: runner.os == 'Windows'
         run: |
-          distribution=ffmpeg-n9.0-latest-win64-gpl-shared-9.0
-          curl -fL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$distribution.zip" -o "$RUNNER_TEMP/ffmpeg.zip"
+          distribution=ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-shared-9.0
+          release=autobuild-2026-10-07-13-07
+          expected_sha256=124799f0643a75eb84a64a589f1abac8f81732587942f3f34458688036153f0d
+          curl -fL "https://github.com/BtbN/FFmpeg-Builds/releases/download/$release/$distribution.zip" -o "$RUNNER_TEMP/ffmpeg.zip"
+          echo "$expected_sha256  $RUNNER_TEMP/ffmpeg.zip" | sha256sum --check --status
           7z x "$RUNNER_TEMP/ffmpeg.zip" -o"$RUNNER_TEMP/ffmpeg"
           ffmpeg_dir="$(cygpath -w "$RUNNER_TEMP/ffmpeg/$distribution")"
           echo "FFMPEG_DIR=$ffmpeg_dir" >> "$GITHUB_ENV"
@@ -134,6 +141,15 @@ jobs:
         run: SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test managed_worker -- --ignored
       - name: Package native app and SDK artifact
         run: python3 desktop/scripts/package-phase-zero.py --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" --sdk-bundle "$RUNNER_TEMP/studio-sdk"
+      - name: Package unsigned Linux Debian candidate
+        if: runner.os == 'Linux'
+        env:
+          MAINTAINER: "fframes Studio Maintainers <${{ github.repository_owner }}@users.noreply.github.com>"
+        run: |
+          python3 desktop/scripts/package-linux-deb.py \
+            --source "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" \
+            --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}.deb" \
+            --maintainer "$MAINTAINER"
       - name: Retain artifact
         uses: actions/upload-artifact@v4
         with:
@@ -141,11 +157,19 @@ jobs:
           path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.zip
           if-no-files-found: error
           retention-days: 14
+      - name: Retain Linux Debian candidate
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-linux-deb-${{ matrix.target }}
+          path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.deb
+          if-no-files-found: error
+          retention-days: 14
 
   publish:
     name: Publish Release
     needs: [matrix]
-    if: always() && !cancelled() && (needs.matrix.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.run_id != '' && inputs.run_id != null)) && needs.matrix.result != 'failure'
+    if: github.event_name == 'workflow_dispatch' && inputs.consumer_release == true && always() && !cancelled() && (needs.matrix.result == 'success' || needs.matrix.result == 'failure' || (inputs.run_id != '' && inputs.run_id != null))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -156,51 +180,88 @@ jobs:
           fetch-depth: 0
 
       - name: Determine tag
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            TAG="${{ inputs.tag }}"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TAG="$INPUT_TAG"
           else
             TAG="${GITHUB_REF_NAME}"
           fi
-          if [ -z "$TAG" ]; then
-            echo "Error: No release tag provided" >&2
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Error: A semantic version tag is required" >&2
             exit 1
           fi
           echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
 
+      - name: Validate release eligibility and provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          publication = json.loads(Path("desktop/packaging/release-policy.json").read_text())["publication"]
+          if not publication["consumer_release_enabled"] or not publication["trusted_release_keys_configured"]:
+              raise SystemExit("Consumer release is disabled until trusted signing keys and qualification are configured.")
+          PY
+          eligible_targets_json="$(python3 desktop/scripts/test-qualification-m7.py --eligible-targets --verify-worktree)"
+          eligible_targets="$(printf '%s' "$eligible_targets_json" | python3 -c 'import json, sys; print(" ".join(json.load(sys.stdin)))')"
+          if [ -z "$eligible_targets" ]; then
+            echo "No target is eligible for consumer publication." >&2
+            exit 1
+          fi
+          tag_commit="$(git rev-parse "$RELEASE_TAG^{commit}")"
+          ledger_commit="$(python3 -c 'import json; print(json.load(open("desktop/qualification/m7-results.json"))["source"]["commit"])')"
+          if [ "$tag_commit" != "$ledger_commit" ]; then
+            echo "Release tag commit does not match the qualified M7 source commit." >&2
+            exit 1
+          fi
+          if [ -n "$RUN_ID" ]; then
+            run_commit="$(gh run view "$RUN_ID" -R "$REPOSITORY" --json headSha -q .headSha)"
+            if [ "$run_commit" != "$tag_commit" ]; then
+              echo "Reused artifact run does not match the release tag commit." >&2
+              exit 1
+            fi
+          elif [ "$GITHUB_SHA" != "$tag_commit" ]; then
+            echo "Fresh native build commit does not match the release tag." >&2
+            exit 1
+          fi
+          echo "ELIGIBLE_TARGETS=$eligible_targets" >> "$GITHUB_ENV"
+
       - name: Fetch release artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          RUN_ID: ${{ inputs.run_id }}
+          REPOSITORY: ${{ github.repository }}
         run: |
           mkdir -p raw-artifacts dist
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ inputs.run_id }}" ]; then
-            echo "Downloading artifacts from run ${{ inputs.run_id }}..."
-            gh run download "${{ inputs.run_id }}" -R "${{ github.repository }}" -D raw-artifacts
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$RUN_ID" ]; then
+            echo "Downloading artifacts from run $RUN_ID..."
+            gh run download "$RUN_ID" -R "$REPOSITORY" -D raw-artifacts
           else
             echo "Downloading artifacts from current run..."
-            gh run download "$GITHUB_RUN_ID" -R "${{ github.repository }}" -D raw-artifacts
+            gh run download "$GITHUB_RUN_ID" -R "$REPOSITORY" -D raw-artifacts
           fi
 
           echo "Extracted files in raw-artifacts:"
           find raw-artifacts -type f
 
-          echo "Searching for target zip packages..."
-          find raw-artifacts -name "fframes-studio-*.zip" -exec cp -v {} dist/ \;
-
-          echo "Dist directory contents:"
-          ls -lh dist/
-
-          expected_targets=(
-            "fframes-studio-x86_64-unknown-linux-gnu.zip"
-            "fframes-studio-x86_64-pc-windows-msvc.zip"
-            "fframes-studio-aarch64-apple-darwin.zip"
-          )
-          for expected in "${expected_targets[@]}"; do
-            if [ ! -f "dist/$expected" ]; then
-              echo "Error: missing expected artifact dist/$expected" >&2
+          for target in $ELIGIBLE_TARGETS; do
+            expected="fframes-studio-${target}.zip"
+            candidate="$(find raw-artifacts -type f -name "$expected" -print -quit)"
+            if [ -z "$candidate" ]; then
+              echo "Missing native candidate package for eligible target $target" >&2
               exit 1
             fi
+            cp "$candidate" "dist/$expected"
+            python3 desktop/scripts/test-qualification-m7.py --verify-package "$target" "dist/$expected"
           done
+          ls -lh dist/
 
       - name: Generate Checksums
         run: |
@@ -210,79 +271,41 @@ jobs:
 
       - name: Generate Release Notes
         run: |
-          cat << 'EOF' > release-notes.md
-          # fframes Studio RELEASE_TAG_PLACEHOLDER
-
-          Native desktop video development studio for fframes.
-
-          ## Downloads
-
-          | Platform | Architecture | Package | Description |
-          |:---|:---|:---|:---|
-          | **Linux** | x86_64 | [`fframes-studio-x86_64-unknown-linux-gnu.zip`](https://github.com/khanhthanhdev/fframes-desktop/releases/download/RELEASE_TAG_PLACEHOLDER/fframes-studio-x86_64-unknown-linux-gnu.zip) | Standalone Linux bundle with `launch.sh` and bundled offline SDK |
-          | **Windows** | x86_64 | [`fframes-studio-x86_64-pc-windows-msvc.zip`](https://github.com/khanhthanhdev/fframes-desktop/releases/download/RELEASE_TAG_PLACEHOLDER/fframes-studio-x86_64-pc-windows-msvc.zip) | Standalone Windows bundle with `launch.ps1`, FFmpeg runtime and bundled offline SDK |
-          | **macOS** | Apple Silicon (arm64) | [`fframes-studio-aarch64-apple-darwin.zip`](https://github.com/khanhthanhdev/fframes-desktop/releases/download/RELEASE_TAG_PLACEHOLDER/fframes-studio-aarch64-apple-darwin.zip) | Standalone macOS bundle with `fframes Studio.app` and bundled offline SDK |
-
-          ### Quick Start
-
-          #### Linux (x86_64)
-          ```bash
-          unzip fframes-studio-x86_64-unknown-linux-gnu.zip
-          cd fframes-studio-x86_64-unknown-linux-gnu
-          ./launch.sh
-          ```
-
-          #### Windows (x64)
-          Extract `fframes-studio-x86_64-pc-windows-msvc.zip` and run via any of:
-          - **PowerShell (bypass policy for downloaded script):**
-            ```powershell
-            powershell -ExecutionPolicy Bypass -File .\launch.ps1
-            ```
-          - **Unblock script once:**
-            ```powershell
-            Unblock-File .\launch.ps1
-            .\launch.ps1
-            ```
-          - **Direct binary execution:**
-            ```powershell
-            .\bin\fframes-studio.exe spike-ui
-            ```
-          #### macOS (Apple Silicon)
-          Extract `fframes-studio-aarch64-apple-darwin.zip`:
-          Launch `fframes Studio.app` or execute `./launch.sh` in Terminal.
-
-          ## SHA-256 Checksums
-
-          ```text
-          CHECKSUMS_PLACEHOLDER
-          ```
-          EOF
-
-          sed -i "s/RELEASE_TAG_PLACEHOLDER/${RELEASE_TAG}/g" release-notes.md
-          python3 -c "
-          with open('release-notes.md') as f: content = f.read()
-          with open('dist/SHA256SUMS.txt') as f: sums = f.read()
-          content = content.replace('CHECKSUMS_PLACEHOLDER', sums.strip())
-          with open('release-notes.md', 'w') as f: f.write(content)
-          "
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          labels = {
+              "aarch64-apple-darwin": "macOS Apple Silicon",
+              "x86_64-pc-windows-msvc": "Windows x64",
+              "x86_64-unknown-linux-gnu": "Linux x64",
+          }
+          packages = sorted(Path("dist").glob("fframes-studio-*.zip"))
+          lines = [f"# fframes Studio {os.environ['RELEASE_TAG']}", "", "Native desktop video development studio for fframes.", "", "## Qualified downloads", ""]
+          for package in packages:
+              target = package.name.removeprefix("fframes-studio-").removesuffix(".zip")
+              lines.append(f"- {labels[target]}: `{package.name}`")
+          lines.extend(["", "## SHA-256", "", "```text", Path("dist/SHA256SUMS.txt").read_text().rstrip(), "```", ""])
+          Path("release-notes.md").write_text("\n".join(lines))
+          PY
           cat release-notes.md
 
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_DRAFT: ${{ inputs.draft }}
         run: |
           extra_args=()
-          if [ "${{ inputs.prerelease }}" = "true" ]; then
+          if [ "$INPUT_PRERELEASE" = "true" ]; then
             extra_args+=("--prerelease")
           fi
-          if [ "${{ inputs.draft }}" = "true" ]; then
+          if [ "$INPUT_DRAFT" = "true" ]; then
             extra_args+=("--draft")
           fi
 
           if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
-            echo "Release $RELEASE_TAG exists. Updating notes and uploading assets..."
-            gh release edit "$RELEASE_TAG" --title "fframes Studio $RELEASE_TAG" --notes-file release-notes.md "${extra_args[@]}"
-            gh release upload "$RELEASE_TAG" dist/* --clobber
+            echo "Release $RELEASE_TAG already exists; published bytes are immutable." >&2
+            exit 1
           else
             echo "Creating release $RELEASE_TAG..."
             gh release create "$RELEASE_TAG" dist/* \

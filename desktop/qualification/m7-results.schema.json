@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fframes.dev/schemas/studio-m7-qualification-v1.json",
+  "title": "fframes Studio M7 Release Qualification",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source", "candidates"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "source": { "$ref": "#/$defs/source" },
+    "candidates": {
+      "type": "array",
+      "minItems": 3,
+      "items": { "$ref": "#/$defs/candidate" }
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["commit", "worktree_digest"],
+      "properties": {
+        "commit": { "type": "string", "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$" },
+        "worktree_digest": { "type": ["string", "null"], "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "gate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence", "blockers"],
+      "properties": {
+        "status": { "enum": ["pass", "fail", "blocked", "not_run"] },
+        "evidence": { "type": "array", "items": { "$ref": "#/$defs/evidence" } },
+        "blockers": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app_sha256", "sdk_sha256", "release_manifest_sha256", "package_sha256", "source_commit", "source_worktree_digest"],
+      "properties": {
+        "app_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "sdk_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "release_manifest_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "package_sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "source_commit": { "type": "string", "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$" },
+        "source_worktree_digest": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "app_version", "artifact", "eligibility", "gates"],
+      "properties": {
+        "target": { "enum": ["aarch64-apple-darwin", "x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu"] },
+        "app_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+        "artifact": { "oneOf": [{ "$ref": "#/$defs/artifact" }, { "type": "null" }] },
+        "eligibility": { "enum": ["eligible", "blocked", "not_run"] },
+        "gates": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["native_package", "guided_setup", "export", "signing", "update_rollback", "authentic_journey", "physical_devices", "retention"],
+          "properties": {
+            "native_package": { "$ref": "#/$defs/gate" },
+            "guided_setup": { "$ref": "#/$defs/gate" },
+            "export": { "$ref": "#/$defs/gate" },
+            "signing": { "$ref": "#/$defs/gate" },
+            "update_rollback": { "$ref": "#/$defs/gate" },
+            "authentic_journey": { "$ref": "#/$defs/gate" },
+            "physical_devices": { "$ref": "#/$defs/gate" },
+            "retention": { "$ref": "#/$defs/gate" }
+          }
+        }
+      }
+    }
+  }
+}

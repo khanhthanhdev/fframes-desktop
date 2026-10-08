@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fframes.dev/schemas/studio-release-manifest-v1.json",
+  "title": "fframes Studio Signed Release Payload v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "sequence",
+    "app_version",
+    "source_commit",
+    "target_triple",
+    "minimum_os",
+    "app",
+    "sdk",
+    "sdk_id",
+    "sdk_version",
+    "app_supports_sdk_range",
+    "sdk_supports_app_range",
+    "studio_protocol_version",
+    "worker_protocol_versions",
+    "export_capabilities",
+    "runtime_inventory"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "sequence": { "type": "integer", "minimum": 1 },
+    "app_version": { "$ref": "#/$defs/semver" },
+    "source_commit": { "type": "string", "pattern": "^(?:[a-fA-F0-9]{40}|[a-fA-F0-9]{64})$" },
+    "target_triple": { "type": "string", "minLength": 1 },
+    "minimum_os": { "type": "string", "minLength": 1 },
+    "app": { "$ref": "#/$defs/artifact" },
+    "sdk": { "$ref": "#/$defs/artifact" },
+    "sdk_id": { "type": "string", "minLength": 1 },
+    "sdk_version": { "$ref": "#/$defs/semver" },
+    "app_supports_sdk_range": { "type": "string", "minLength": 1 },
+    "sdk_supports_app_range": { "type": "string", "minLength": 1 },
+    "studio_protocol_version": { "type": "integer", "minimum": 1 },
+    "worker_protocol_versions": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1 }
+    },
+    "export_capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/exportCapability" }
+    },
+    "runtime_inventory": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/runtimeFile" }
+    }
+  },
+  "$defs": {
+    "semver": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$" },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["url", "sha256", "size_bytes"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https://" },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "exportCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["backend", "container", "video_codec", "audio_codec"],
+      "properties": {
+        "backend": { "type": "string", "minLength": 1 },
+        "container": { "type": "string", "minLength": 1 },
+        "video_codec": { "type": "string", "minLength": 1 },
+        "audio_codec": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtimeFile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "size_bytes", "license_id"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "pattern": "^(?!/)(?![A-Za-z]:)(?!.*(?:^|/)\\.\\.?($|/))[^\\\\]+$" },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" },
+        "size_bytes": { "type": "integer", "minimum": 1 },
+        "license_id": { "type": "string", "minLength": 1 }
+      }
+    },
+    "releaseEnvelope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["payload", "key_id", "signature"],
+      "properties": {
+        "payload": { "$ref": "#" },
+        "key_id": { "type": "string", "minLength": 1 },
+        "signature": { "type": "string", "pattern": "^[a-f0-9]{128}$" }
+      }
+    }
+  }
+}

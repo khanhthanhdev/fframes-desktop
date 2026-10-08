@@ -113,8 +113,11 @@ jobs:
       - name: Windows FFmpeg build dependency
         if: runner.os == 'Windows'
         run: |
-          distribution=ffmpeg-n9.0-latest-win64-gpl-shared-9.0
-          curl -fL "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$distribution.zip" -o "$RUNNER_TEMP/ffmpeg.zip"
+          distribution=ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-shared-9.0
+          release=autobuild-2026-10-07-13-07
+          expected_sha256=124799f0643a75eb84a64a589f1abac8f81732587942f3f34458688036153f0d
+          curl -fL "https://github.com/BtbN/FFmpeg-Builds/releases/download/$release/$distribution.zip" -o "$RUNNER_TEMP/ffmpeg.zip"
+          echo "$expected_sha256  $RUNNER_TEMP/ffmpeg.zip" | sha256sum --check --status
           7z x "$RUNNER_TEMP/ffmpeg.zip" -o"$RUNNER_TEMP/ffmpeg"
           ffmpeg_dir="$(cygpath -w "$RUNNER_TEMP/ffmpeg/$distribution")"
           echo "FFMPEG_DIR=$ffmpeg_dir" >> "$GITHUB_ENV"

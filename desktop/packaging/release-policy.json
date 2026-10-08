@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "publication": {
+    "requires_signed_release_manifest": true,
+    "trusted_release_keys_configured": false,
+    "requires_qualified_artifact_digest": true,
+    "requires_matching_source_commit": true,
+    "immutable_released_bytes": true,
+    "consumer_release_enabled": false
+  },
+  "qualification": {
+    "trusted_evidence_keys": []
+  },
+  "targets": [
+    {
+      "triple": "aarch64-apple-darwin",
+      "status": "candidate",
+      "installer": "dmg",
+      "minimum_os": null,
+      "export_capabilities": [],
+      "blockers": ["native package qualification", "signing and notarization", "authentic provider", "physical device"]
+    },
+    {
+      "triple": "x86_64-pc-windows-msvc",
+      "status": "candidate",
+      "installer": "per-user",
+      "minimum_os": null,
+      "export_capabilities": [],
+      "blockers": ["native package qualification", "code signing", "authentic provider", "physical device", "GPL FFmpeg license and corresponding-source review"]
+    },
+    {
+      "triple": "x86_64-unknown-linux-gnu",
+      "status": "candidate",
+      "installer": "appimage-and-deb",
+      "minimum_os": null,
+      "export_capabilities": [],
+      "blockers": ["native package qualification", "authentic provider", "physical device", "pinned system baseline", "HEVC builds depend on host libx265.so.199 not included in the SDK", "codec and source-distribution review"]
+    }
+  ]
+}

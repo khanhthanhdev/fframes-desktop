@@ -34,6 +34,7 @@ def load(name):
 
 assembly = load("assemble-phase-zero-sdk")
 packaging = load("package-phase-zero")
+debian_packaging = load("package-linux-deb")
 qualification = load("validate-qualification")
 harness = load("qualify-m3-agent")
 
@@ -59,6 +60,49 @@ class ArtifactTests(unittest.TestCase):
         self.assertNotIn("preview_contract_versions", raw)
         canonical = json.dumps(raw, separators=(",", ":"))
         self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "105670909607f0b6043ddaee5e2b98a9f2b2614271831a5cbff804b3983e764b")
+
+    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("dpkg-deb") and shutil.which("dpkg-shlibdeps"), "requires Linux Debian packaging tools")
+    def test_linux_deb_has_installed_shell_layout_and_derived_dependencies(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "phase-zero"
+            (source / "bin").mkdir(parents=True)
+            (source / "notices").mkdir()
+            binary = Path(shutil.which("true")).resolve()
+            for name in debian_packaging.BINARIES:
+                shutil.copy2(binary, source / "bin" / name)
+            (source / "notices/LICENSE.txt").write_text("test notice")
+            output = root / "fframes-studio.deb"
+
+            package = debian_packaging.package(
+                source,
+                output,
+                "fframes Studio Tests <test@example.invalid>",
+            )
+            package_bytes = package.read_bytes()
+            with self.assertRaisesRegex(ValueError, "output already exists"):
+                debian_packaging.package(
+                    source,
+                    output,
+                    "fframes Studio Tests <test@example.invalid>",
+                )
+            self.assertEqual(package.read_bytes(), package_bytes, "an existing package must not be replaced")
+            fields = subprocess.run(
+                ["dpkg-deb", "--field", str(package)],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout
+            self.assertIn("Package: fframes-studio", fields)
+            self.assertIn("Architecture: amd64", fields)
+            self.assertIn("Depends: libc6", fields)
+            installed = root / "installed"
+            subprocess.run(["dpkg-deb", "--extract", str(package), str(installed)], check=True)
+            self.assertTrue((installed / "usr/bin/fframes-studio").stat().st_mode & 0o111)
+            self.assertIn("/opt/fframes-studio/bin/fframes-studio studio", (installed / "usr/bin/fframes-studio").read_text())
+            self.assertTrue((installed / "usr/share/applications/fframes-studio.desktop").is_file())
+            self.assertTrue((installed / "opt/fframes-studio/notices/LICENSE.txt").is_file())
+            self.assertFalse((installed / "opt/fframes-studio/sdk").exists(), "the app package must not embed the separate SDK")
 
     def test_bundled_ffmpeg_links_supplied_install_without_download_feature(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -447,7 +491,14 @@ class M3LedgerTests(unittest.TestCase):
     def test_default_cli_validates_every_shipped_ledger(self):
         self.assertEqual(
             [p.name for p in qualification.DEFAULT_LEDGERS],
-            ["m0-results.json", "m2-results.json", "m3-results.json", "m4-results.json"],
+            [
+                "m0-results.json",
+                "m2-results.json",
+                "m3-results.json",
+                "m4-results.json",
+                "m5-results.json",
+                "m6-results.json",
+            ],
         )
         for path in qualification.DEFAULT_LEDGERS:
             qualification.validate(path)

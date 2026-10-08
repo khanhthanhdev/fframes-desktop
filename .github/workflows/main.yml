@@ -331,7 +331,9 @@ jobs:
       # Windows links a prebuilt FFmpeg instead of compiling it (see README). The
       # codec features of the examples request a from-source build, so only the
       # core crates are built here.
-      FFMPEG_BUILD: ffmpeg-n9.0-latest-win64-gpl-shared-9.0
+      FFMPEG_BUILD: ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-shared-9.0
+      FFMPEG_RELEASE: autobuild-2026-10-07-13-07
+      FFMPEG_SHA256: 124799f0643a75eb84a64a589f1abac8f81732587942f3f34458688036153f0d
       PACKAGES: -p fframes -p fframes-media -p webvtt-parser -p fframes-media-dir-macro -p svgr-macro -p e2e-tests
     steps:
       - name: Checkout
@@ -341,7 +343,8 @@ jobs:
         run: |
           TMP_DIR="$(cygpath -u "$RUNNER_TEMP")"
           curl -fsSL -o "$TMP_DIR/ffmpeg.zip" \
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG_BUILD.zip"
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/$FFMPEG_RELEASE/$FFMPEG_BUILD.zip"
+          echo "$FFMPEG_SHA256  $TMP_DIR/ffmpeg.zip" | sha256sum --check --status
           7z x "$TMP_DIR/ffmpeg.zip" -o"$TMP_DIR" > /dev/null
           FFMPEG_DIR="$(cygpath -w "$TMP_DIR/$FFMPEG_BUILD")"
           echo "FFMPEG_DIR=$FFMPEG_DIR" >> "$GITHUB_ENV"

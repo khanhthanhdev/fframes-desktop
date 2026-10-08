@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "source": {
+    "commit": "63052c5d70359cd105bb752fdd74088f38c7d622",
+    "worktree_digest": null
+  },
+  "candidates": [
+    {
+      "target": "aarch64-apple-darwin",
+      "app_version": "0.1.0",
+      "artifact": null,
+      "eligibility": "blocked",
+      "gates": {
+        "native_package": { "status": "not_run", "evidence": [], "blockers": ["macOS runner, package inventory and installed-location checks not run in this Linux execution"] },
+        "guided_setup": { "status": "not_run", "evidence": [], "blockers": ["verified acquisition primitives and offline import exist, but the signed online setup/authentication flow and macOS clean-user qualification are not complete"] },
+        "export": { "status": "not_run", "evidence": [], "blockers": ["target-specific macOS candidate export is not run; Linux development smoke does not qualify this target, signed artifact, or codec/source distribution"] },
+        "signing": { "status": "blocked", "evidence": [], "blockers": ["Apple Developer ID signing and notarization credentials unavailable"] },
+        "update_rollback": { "status": "not_run", "evidence": [], "blockers": ["signed update feed and paired app/SDK recovery not implemented"] },
+        "authentic_journey": { "status": "blocked", "evidence": [], "blockers": ["authentic provider workflow not qualified"] },
+        "physical_devices": { "status": "blocked", "evidence": [], "blockers": ["physical macOS display, input and audio qualification unavailable"] },
+        "retention": { "status": "not_run", "evidence": [], "blockers": ["installer update, rollback and uninstall retention checks not run"] }
+      }
+    },
+    {
+      "target": "x86_64-pc-windows-msvc",
+      "app_version": "0.1.0",
+      "artifact": null,
+      "eligibility": "blocked",
+      "gates": {
+        "native_package": { "status": "not_run", "evidence": [], "blockers": ["Windows runner, package inventory and installed-location checks not run in this Linux execution"] },
+        "guided_setup": { "status": "not_run", "evidence": [], "blockers": ["verified acquisition primitives and offline import exist, but the signed online setup/authentication flow and Windows clean-user qualification are not complete"] },
+        "export": { "status": "not_run", "evidence": [], "blockers": ["target-specific Windows candidate export is not run; Linux development smoke does not qualify this target, signed artifact, or codec/source distribution"] },
+        "signing": { "status": "blocked", "evidence": [], "blockers": ["Windows code-signing identity unavailable"] },
+        "update_rollback": { "status": "not_run", "evidence": [], "blockers": ["signed update feed and paired app/SDK recovery not implemented"] },
+        "authentic_journey": { "status": "blocked", "evidence": [], "blockers": ["authentic provider workflow not qualified"] },
+        "physical_devices": { "status": "blocked", "evidence": [], "blockers": ["physical Windows display, input and audio qualification unavailable"] },
+        "retention": { "status": "not_run", "evidence": [], "blockers": ["installer update, rollback and uninstall retention checks not run"] }
+      }
+    },
+    {
+      "target": "x86_64-unknown-linux-gnu",
+      "app_version": "0.1.0",
+      "artifact": null,
+      "eligibility": "blocked",
+      "gates": {
+        "native_package": { "status": "not_run", "evidence": [], "blockers": ["Unsigned Linux x64 .deb candidate metadata/dependency derivation and extracted clean-HOME Xvfb product-shell launch smoke pass; apt install/upgrade/uninstall and exact clean-user installer qualification remain unrun. The separate SDK-enabled ZIP still has HEVC builds resolving host libx265.so.199 instead of the SDK bundle"] },
+        "guided_setup": { "status": "not_run", "evidence": [], "blockers": ["verified acquisition primitives and offline import exist, but the signed online setup/authentication flow and Linux clean-user qualification are not complete"] },
+        "export": { "status": "not_run", "evidence": [], "blockers": ["Linux development SDK real-worker export/decode, generated-project frame/inspect/strip, in-render cancellation cleanup, and destination-creation race/no-clobber smoke tests pass; exact signed candidate, installed-target export, crash/full-disk recovery and codec/source-distribution qualification remain open, including HEVC host libx265.so.199 dependency"] },
+        "signing": { "status": "not_run", "evidence": [], "blockers": ["release metadata signing key and immutable origin not configured"] },
+        "update_rollback": { "status": "not_run", "evidence": [], "blockers": ["signed update feed and paired app/SDK recovery not implemented"] },
+        "authentic_journey": { "status": "blocked", "evidence": [], "blockers": ["authentic provider workflow not qualified"] },
+        "physical_devices": { "status": "blocked", "evidence": [], "blockers": ["physical Linux display, input and audio qualification unavailable"] },
+        "retention": { "status": "not_run", "evidence": [], "blockers": ["installer update, rollback and uninstall retention checks not run"] }
+      }
+    }
+  ]
+}

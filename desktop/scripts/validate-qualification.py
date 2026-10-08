@@ -23,6 +23,7 @@ prerequisite, and:
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import math
 import re
@@ -1536,6 +1537,14 @@ def validate_m6(path, record):
 def validate(path):
     path = Path(path)
     record = load_record(path)
+    if set(record) == {"schema_version", "source", "candidates"}:
+        m7_path = Path(__file__).with_name("test-qualification-m7.py")
+        spec = importlib.util.spec_from_file_location("m7_qualification", m7_path)
+        if spec is None or spec.loader is None:
+            raise ValueError(f"Cannot load M7 validator: {m7_path}")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module.validate(path)
     kind = record.get("kind")
     if kind is None:
         validate_m0(path, record)
