@@ -26,6 +26,10 @@ on:
         description: "Publish only targets proven eligible by the M7 ledger"
         type: boolean
         default: false
+      sign_artifacts:
+        description: "Sign macOS and Windows binaries for a release build (requires configured signing secrets)"
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -50,6 +54,10 @@ jobs:
           - runner: macos-15
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     timeout-minutes: 90
     defaults:
       run:
@@ -60,6 +68,36 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
+      - name: Check macOS signing credentials before building
+        if: runner.os == 'macOS' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)))
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: |
+          required=(APPLE_DEVELOPER_ID_P12_BASE64 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_DEVELOPER_IDENTITY APPLE_NOTARY_KEY_P8_BASE64 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required signing secret: $name" >&2
+              exit 1
+            fi
+          done
+      - name: Check Windows signing credentials before building
+        if: runner.os == 'Windows' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)))
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+        run: |
+          required=(WINDOWS_CODESIGN_PFX_BASE64 WINDOWS_CODESIGN_PFX_PASSWORD)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name:-}" ]]; then
+              echo "Missing required signing secret: $name" >&2
+              exit 1
+            fi
+          done
       - name: Set native build directory
         run: |
           if command -v cygpath >/dev/null 2>&1; then
@@ -141,6 +179,27 @@ jobs:
         run: SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" cargo test --locked --manifest-path desktop/Cargo.toml -p fframes-studio --test managed_worker -- --ignored
       - name: Package native app and SDK artifact
         run: python3 desktop/scripts/package-phase-zero.py --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" --sdk-bundle "$RUNNER_TEMP/studio-sdk"
+      - name: Sign and notarize macOS app package
+        if: runner.os == 'macOS' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)))
+        env:
+          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
+          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
+          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
+          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
+          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
+          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
+        run: bash desktop/scripts/sign-macos-package.sh "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}"
+      - name: Sign Windows executables and FFmpeg DLLs
+        if: runner.os == 'Windows' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)))
+        env:
+          WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
+          WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
+        shell: pwsh
+        run: ./desktop/scripts/sign-windows-package.ps1 -PackagePath "$env:RUNNER_TEMP/fframes-studio-${{ matrix.target }}"
+      - name: Attest native app package provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.zip
       - name: Package unsigned Linux Debian candidate
         if: runner.os == 'Linux'
         env:
@@ -150,6 +209,11 @@ jobs:
             --source "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" \
             --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}.deb" \
             --maintainer "$MAINTAINER"
+      - name: Attest Linux Debian candidate provenance
+        if: runner.os == 'Linux'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.deb
       - name: Retain artifact
         uses: actions/upload-artifact@v4
         with:

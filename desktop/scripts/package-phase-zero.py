@@ -131,7 +131,19 @@ def package(output, sdk_bundle=None):
             if sdk_bundle:
                 shutil.move(str(output / "sdk"), str(contents / "sdk"))
             with (contents / "Info.plist").open("wb") as stream:
-                plistlib.dump({"CFBundleExecutable": "fframes-studio", "CFBundleIdentifier": "studio.fframes.spike", "CFBundleName": "fframes Studio", "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "0.1.0", "NSHighResolutionCapable": True}, stream)
+                plistlib.dump(
+                    {
+                        "CFBundleExecutable": "fframes-studio",
+                        "CFBundleIdentifier": "studio.fframes.spike",
+                        "CFBundleInfoDictionaryVersion": "6.0",
+                        "CFBundleName": "fframes Studio",
+                        "CFBundlePackageType": "APPL",
+                        "CFBundleShortVersionString": "0.1.0",
+                        "CFBundleVersion": "0.1.0",
+                        "NSHighResolutionCapable": True,
+                    },
+                    stream,
+                )
             launcher.write_text('#!/usr/bin/env sh\nset -eu\npackage_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexport FFRAMES_SDK_BUNDLE="$package_dir/fframes Studio.app/Contents/sdk"\nexec "$package_dir/fframes Studio.app/Contents/MacOS/fframes-studio" spike-ui\n')
     ledger = json.loads((ROOT / "desktop/qualification/m0-results.json").read_text())
     ledger["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
