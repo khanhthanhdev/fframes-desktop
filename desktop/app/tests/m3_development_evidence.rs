@@ -406,7 +406,7 @@ impl Profile {
             // Full: ~4.8 MB of text in 16 KiB rows and 1200 tool cards, both far beyond
             // the 400-row / 4 MiB resident window. Smoke: only the row bound.
             text_chunks: if full { 320 } else { 8 },
-            flood_tools: if full { 1200 } else { 450 },
+            flood_tools: if full { 1200 } else { 401 },
         }
     }
 
@@ -443,9 +443,9 @@ fn resource_bounds(profile: &Profile) -> Value {
     script["text"] = json!(chunks);
     script["flood_tools"] = json!(profile.flood_tools);
     // Keep each burst small and give the actor time to drain on slower native runners.
-    // The total still exceeds the driver's 256-event queue, but never relies on a fast
-    // producer outrunning the workflow actor between ticks.
-    script["flood_pace"] = json!({"every": 20, "sleep_ms": 100});
+    // The smoke profile crosses the 400-row cap by one card; both profiles still send
+    // more than the driver's 256-event queue without relying on an unbounded producer.
+    script["flood_pace"] = json!({"every": 5, "sleep_ms": 250});
     w.set_plan(&[script]);
     let started = Instant::now();
     w.workflow.submit("plan brief").unwrap();
@@ -465,7 +465,14 @@ fn resource_bounds(profile: &Profile) -> Value {
         if let Some(task) = s.task.as_ref().filter(|t| t.phase.is_terminal()) {
             break task.clone();
         }
-        assert!(started.elapsed() < WAIT, "the flooded task never finished");
+        assert!(
+            started.elapsed() < WAIT,
+            "the flooded task never finished; phase {:?}, error {:?}, rows {}, queue {}",
+            s.task.as_ref().map(|task| task.phase),
+            s.task.as_ref().and_then(|task| task.error.as_ref()),
+            s.rows.len(),
+            s.resources.queue_len
+        );
         std::thread::sleep(Duration::from_millis(2));
     };
     let streamed_for = started.elapsed();
