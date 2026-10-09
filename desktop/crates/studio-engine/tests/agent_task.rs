@@ -84,7 +84,7 @@ fn sleeper() -> SpawnOptions {
     options.arg("30");
 
     #[cfg(windows)]
-    let mut options = {
+    let options = {
         let mut options = SpawnOptions::new("powershell.exe");
         options.args([
             "-NoProfile",
