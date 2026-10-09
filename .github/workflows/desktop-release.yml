@@ -41,17 +41,20 @@ concurrency:
 
 jobs:
   matrix:
-    name: Build Native (${{ matrix.runner }})
+    name: Build Native (${{ matrix.runner_name }})
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.run_id == '' || inputs.run_id == null))
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: ubuntu-24.04
+          - runner: [self-hosted, Linux, X64]
+            runner_name: self-hosted Linux
             target: x86_64-unknown-linux-gnu
-          - runner: windows-2025
+          - runner: [self-hosted, Windows, X64]
+            runner_name: self-hosted Windows
             target: x86_64-pc-windows-msvc
           - runner: macos-15
+            runner_name: GitHub-hosted macOS
             target: aarch64-apple-darwin
     runs-on: ${{ matrix.runner }}
     permissions:
@@ -235,6 +238,8 @@ jobs:
     name: Publish Release
     needs: [matrix]
     if: github.event_name == 'workflow_dispatch' && inputs.consumer_release == true && always() && !cancelled() && (needs.matrix.result == 'success' || needs.matrix.result == 'failure' || (inputs.run_id != '' && inputs.run_id != null))
+    # Publish from a trusted GitHub-hosted runner; native compilation is handled by
+    # the self-hosted Linux/Windows runners above.
     runs-on: ubuntu-latest
     permissions:
       contents: write
