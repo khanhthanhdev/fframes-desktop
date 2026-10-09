@@ -92,7 +92,7 @@ struct Options {
     handoff: Option<Arc<dyn PreviewHandoff>>,
     row_limits: Option<fframes_studio::agent_workflow::log::RowLimits>,
     hooks: Option<Arc<dyn TransactionHooks>>,
-    /// Command prefix before `python3` (e.g. `env VAR=x`).
+    /// Command prefix before the platform's Python command (e.g. `env VAR=x`).
     wrapper: Vec<String>,
     executable: Option<String>,
     adapter: bool,
@@ -278,14 +278,15 @@ impl World {
 
     fn adapter_settings(&self) -> AdapterSettings {
         let mut args: Vec<String> = Vec::new();
+        let python = if cfg!(windows) { "python" } else { "python3" };
         let executable = match (&self.options.executable, self.options.wrapper.split_first()) {
             (Some(executable), _) => executable.clone(),
             (None, Some((first, rest))) => {
                 args.extend(rest.iter().cloned());
-                args.push("python3".into());
+                args.push(python.into());
                 first.clone()
             }
-            (None, None) => "python3".to_owned(),
+            (None, None) => python.to_owned(),
         };
         args.push(agent_script());
         args.push(self.agent.to_string_lossy().into_owned());
