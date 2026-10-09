@@ -97,6 +97,9 @@ impl ExecutableSearch {
         if let Some(gui) = &self.gui_path {
             dirs.extend(std::env::split_paths(gui));
         }
+        // Empty PATH entries mean the current working directory on some platforms.
+        // Do not search it, but do not let an otherwise valid PATH entry block launch.
+        dirs.retain(|dir| !dir.as_os_str().is_empty());
         match dirs.iter().find(|dir| !dir.is_absolute()) {
             Some(relative) => Err(ResolveError::RelativeRoot(relative.clone())),
             None => Ok(dirs),
@@ -458,6 +461,18 @@ mod tests {
             resolve_executable("sh", &ExecutableSearch::default()),
             Err(ResolveError::NotFound { .. })
         ));
+    }
+
+    #[test]
+    fn empty_search_path_entries_are_ignored() {
+        let cwd = std::env::current_dir().unwrap();
+        let gui_path = std::env::join_paths([cwd.as_path(), Path::new("")]).unwrap();
+        let search = ExecutableSearch {
+            managed_dirs: vec![PathBuf::new()],
+            gui_path: Some(gui_path),
+        };
+
+        assert_eq!(search.roots().unwrap(), vec![cwd]);
     }
 
     #[test]
