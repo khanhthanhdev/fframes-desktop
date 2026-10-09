@@ -71,6 +71,26 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
+      - name: Add Git for Windows Bash to PATH
+        if: runner.os == 'Windows'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+            const pathEntries = process.env.PATH.split(path.delimiter);
+            const gitCmd = pathEntries.find((entry) =>
+              path.basename(entry).toLowerCase() === 'cmd' &&
+              fs.existsSync(path.join(entry, 'git.exe'))
+            );
+            const gitRoot = gitCmd ? path.resolve(gitCmd, '..') : path.join(process.env.ProgramFiles, 'Git');
+            const bashDir = path.join(gitRoot, 'bin');
+            if (!fs.existsSync(path.join(bashDir, 'bash.exe'))) {
+              core.setFailed(`Git Bash was not found at ${path.join(bashDir, 'bash.exe')}; install Git for Windows.`);
+            } else {
+              core.addPath(bashDir);
+              core.addPath(path.join(gitRoot, 'usr', 'bin'));
+            }
       # Tag-triggered builds are deliberately unsigned; signing is opt-in on manual dispatches.
       - name: Check macOS signing credentials before building
         if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
@@ -122,12 +142,15 @@ jobs:
       - name: Linux native prerequisites
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang libclang-dev cmake pkg-config dpkg-dev libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm
+          for tool in clang cmake pkg-config nasm dpkg-deb; do
+            command -v "$tool" >/dev/null || { echo "Missing Linux tool: $tool (install the desktop release prerequisites on the runner)" >&2; exit 1; }
+          done
+          for package in openssl fontconfig alsa xkbcommon-x11 wayland-client egl gl xcb xcb-shape xcb-xfixes x11-xcb libzstd; do
+            pkg-config --exists "$package" || { echo "Missing Linux development package: $package (install the desktop release prerequisites on the runner)" >&2; exit 1; }
+          done
           llvm_lib="$(find /usr/lib -name "libclang.so" 2>/dev/null | head -n1)"
-          if [ -n "$llvm_lib" ]; then
-            echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
-          fi
+          [ -n "$llvm_lib" ] || { echo "Missing libclang.so (install libclang-dev)" >&2; exit 1; }
+          echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
       - name: macOS native prerequisites
         if: runner.os == 'macOS'
         run: |
