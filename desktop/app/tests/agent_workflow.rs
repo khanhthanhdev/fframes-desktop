@@ -724,6 +724,9 @@ fn stop_while_validating_cancels_the_compile_and_keeps_the_draft() {
     assert_eq!(task.phase, TaskPhase::Cancelled);
     assert_eq!(w.engine_state(), Some(TaskState::Cancelled));
     assert!(matches!(w.draft_state(), Some(DraftState::Retained { .. })));
+    w.poll("the shared compile to observe cancellation", || {
+        w.compiler.killed.load(Ordering::SeqCst) >= 1
+    });
     assert!(
         w.compiler.killed.load(Ordering::SeqCst) >= 1,
         "the shared compile saw the cancel"
