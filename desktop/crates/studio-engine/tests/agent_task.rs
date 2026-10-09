@@ -78,8 +78,23 @@ fn evidence(controller: &Controller, id: &TaskIdentity) -> QuiescenceEvidence {
 }
 
 fn sleeper() -> SpawnOptions {
+    #[cfg(unix)]
     let mut options = SpawnOptions::new("sleep");
+    #[cfg(unix)]
     options.arg("30");
+
+    #[cfg(windows)]
+    let mut options = {
+        let mut options = SpawnOptions::new("powershell.exe");
+        options.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Start-Sleep -Seconds 30",
+        ]);
+        options
+    };
+
     options
 }
 
