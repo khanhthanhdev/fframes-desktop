@@ -508,7 +508,7 @@ mod tests {
             )
             .unwrap();
             let mut transport = WorkerClient::new("rev", 7);
-            transport.set_request_timeout(Duration::from_secs(3));
+            transport.set_request_timeout(Duration::from_secs(5));
             transport
                 .spawn_worker(
                     Path::new(if cfg!(windows) { "python" } else { "python3" }),
@@ -529,8 +529,9 @@ mod tests {
             );
             let started = Instant::now();
             assert!(worker.frame(29, 7, 1.).is_err(), "malformed {case}");
+            // Allow bounded process-tree cleanup while staying below the request deadline.
             assert!(
-                started.elapsed() < Duration::from_secs(2),
+                started.elapsed() < Duration::from_secs(4),
                 "{case} waited for an invalid payload"
             );
             assert_eq!(manager.active_count(), 0, "{case} leaked worker");

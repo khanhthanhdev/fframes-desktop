@@ -300,13 +300,11 @@ mod tests {
     #[test]
     fn problems_and_panics_are_reported_with_their_label() {
         let owner = Teardown::new("test-teardown-reports", 4);
-        owner
-            .submit("unverified", None, || Some("a child survived".into()))
-            .wait(Duration::from_secs(5));
-        owner
-            .submit("panicking", None, || panic!("boom"))
-            .wait(Duration::from_secs(5));
-        assert!(owner.wait_idle(Duration::from_secs(5)));
+        let unverified = owner.submit("unverified", None, || Some("a child survived".into()));
+        assert!(unverified.wait(Duration::from_secs(30)));
+        let panicking = owner.submit("panicking", None, || panic!("boom"));
+        assert!(panicking.wait(Duration::from_secs(30)));
+        assert!(owner.wait_idle(Duration::from_secs(30)));
         let reports = owner.take_reports();
         assert_eq!(reports.len(), 2);
         assert_eq!(reports[0].label, "unverified");

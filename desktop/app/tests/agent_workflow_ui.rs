@@ -4,6 +4,8 @@
 //! window and shell hosting glue are pure functions of snapshots, so they are proven
 //! against what the workflow actually publishes. (The GPUI process itself is exercised by
 //! `x11_shell.rs`; neither the peer nor these tests qualify a provider.)
+//! The real workflow snapshots include successful Apply, currently qualified only on Linux.
+#![cfg(target_os = "linux")]
 use fframes_studio::{
     agent_workflow::{log::RowLimits, *},
     build_service::{BuildLimits, BuildService},

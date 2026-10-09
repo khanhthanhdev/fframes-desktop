@@ -35,7 +35,10 @@ fn relocation_relinks_but_duplicate_existing_id_is_never_attached() {
     assert!(controller.history_was_available);
     drop(controller);
     let mut store = Store::open(&paths.database()).unwrap();
-    assert_eq!(store.recents().unwrap()[0].location, moved);
+    assert_eq!(
+        store.recents().unwrap()[0].location,
+        fs::canonicalize(&moved).unwrap()
+    );
     store.remove_recent(&project.manifest.project_id).unwrap();
     assert!(store.recents().unwrap().is_empty());
     assert!(moved.join("studio.json").exists());
@@ -105,7 +108,7 @@ fn both_unversioned_histories_reopen_relocate_and_export_without_rewriting_check
             state.finish_open(Ok(())).unwrap();
             state.close();
             let record = Record {
-                location: root.clone(),
+                location: project.root.clone(),
                 name: "Video".into(),
                 state,
                 draft: None,

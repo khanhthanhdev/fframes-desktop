@@ -5,8 +5,7 @@ use std::{
 };
 
 use studio_project::{
-    OpenProject, ProjectError, ProjectPath, SourceInventory,
-    lifecycle::{atomic_write, read_cargo},
+    OpenProject, ProjectError, ProjectPath, SourceInventory, lifecycle::read_cargo,
 };
 use studio_sdk::{CompatibilityManifest, environment::SdkEnvironment};
 
@@ -113,16 +112,13 @@ pub fn materialize_in_environment(
             ));
         }
     }
-    let build_key = app_builds
-        .join(String::from(project.manifest.project_id.clone()))
-        .join(project.inventory.revision.as_str())
-        .join(compatibility.digest())
-        .join(&compatibility.target_triple);
-    fs::create_dir_all(&build_key).map_err(|e| error(&build_key, e.to_string()))?;
+    // Keep the transient tree shallow: Windows can reject a child process whose working
+    // directory inherits the former project/revision/compatibility/triple nesting.
+    fs::create_dir_all(app_builds).map_err(|e| error(app_builds, e.to_string()))?;
     let staging = tempfile::Builder::new()
         .prefix("build-")
-        .tempdir_in(&build_key)
-        .map_err(|e| error(&build_key, e.to_string()))?;
+        .tempdir_in(app_builds)
+        .map_err(|e| error(app_builds, e.to_string()))?;
     let root = staging.path().join("project");
     fs::create_dir(&root).map_err(|e| error(&root, e.to_string()))?;
     let mut buffer = [0; 64 * 1024];
@@ -178,19 +174,27 @@ pub fn materialize_in_environment(
             &sdk,
             &compatibility,
         )?;
-        atomic_write(
-            &root.join(file.path.as_str()),
-            toml::to_string_pretty(&cargo)
-                .map_err(|e| error(&root, e.to_string()))?
-                .as_bytes(),
-        )?;
+        let cargo_path = root.join(file.path.as_str());
+        let cargo_text =
+            toml::to_string_pretty(&cargo).map_err(|e| error(&cargo_path, e.to_string()))?;
+        // This tree is private staging, not the user's portable project. Replace the
+        // copied manifest directly: atomic rename-over-existing is not supported on Windows.
+        fs::write(&cargo_path, cargo_text.as_bytes())
+            .map_err(|e| error(&cargo_path, e.to_string()))?;
     }
     fs::create_dir_all(root.join(".cargo")).map_err(|e| error(&root, e.to_string()))?;
     let vendor = sdk.join("framework/vendor");
     if !vendor.is_dir() {
         return Err(error(&vendor, "SDK vendor directory missing".into()));
     }
-    atomic_write(&root.join(".cargo/config.toml"), format!("[source.crates-io]\nreplace-with = \"studio-vendor\"\n[source.studio-vendor]\ndirectory = {}\n", toml::Value::String(vendor.to_string_lossy().into_owned())).as_bytes())?;
+    let cargo_config_path = root.join(".cargo/config.toml");
+    let cargo_config = format!(
+        "[source.crates-io]\nreplace-with = \"studio-vendor\"\n[source.studio-vendor]\ndirectory = {}\n",
+        toml::Value::String(vendor.to_string_lossy().into_owned())
+    );
+    // This file is also inside the private staging tree; a failed write discards that tree.
+    fs::write(&cargo_config_path, cargo_config.as_bytes())
+        .map_err(|e| error(&cargo_config_path, e.to_string()))?;
     // SDK path substitution has a distinct graph/lock, never overwrite the portable lock.
     if root.join("Cargo.lock").exists() {
         fs::remove_file(root.join("Cargo.lock")).map_err(|e| error(&root, e.to_string()))?;

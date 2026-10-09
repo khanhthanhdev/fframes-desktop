@@ -76,6 +76,9 @@ pub fn fixture() -> Fx {
         assert!(status.status.success(), "git {args:?}");
     };
     git(&["init", "-q"]);
+    // Keep background Git maintenance from racing tests that snapshot `.git` byte-for-byte.
+    git(&["config", "maintenance.auto", "false"]);
+    git(&["config", "gc.auto", "0"]);
     git(&["add", "-A"]);
     git(&["commit", "-q", "-m", "baseline"]);
     Fx { temp, root, paths }

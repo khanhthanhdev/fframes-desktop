@@ -11,7 +11,7 @@ use crate::{
 };
 use sha2::{Digest, Sha256};
 use std::{
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{self, Read},
     path::{Path, PathBuf},
     process::Stdio,
@@ -171,7 +171,7 @@ impl SdkDownloader {
             options.args(["--write-out", "%{url_effective}\n%{http_code}\n"]);
             options.arg("--");
             options.arg(&artifact.url);
-            options.stdout(Stdio::from(metadata_file.reopen()?));
+            options.stdout(Stdio::from(metadata_file.as_file().try_clone()?));
             options.stderr(Stdio::null());
             let child = scope.spawn(options).map_err(|error| {
                 DownloadError::Transport(format!("could not start HTTPS transfer: {error}"))
@@ -263,7 +263,11 @@ impl SdkDownloader {
                     actual: actual_hash,
                 });
             }
-            File::open(&partial)?.sync_all()?;
+            OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&partial)?
+                .sync_all()?;
             match fs::hard_link(&partial, &destination) {
                 Ok(()) => {
                     fs::remove_file(&partial)?;

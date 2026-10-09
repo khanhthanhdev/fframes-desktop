@@ -1301,6 +1301,7 @@ fn mcp_session_config_passes_only_the_capability_path() {
     assert!(fframes_studio::agent_tools::mcp_server_for(&grant, Path::new("studio-mcp")).is_err());
 }
 
+#[cfg(unix)]
 #[test]
 fn cli_through_the_broker_reaches_the_real_backend_and_stops_after_the_task_ends() {
     use fframes_studio::agent_tools::broker::{BrokerConfig, ToolBroker};
@@ -1491,6 +1492,7 @@ fn concurrent_calls_on_distinct_revisions_never_exceed_the_worker_bound() {
 
 /// Runs `studio-mcp` against `capability`, feeding `requests`, and returns every stdout
 /// line parsed as JSON (stdout must hold nothing else).
+#[cfg(unix)]
 fn mcp_session(capability: &Path, requests: &[Value]) -> Vec<Value> {
     use std::io::Write;
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_studio-mcp"))
@@ -1515,6 +1517,7 @@ fn mcp_session(capability: &Path, requests: &[Value]) -> Vec<Value> {
         .collect()
 }
 
+#[cfg(unix)]
 #[test]
 fn cli_and_mcp_agree_on_revision_artifact_hashes_and_errors_over_the_real_backend() {
     use fframes_studio::agent_tools::broker::{BrokerConfig, ToolBroker};

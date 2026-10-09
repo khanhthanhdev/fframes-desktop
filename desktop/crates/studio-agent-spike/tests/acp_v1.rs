@@ -7,6 +7,8 @@ use std::{
     path::{Path, PathBuf},
     time::{Duration, Instant},
 };
+#[cfg(unix)]
+use studio_agent_spike::driver::DriverOutcome;
 use studio_agent_spike::{
     AdapterConfig,
     discovery::{
@@ -14,8 +16,8 @@ use studio_agent_spike::{
     },
     driver::{
         AcpDriver, AgentEvent, AgentEventKind, DriverConfig, DriverError, DriverLimits, DriverMode,
-        DriverOutcome, FailureKind, McpConfigError, McpStdioServer, McpStdioSupport, MessageRole,
-        OptionValue, PermissionReply, PermissionResolution, Phase, StopReasonKind,
+        FailureKind, McpConfigError, McpStdioServer, McpStdioSupport, MessageRole, OptionValue,
+        PermissionReply, PermissionResolution, Phase, StopReasonKind,
     },
 };
 use studio_bootstrap::{ProcessTreeManager, WriterOwnership};
@@ -133,6 +135,7 @@ fn kill_known_pid(pid: i32) {
     }
 }
 
+#[cfg(unix)]
 fn helper_pid(root: &Path) -> i32 {
     wait_for(|| {
         std::fs::read_to_string(root.join("helper.pid"))

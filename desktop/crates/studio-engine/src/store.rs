@@ -170,7 +170,11 @@ fn backup_database(connection: &Connection, path: &Path) -> Result<PathBuf, Engi
         let copy = rusqlite::backup::Backup::new(connection, &mut target)?;
         copy.run_to_completion(256, Duration::from_millis(5), None)?;
     }
-    std::fs::File::open(&backup)?.sync_all()?;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&backup)?
+        .sync_all()?;
     studio_project::lifecycle::sync_directory(path.parent().unwrap())?;
     Ok(backup)
 }

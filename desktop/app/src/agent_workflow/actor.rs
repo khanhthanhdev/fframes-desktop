@@ -1152,7 +1152,7 @@ impl Actor {
             Msg::Probe(report) => {
                 self.probing = false;
                 self.adapter.readiness = AdapterReadiness::Checked {
-                    report,
+                    report: Box::new(report),
                     at_unix: now_unix(),
                 };
                 self.touch();

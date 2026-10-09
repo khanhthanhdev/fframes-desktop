@@ -1255,6 +1255,7 @@ impl ProcessTreeManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
     use std::sync::Barrier;
 
     #[test]
@@ -1488,6 +1489,22 @@ mod tests {
                 .unwrap_or(false)
     }
 
+    #[cfg(target_os = "linux")]
+    fn wait_for_escaped_descendant(mut observe: impl FnMut() -> Vec<u32>, helper: u32) -> Vec<u32> {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let escaped = observe();
+            if escaped.contains(&helper) {
+                return escaped;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "setsid helper {helper} never left its parent's process group"
+            );
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     #[test]
     #[cfg(unix)]
     fn forced_termination_verifies_term_ignoring_group_members_are_gone() {
@@ -1534,7 +1551,10 @@ mod tests {
         let helper = read_pid_line(&mut child);
         // Linux can see the escape while the helper is still a descendant.
         #[cfg(target_os = "linux")]
-        assert_eq!(child.escaped_descendants(), vec![helper as u32]);
+        assert_eq!(
+            wait_for_escaped_descendant(|| child.escaped_descendants(), helper as u32),
+            vec![helper as u32]
+        );
         let report = child
             .terminate_verified(Duration::from_millis(500))
             .expect("terminates");
@@ -1865,9 +1885,9 @@ mod tests {
             BufReader::new(stdout).read_line(&mut line).unwrap();
             line.trim().parse::<u32>().expect("helper pid line")
         };
-        let observed = scope.observe();
-        assert_eq!(observed.escaped, vec![helper]);
-        assert!(!observed.is_clean());
+        let observed = wait_for_escaped_descendant(|| scope.observe().escaped, helper);
+        assert_eq!(observed, vec![helper]);
+        assert!(!scope.observe().is_clean());
         let termination = scope.shutdown_verified(Duration::from_millis(500));
         // SAFETY: helper is the pid this test spawned and read from the shell.
         unsafe {

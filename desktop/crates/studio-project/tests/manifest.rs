@@ -122,7 +122,11 @@ fn portable_paths_and_containment() {
     let path = ProjectPath::try_from("media/ảnh space.png".to_owned()).unwrap();
     assert_eq!(
         path.resolve_existing(dir.path()).unwrap(),
-        dir.path().join("media/ảnh space.png")
+        dir.path()
+            .canonicalize()
+            .unwrap()
+            .join("media")
+            .join("ảnh space.png")
     );
     assert!(path.open_file(dir.path()).is_ok());
 }

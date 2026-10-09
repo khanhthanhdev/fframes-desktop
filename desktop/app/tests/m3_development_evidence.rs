@@ -16,6 +16,8 @@
 //! FFRAMES_M3_EVIDENCE_OUT=/some/dir cargo test --locked -p fframes-studio \
 //!     --test m3_development_evidence -- --nocapture
 //! ```
+#![cfg(unix)]
+
 use fframes_studio::{
     agent_workflow::{log::RowLimits, *},
     build_service::{BuildLimits, BuildService, Compiler, Subscriber, SubscriberKind},

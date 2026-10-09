@@ -1,7 +1,9 @@
 //! Shared fixture: fake SDK tree, projects, and a counting injectable compiler that can
-//! install the deterministic python preview worker as the isolated worker binary.
+//! install the deterministic Python preview worker as the isolated worker binary.
 #![allow(dead_code)]
 use fframes_studio::build_service::{BuildKey, CompileEnvironment, CompileRequest, Compiler};
+#[cfg(windows)]
+use std::sync::OnceLock;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -24,6 +26,52 @@ pub const FAKE_WORKER: &str = concat!(
 );
 pub const FAKE_CONFIG: &str = "fframes-fake-worker.json";
 
+#[cfg(windows)]
+fn windows_fake_worker_launcher() -> Result<PathBuf, String> {
+    static LAUNCHER_DIR: OnceLock<Result<tempfile::TempDir, String>> = OnceLock::new();
+    let directory = LAUNCHER_DIR
+        .get_or_init(|| {
+            let directory = tempfile::Builder::new()
+                .prefix("ffw-")
+                .tempdir()
+                .map_err(|error| {
+                    format!("cannot create fake worker launcher directory: {error}")
+                })?;
+            let python = std::env::var_os("pythonLocation")
+                .map(PathBuf::from)
+                .map(|location| location.join("python.exe"))
+                .filter(|path| path.is_file())
+                .or_else(|| std::env::var_os("PYTHON").map(PathBuf::from))
+                .unwrap_or_else(|| PathBuf::from("python"));
+            fs::write(
+                directory.path().join("python-executable.path"),
+                python.to_string_lossy().as_bytes(),
+            )
+            .map_err(|error| format!("cannot record fake worker Python executable: {error}"))?;
+            let path = directory.path().join("fake-preview-worker.exe");
+            let rustc = std::env::var_os("RUSTC").unwrap_or_else(|| "rustc".into());
+            let source = concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/tests/support/fake-preview-worker-launcher.rs"
+            );
+            let output = std::process::Command::new(rustc)
+                .args(["--edition=2024", source, "-o"])
+                .arg(&path)
+                .output()
+                .map_err(|error| format!("cannot compile fake worker launcher: {error}"))?;
+            if !output.status.success() {
+                return Err(format!(
+                    "cannot compile fake worker launcher: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ));
+            }
+            Ok(directory)
+        })
+        .as_ref()
+        .map_err(Clone::clone)?;
+    Ok(directory.path().join("fake-preview-worker.exe"))
+}
+
 pub fn fake_sdk(root: &Path) -> PathBuf {
     let sdk = root.join("sdk");
     for name in [
@@ -40,7 +88,26 @@ pub fn fake_sdk(root: &Path) -> PathBuf {
 }
 
 pub fn manifest() -> CompatibilityManifest {
-    CompatibilityManifest::default_linux_x64()
+    let target_triple = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => "x86_64-unknown-linux-gnu",
+        ("windows", "x86_64") => "x86_64-pc-windows-msvc",
+        ("macos", "aarch64") => "aarch64-apple-darwin",
+        _ => panic!(
+            "unsupported test host: {}-{}",
+            std::env::consts::OS,
+            std::env::consts::ARCH
+        ),
+    };
+    let mut manifest = CompatibilityManifest::default_linux_x64();
+    manifest.sdk_id = format!("studio-sdk-test-{target_triple}");
+    manifest.target_triple = target_triple.into();
+    manifest.arch = std::env::consts::ARCH.into();
+    manifest.os_baseline = format!("{} test runner", std::env::consts::OS);
+    manifest.rust_toolchain.targets = vec![target_triple.into()];
+    manifest
+        .validate_for_current_app_version(env!("CARGO_PKG_VERSION"))
+        .expect("fake SDK manifest must match the current test host");
+    manifest
 }
 
 pub fn create_project(root: &Path) -> OpenProject {
@@ -123,14 +190,34 @@ impl Compiler for FakeCompiler {
             request.environment.builds(),
             &|| scope.is_shutdown(),
         )
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            eprintln!("FakeCompiler materialization failed: {e:?}");
+            e.to_string()
+        })?;
         if self.install_worker {
             let target = build.isolated_bin_dir.join(format!(
                 "{}{}",
                 build.worker_target,
                 std::env::consts::EXE_SUFFIX
             ));
-            fs::copy(FAKE_WORKER, &target).map_err(|e| e.to_string())?;
+            #[cfg(windows)]
+            let worker = {
+                fs::copy(FAKE_WORKER, build.root.join("fake-preview-worker.py"))
+                    .map_err(|e| e.to_string())?;
+                windows_fake_worker_launcher()?
+            };
+            #[cfg(not(windows))]
+            let worker = PathBuf::from(FAKE_WORKER);
+            fs::copy(&worker, &target).map_err(|e| e.to_string())?;
+            #[cfg(windows)]
+            {
+                let python_path = worker
+                    .parent()
+                    .ok_or_else(|| "fake worker launcher has no parent directory".to_owned())?
+                    .join("python-executable.path");
+                let target_python_path = target.with_file_name("python-executable.path");
+                fs::copy(python_path, target_python_path).map_err(|e| e.to_string())?;
+            }
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;

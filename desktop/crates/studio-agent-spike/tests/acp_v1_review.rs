@@ -743,7 +743,7 @@ fn sdk_wire_diagnostics_never_reach_a_host_subscriber_from_a_driver_connection()
     cfg.mcp_servers = vec![
         McpStdioServer::new(
             "srv",
-            "/bin/true",
+            root.path().join("srv"),
             vec![],
             vec![("TOKEN".into(), outbound_secret.into())],
         )

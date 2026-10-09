@@ -152,10 +152,13 @@ impl World {
 
     fn with(options: Options) -> Self {
         let temp = tempfile::tempdir().unwrap();
+        #[cfg(unix)]
         let runtime = tempfile::Builder::new()
             .prefix("fft")
             .tempdir_in("/tmp")
             .unwrap();
+        #[cfg(not(unix))]
+        let runtime = tempfile::tempdir().unwrap();
         let root = temp.path().join("video");
         let (sdk, manifest, limit) = match &options.real {
             Some((sdk, manifest)) => {
@@ -461,6 +464,7 @@ impl World {
 
 impl Drop for World {
     fn drop(&mut self) {
+        #[cfg(unix)]
         // Reap any helper a test deliberately left behind.
         for name in ["helper.pid", "escape.pid"] {
             if let Ok(text) = fs::read_to_string(self.agent.join(name)) {
@@ -475,6 +479,7 @@ impl Drop for World {
     }
 }
 
+#[cfg(unix)]
 fn pid_alive(pid: i32) -> bool {
     unsafe { libc::kill(pid, 0) == 0 }
 }

@@ -12,14 +12,14 @@
 //!
 //! This module also owns the whole `studio-tools` command-line behavior
 //! ([`run_cli`]) so the binary stays a three-line `main`.
-use super::{
-    MAX_REQUEST_BYTES, MAX_TEXT_REPLY_BYTES, TOOL_NAMES, ToolError, ToolErrorCode,
-    tool_descriptions,
-};
+#[cfg(unix)]
+use super::{MAX_REQUEST_BYTES, MAX_TEXT_REPLY_BYTES};
+use super::{TOOL_NAMES, ToolError, ToolErrorCode, tool_descriptions};
 use serde_json::{Value, json};
+#[cfg(unix)]
+use std::fmt;
 use std::{
     ffi::OsString,
-    fmt,
     io::{self, Read, Write},
     path::{Path, PathBuf},
     time::{Duration, Instant},
@@ -36,10 +36,14 @@ pub const EXIT_TOOL_ERROR: i32 = 1;
 pub const EXIT_USAGE: i32 = 2;
 pub const EXIT_UNAVAILABLE: i32 = 3;
 
+#[cfg(unix)]
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+#[cfg(unix)]
 const HELLO_TIMEOUT: Duration = Duration::from_secs(10);
+#[cfg(unix)]
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 /// A reply is at most the bounded JSON text plus the framing around it.
+#[cfg(unix)]
 const MAX_REPLY_LINE_BYTES: usize = MAX_TEXT_REPLY_BYTES + 4096;
 
 /// Why a client could not be created.
@@ -189,14 +193,17 @@ impl LineReader {
 }
 
 /// The capability secret between reading the file and sending the hello. Never printed.
+#[cfg(unix)]
 struct Secret(String);
 
+#[cfg(unix)]
 impl fmt::Debug for Secret {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Secret(<redacted>)")
     }
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 struct CapabilityFile {
     socket: PathBuf,
@@ -204,6 +211,7 @@ struct CapabilityFile {
     secret: Secret,
 }
 
+#[cfg(unix)]
 fn parse_capability(bytes: &[u8]) -> Result<CapabilityFile, ClientError> {
     // Deliberately no serde error text: it could echo parts of the file.
     let malformed = || ClientError::CapabilityFile("malformed capability file".into());
@@ -234,6 +242,7 @@ fn parse_capability(bytes: &[u8]) -> Result<CapabilityFile, ClientError> {
     })
 }
 
+#[cfg(unix)]
 fn hello_line(capability: &CapabilityFile) -> Result<Vec<u8>, ClientError> {
     let mut line = serde_json::to_vec(&json!({
         "hello": {"capability": capability.capability, "secret": capability.secret.0}
@@ -243,6 +252,7 @@ fn hello_line(capability: &CapabilityFile) -> Result<Vec<u8>, ClientError> {
     Ok(line)
 }
 
+#[cfg(unix)]
 fn broker_error(value: &Value) -> Option<ToolError> {
     serde_json::from_value(value.get("error")?.clone()).ok()
 }

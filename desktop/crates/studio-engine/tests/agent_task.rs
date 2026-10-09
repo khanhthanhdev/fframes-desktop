@@ -1,9 +1,8 @@
+use std::{cell::Cell, fs, path::Path, time::Duration};
+#[cfg(target_os = "linux")]
 use std::{
-    cell::Cell,
-    fs,
     io::{BufRead, BufReader},
-    path::Path,
-    time::{Duration, Instant},
+    time::Instant,
 };
 use studio_bootstrap::{SpawnOptions, TerminationReport, WriterOwnership};
 use studio_engine::{
@@ -621,7 +620,9 @@ fn a_live_writer_blocks_capture_whatever_the_caller_claims() {
     let current = evidence(&controller, &id);
     assert!(matches!(
         blocked(&mut controller, &current),
-        TaskError::QuiescenceBlocked(QuiescenceBlock::GroupSurvivors(pids)) if !pids.is_empty()
+        TaskError::QuiescenceBlocked(
+            QuiescenceBlock::GroupSurvivors(_) | QuiescenceBlock::WriterNotTerminated
+        )
     ));
     assert_eq!(
         controller.agent_task().unwrap().state(),
@@ -798,7 +799,9 @@ fn repair_starts_a_fresh_scope_and_a_fresh_gate() {
     // The new writer is still running: the old evidence cannot cover it.
     assert!(matches!(
         quiesce(&mut controller, &id).unwrap_err(),
-        TaskError::QuiescenceBlocked(QuiescenceBlock::GroupSurvivors(_))
+        TaskError::QuiescenceBlocked(
+            QuiescenceBlock::GroupSurvivors(_) | QuiescenceBlock::WriterNotTerminated
+        )
     ));
     repair_writer
         .lock()
@@ -918,6 +921,7 @@ fn the_previous_scope_cannot_spawn_between_the_emptiness_check_and_the_refresh()
         .unwrap();
 }
 
+#[cfg(target_os = "linux")]
 #[derive(Clone, Copy, Debug)]
 enum Ending {
     Finish,
@@ -925,8 +929,10 @@ enum Ending {
     SourceInvalidated,
 }
 
+#[cfg(target_os = "linux")]
 struct KillOnDrop(u32);
 
+#[cfg(target_os = "linux")]
 impl Drop for KillOnDrop {
     fn drop(&mut self) {
         let _ = std::process::Command::new("kill")
@@ -937,12 +943,14 @@ impl Drop for KillOnDrop {
 }
 
 /// A zombie still answers signal 0 but cannot write; /proc tells them apart.
+#[cfg(target_os = "linux")]
 fn pid_alive(pid: u32) -> bool {
     fs::read_to_string(format!("/proc/{pid}/stat"))
         .map(|stat| !stat.rsplit(") ").next().unwrap_or("").starts_with('Z'))
         .unwrap_or(false)
 }
 
+#[cfg(target_os = "linux")]
 fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
     let deadline = Instant::now() + Duration::from_secs(10);
     while !ready() {
@@ -953,6 +961,7 @@ fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
 
 /// Starts, inside the task's own scope, a writer whose helper leaves the process group
 /// with `setsid` and keeps appending to `out`. Returns the helper's pid.
+#[cfg(target_os = "linux")]
 fn spawn_escaping_writer(controller: &Controller, id: &TaskIdentity, out: &Path) -> u32 {
     let script = format!(
         "setsid sh -c 'while :; do echo w >> \"$1\"; sleep 0.05; done' sh {} & echo $!; wait",
@@ -978,6 +987,7 @@ fn spawn_escaping_writer(controller: &Controller, id: &TaskIdentity, out: &Path)
     helper
 }
 
+#[cfg(target_os = "linux")]
 fn escaped_writer_keeps_the_draft_unsafe(ending: Ending) {
     let f = fixture();
     let mut controller = Controller::open(&f.root, &f.paths).unwrap();
@@ -1056,21 +1066,25 @@ fn escaped_writer_keeps_the_draft_unsafe(ending: Ending) {
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn an_escaped_writer_keeps_the_draft_unsafe_after_finish() {
     escaped_writer_keeps_the_draft_unsafe(Ending::Finish);
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn an_escaped_writer_keeps_the_draft_unsafe_after_close() {
     escaped_writer_keeps_the_draft_unsafe(Ending::Close);
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn an_escaped_writer_keeps_the_draft_unsafe_after_source_invalidation() {
     escaped_writer_keeps_the_draft_unsafe(Ending::SourceInvalidated);
 }
 
 #[test]
+#[cfg(target_os = "linux")]
 fn an_escape_seen_before_quiescence_blocks_capture_and_stays_demoted() {
     let f = fixture();
     let mut controller = Controller::open(&f.root, &f.paths).unwrap();

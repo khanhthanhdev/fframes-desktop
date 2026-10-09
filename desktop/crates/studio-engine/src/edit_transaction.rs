@@ -51,11 +51,9 @@ use crate::{
     EngineError, candidate_validation::BuildIdentity, journal::TaskJournal, state::OpenSession,
 };
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    io,
-    path::Path,
-};
+#[cfg(target_os = "linux")]
+use std::collections::BTreeSet;
+use std::{collections::BTreeMap, io, path::Path};
 use studio_project::{
     SourceInventory, SourceRevision, checkpoint::Checkpoints, revision::SourceFile,
 };
@@ -429,11 +427,13 @@ pub struct TransactionIntent {
 }
 
 impl TransactionIntent {
+    #[cfg(target_os = "linux")]
     fn dir_id(&self, path: &str) -> Option<FileId> {
         self.dirs.iter().find(|d| d.path == path).map(|d| d.id)
     }
 
     /// Whether the revision itself removes (and, on rollback, recreates) `path`.
+    #[cfg(target_os = "linux")]
     fn is_vacated(&self, path: &str) -> bool {
         self.ops
             .iter()
@@ -745,10 +745,12 @@ pub struct RecordSeed {
     pub preset: Option<crate::preset_state::PresetProvenance>,
 }
 
+#[cfg(target_os = "linux")]
 fn split_path(path: &str) -> (&str, &str) {
     path.rsplit_once('/').unwrap_or(("", path))
 }
 
+#[cfg(target_os = "linux")]
 fn conflict(path: &str, reason: impl Into<String>) -> PlanError {
     PlanError::Conflict {
         path: path.to_owned(),
@@ -756,10 +758,12 @@ fn conflict(path: &str, reason: impl Into<String>) -> PlanError {
     }
 }
 
+#[cfg(target_os = "linux")]
 fn exec_mode(base: u32) -> u32 {
     base | ((base & 0o444) >> 2)
 }
 
+#[cfg(target_os = "linux")]
 fn plain_mode(base: u32) -> u32 {
     base & !0o111
 }
@@ -768,6 +772,7 @@ fn plain_mode(base: u32) -> u32 {
 /// original's exact permission bits (a content-only replacement of a `0744` file stays
 /// `0744`); a flip adds or removes the executable bits following the readable classes;
 /// new files get the portable defaults.
+#[cfg(target_os = "linux")]
 fn after_mode(before_mode: Option<u32>, executable: bool) -> u32 {
     match before_mode {
         Some(mode) if (mode & 0o111 != 0) == executable => mode,
@@ -1311,6 +1316,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn published_modes_keep_permissions_and_follow_the_executable_state() {
         assert_eq!(after_mode(Some(0o600), true), 0o700);
         assert_eq!(after_mode(Some(0o644), true), 0o755);
@@ -1321,6 +1327,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "linux")]
     fn an_unchanged_executable_status_keeps_the_full_mode() {
         // Executable already (any x bit counts) and staying executable: untouched.
         assert_eq!(after_mode(Some(0o744), true), 0o744);

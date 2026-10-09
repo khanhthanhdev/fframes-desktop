@@ -2,6 +2,8 @@
 //! deterministic fake worker: the frozen scope, the before-evidence paragraph of the first
 //! prompt and refusal of a stale queued scope. Same harness as `agent_workflow.rs`. The
 //! peer proves workflow behaviour only, never a provider.
+//! These end-to-end cases require successful Apply, which is currently qualified only on Linux.
+#![cfg(target_os = "linux")]
 #![allow(dead_code, unused_imports)]
 include!("support/workflow_world.rs");
 
