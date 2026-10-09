@@ -35,7 +35,24 @@ fn source_reads_do_not_dirty_the_install_fence_but_external_writes_do() {
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
     controller.reconcile().unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let mut quiet_since = None;
+    loop {
+        if controller.changed_hint() {
+            controller.reconcile().unwrap();
+            quiet_since = None;
+        } else {
+            let since = *quiet_since.get_or_insert_with(std::time::Instant::now);
+            if since.elapsed() >= std::time::Duration::from_millis(100) {
+                break;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "filesystem watcher did not settle after source reconciliation"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
     assert!(!controller.changed_hint());
 }
 
