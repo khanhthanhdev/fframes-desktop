@@ -8,9 +8,10 @@
 //! ledger can never turn it into an authentic pass.
 //!
 //! Without `FFRAMES_M3_EVIDENCE_OUT` this is a quick smoke (a few cycles, nothing is
-//! written). With it set to a directory the full profile runs (at least 20 accepted edits
-//! and 20 failed/cancelled tasks, a long streamed transcript) and one JSON file per
-//! measurement group is written there, plus `summary.json`. Run it as:
+//! written). With it set to a directory the full profile runs 20 edit cycles (accepted on
+//! Linux; reviewed and discarded where the platform gate blocks Apply), 20 failed/cancelled
+//! tasks and a long streamed transcript. One JSON file per measurement group is written
+//! there, plus `summary.json`. Run it as:
 //!
 //! ```text
 //! FFRAMES_M3_EVIDENCE_OUT=/some/dir cargo test --locked -p fframes-studio \
@@ -223,6 +224,24 @@ impl World {
             s.task
                 .as_ref()
                 .is_some_and(|t| Some(&t.id) != after && t.phase.is_terminal())
+        })
+        .task
+        .clone()
+        .unwrap()
+    }
+
+    /// Also returns a candidate awaiting review when the platform blocks publication.
+    fn wait_task_or_blocked_review(&self, after: Option<&AgentTaskId>) -> TaskView {
+        self.wait("a finished task or blocked review", |s| {
+            s.task.as_ref().is_some_and(|task| {
+                Some(&task.id) != after
+                    && (task.phase.is_terminal()
+                        || (task.phase == TaskPhase::AwaitingReview
+                            && task
+                                .review
+                                .as_ref()
+                                .is_some_and(|review| review.apply_blocked.is_some())))
+            })
         })
         .task
         .clone()
@@ -736,8 +755,8 @@ fn cycles(profile: &Profile) -> Value {
     for _ in 0..profile.failure_cycles_per_kind {
         failures.extend(Failure::ALL);
     }
-    // Alternate edits and failures so every failure follows an accepted edit and every
-    // edit follows a failure that left a retained draft.
+    // Alternate edit and failure cycles so every edit cycle follows a failure that left a
+    // retained draft, regardless of whether Apply is available on this platform.
     let mut failures = failures.into_iter();
     for _ in 0..profile.edit_cycles {
         plan.push(None);
@@ -749,7 +768,8 @@ fn cycles(profile: &Profile) -> Value {
 
     let mut records = Vec::new();
     let mut last: Option<AgentTaskId> = None;
-    let (mut accepted, mut failed, mut cancelled) = (0usize, 0usize, 0usize);
+    let (mut accepted, mut reviewed, mut failed, mut cancelled, mut discarded) =
+        (0usize, 0usize, 0usize, 0usize, 0usize);
     for (cycle, kind) in plan.iter().enumerate() {
         let started = Instant::now();
         let compiles_before = w.service.stats().compiles_started;
@@ -782,15 +802,56 @@ fn cycles(profile: &Profile) -> Value {
                 (kind.name(), kind.expected())
             }
         };
-        let task = w.wait_task(last.as_ref());
+        let mut task = w.wait_task_or_blocked_review(last.as_ref());
+        let blocked_review = task.phase == TaskPhase::AwaitingReview;
+        let recorded_name = if blocked_review {
+            assert_eq!(expected, TaskPhase::Accepted, "cycle {cycle} ({name})");
+            assert!(
+                task.review
+                    .as_ref()
+                    .is_some_and(|review| review.apply_blocked.is_some()),
+                "cycle {cycle} ({name}) did not expose the blocked publication reason"
+            );
+            assert_eq!(
+                task.error.as_ref().map(|error| error.code.as_str()),
+                Some("apply_blocked"),
+                "cycle {cycle} ({name})"
+            );
+            w.workflow.discard().unwrap();
+            let task_id = task.id.clone();
+            task = w
+                .wait("the blocked candidate to be discarded", |s| {
+                    s.task
+                        .as_ref()
+                        .is_some_and(|t| t.id == task_id && t.phase.is_terminal())
+                })
+                .task
+                .clone()
+                .unwrap();
+            "validated_candidate_discarded"
+        } else {
+            name
+        };
+        let recorded_expected = if blocked_review {
+            TaskPhase::Cancelled
+        } else {
+            expected
+        };
         assert_eq!(
-            task.phase, expected,
-            "cycle {cycle} ({name}): {:?}",
+            task.phase, recorded_expected,
+            "cycle {cycle} ({recorded_name}): {:?}",
             task.error
         );
-        match task.phase {
-            TaskPhase::Accepted => accepted += 1,
-            TaskPhase::Failed => failed += 1,
+        match recorded_name {
+            "accepted_edit" => accepted += 1,
+            "validated_candidate_discarded" => {
+                reviewed += 1;
+                discarded += 1;
+                assert!(w.snap().rows.iter().any(
+                    |row| matches!(&row.kind, RowKind::Outcome(outcome) if outcome.kind == OutcomeKind::Discarded)
+                ));
+            }
+            _ if task.phase == TaskPhase::Failed => failed += 1,
             _ => cancelled += 1,
         }
         let repair_used = task.repair.used;
@@ -800,9 +861,10 @@ fn cycles(profile: &Profile) -> Value {
         let stats = w.service.stats();
         records.push(json!({
             "cycle": cycle,
-            "kind": name,
-            "expected_phase": format!("{expected:?}"),
+            "kind": recorded_name,
+            "expected_phase": format!("{recorded_expected:?}"),
             "phase": format!("{:?}", task.phase),
+            "publication_blocked": blocked_review,
             "repair_attempts_used": repair_used,
             "compiles_started_in_cycle": stats.compiles_started - compiles_before,
             "compiles_started_total": stats.compiles_started,
@@ -818,13 +880,20 @@ fn cycles(profile: &Profile) -> Value {
         history, accepted,
         "every accepted edit is one history entry"
     );
-    assert!(accepted >= profile.edit_cycles);
+    if cfg!(target_os = "linux") {
+        assert!(accepted >= profile.edit_cycles);
+    } else {
+        assert!(reviewed >= profile.edit_cycles);
+    }
     assert!(failed + cancelled >= profile.failure_cycles_per_kind * Failure::ALL.len());
     let compiles = w.service.stats().compiles_started;
     // One compile per distinct candidate key: an accepted edit compiles once, a repair
     // exhausted task compiles its candidate and its repaired candidate.
     for record in &records {
-        if record["kind"] == "accepted_edit" {
+        if matches!(
+            record["kind"].as_str(),
+            Some("accepted_edit" | "validated_candidate_discarded")
+        ) {
             assert_eq!(record["compiles_started_in_cycle"], 1, "{record}");
         }
     }
@@ -857,8 +926,20 @@ fn cycles(profile: &Profile) -> Value {
     json!({
         "group": "cycles",
         "profile": if profile.full { "full" } else { "smoke" },
-        "requested": {"accepted_edits": profile.edit_cycles, "failed_or_cancelled": profile.failure_cycles_per_kind * Failure::ALL.len()},
-        "totals": {"cycles": records.len(), "accepted": accepted, "failed": failed, "cancelled": cancelled, "history_entries": history},
+        "requested": {
+            "accepted_edits": if cfg!(target_os = "linux") { profile.edit_cycles } else { 0 },
+            "reviewed_candidates": if cfg!(target_os = "linux") { 0 } else { profile.edit_cycles },
+            "failed_or_cancelled": profile.failure_cycles_per_kind * Failure::ALL.len()
+        },
+        "totals": {
+            "cycles": records.len(),
+            "accepted": accepted,
+            "reviewed": reviewed,
+            "failed": failed,
+            "cancelled": cancelled,
+            "discarded": discarded,
+            "history_entries": history
+        },
         "compiles_started_total": compiles,
         "adapter_processes_started": adapter_pids.len(),
         "cycles": records,
