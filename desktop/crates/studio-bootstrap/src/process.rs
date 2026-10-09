@@ -521,6 +521,16 @@ fn mac_process_start_time(pid: libc::pid_t) -> Option<(u64, u64)> {
     Some((info.pbi_start_tvsec, info.pbi_start_tvusec))
 }
 
+#[cfg(target_os = "macos")]
+fn mac_process_group_list_failed(count: libc::c_int, errno: libc::c_int) -> bool {
+    count < 0 || (count == 0 && errno != 0)
+}
+
+#[cfg(target_os = "macos")]
+fn mac_process_info_confirms_exit(read: libc::c_int, errno: libc::c_int) -> bool {
+    read == 0 && errno == libc::ESRCH
+}
+
 /// Lists every process in a group, including zombies, via libproc. macOS does not
 /// expose `/proc`, and `killpg(..., 0)` continues to report zombie-only groups as
 /// present, so termination verification needs process state as well as the probe.
@@ -542,8 +552,11 @@ fn scan_process_group(pgid: i32) -> MacProcScan {
         };
         let mut pids = vec![0 as libc::pid_t; capacity];
         // SAFETY: libproc writes at most `buffer_size` bytes to this allocated pid buffer.
+        // SAFETY: `__error` returns this thread's errno storage.
+        unsafe { *libc::__error() = 0 };
         let count = unsafe { libc::proc_listpgrppids(pgid, pids.as_mut_ptr().cast(), buffer_size) };
-        if count < 0 {
+        let errno = unsafe { *libc::__error() };
+        if mac_process_group_list_failed(count, errno) {
             scan.complete = false;
             return scan;
         }
@@ -564,6 +577,8 @@ fn scan_process_group(pgid: i32) -> MacProcScan {
         // A nonzero arg lets libproc read entries that have moved to zombproc but have
         // not yet been reaped by their parent.
         // SAFETY: `info` points to a correctly-sized output buffer for PROC_PIDTBSDINFO.
+        // SAFETY: `__error` returns this thread's errno storage.
+        unsafe { *libc::__error() = 0 };
         let read = unsafe {
             libc::proc_pidinfo(
                 pid,
@@ -573,10 +588,14 @@ fn scan_process_group(pgid: i32) -> MacProcScan {
                 std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int,
             )
         };
+        let errno = unsafe { *libc::__error() };
         if read == 0 {
-            // The process may have exited between enumeration and lookup. Retry with a
-            // fresh group snapshot rather than treating an unreadable pid as absent.
-            scan.complete = false;
+            // libproc maps lookup failures to zero and leaves errno set. ESRCH means this
+            // PID left the process table after enumeration; other failures make the scan
+            // incomplete and cannot be counted as an exited process.
+            if !mac_process_info_confirms_exit(read, errno) {
+                scan.complete = false;
+            }
             continue;
         }
         if read != std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int {
@@ -2204,6 +2223,17 @@ mod tests {
             ),
             GroupMembership::Empty
         );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_libproc_zero_returns_are_disambiguated_by_errno() {
+        assert!(!mac_process_group_list_failed(0, 0));
+        assert!(mac_process_group_list_failed(0, libc::EACCES));
+        assert!(mac_process_group_list_failed(-1, 0));
+        assert!(mac_process_info_confirms_exit(0, libc::ESRCH));
+        assert!(!mac_process_info_confirms_exit(0, libc::EACCES));
+        assert!(!mac_process_info_confirms_exit(0, 0));
     }
 
     #[test]
