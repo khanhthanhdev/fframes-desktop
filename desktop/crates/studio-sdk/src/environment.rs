@@ -224,10 +224,11 @@ mod tests {
         let builds = temp.path().join("builds");
         std::fs::create_dir(&builds).unwrap();
         let builds = std::fs::canonicalize(builds).unwrap();
-        let expected_sdk = normalize_windows_verbatim_prefix(&sdk.to_string_lossy());
-        let expected_builds = normalize_windows_verbatim_prefix(&builds.to_string_lossy());
+        let expected_sdk = normalize_windows_verbatim_prefix(&sdk.to_string_lossy()).into_owned();
+        let expected_builds =
+            normalize_windows_verbatim_prefix(&builds.to_string_lossy()).into_owned();
         let expected_ffmpeg = format!(r"{}\ffmpeg", expected_sdk);
-        let expected_target = expected_builds.as_ref();
+        let expected_target = expected_builds.as_str();
         let expected_toolchain = format!(r"{}\toolchain\bin", expected_sdk);
 
         let sdk_env = SdkEnvironment::new(
