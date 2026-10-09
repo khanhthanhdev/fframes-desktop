@@ -241,6 +241,6 @@ mod tests {
 
         assert_eq!(child_env.get("FFMPEG_DIR"), Some(expected_ffmpeg.as_str()));
         assert_eq!(child_env.get("CARGO_TARGET_DIR"), Some(expected_target));
-        assert_eq!(child_env.get("PATH"), Some(expected_toolchain.as_str()));
+        assert_eq!(child_env.get("Path"), Some(expected_toolchain.as_str()));
     }
 }
