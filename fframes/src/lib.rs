@@ -83,7 +83,7 @@
 //! - `cli`: the [`cli`] module and its `clap` dependency.
 //! - `compile-time-svgtree`: [`svgr!`] builds the SVG tree at compile time and hashes static
 //!   subtrees. Required by the Skia backend and by [`Shader`].
-//! - `styles`: [`Styles`], typed design tokens parsed from the resolved `style/tokens.json`.
+//! - `styles`: typed design tokens parsed into `Styles` from the resolved `style/tokens.json`.
 //! - `exif`: EXIF orientation of loaded images.
 //! - Codecs `h264`, `h265`, `aac`, `mp3lame`, `opus`, `vpx`: compile the library into the static
 //!   `FFmpeg` build. Some of them need `libav-agree-gpl`, `libav-agree-nonfree` or
