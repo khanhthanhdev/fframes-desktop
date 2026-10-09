@@ -442,8 +442,10 @@ fn resource_bounds(profile: &Profile) -> Value {
     let mut script = good("streamed");
     script["text"] = json!(chunks);
     script["flood_tools"] = json!(profile.flood_tools);
-    // Paced so the burst stays under the driver's 256-event queue between actor ticks.
-    script["flood_pace"] = json!({"every": 50, "sleep_ms": 20});
+    // Keep each burst small and give the actor time to drain on slower native runners.
+    // The total still exceeds the driver's 256-event queue, but never relies on a fast
+    // producer outrunning the workflow actor between ticks.
+    script["flood_pace"] = json!({"every": 20, "sleep_ms": 100});
     w.set_plan(&[script]);
     let started = Instant::now();
     w.workflow.submit("plan brief").unwrap();
