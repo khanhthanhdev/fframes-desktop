@@ -68,8 +68,9 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
+      # Tag-triggered builds are deliberately unsigned; signing is opt-in on manual dispatches.
       - name: Check macOS signing credentials before building
-        if: runner.os == 'macOS' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)))
+        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -86,7 +87,7 @@ jobs:
             fi
           done
       - name: Check Windows signing credentials before building
-        if: runner.os == 'Windows' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)))
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
         env:
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
@@ -180,7 +181,7 @@ jobs:
       - name: Package native app and SDK artifact
         run: python3 desktop/scripts/package-phase-zero.py --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" --sdk-bundle "$RUNNER_TEMP/studio-sdk"
       - name: Sign and notarize macOS app package
-        if: runner.os == 'macOS' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)))
+        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
         env:
           APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
           APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
@@ -190,7 +191,7 @@ jobs:
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: bash desktop/scripts/sign-macos-package.sh "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}"
       - name: Sign Windows executables and FFmpeg DLLs
-        if: runner.os == 'Windows' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)))
+        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
         env:
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
