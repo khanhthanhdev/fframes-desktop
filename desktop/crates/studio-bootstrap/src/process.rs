@@ -484,6 +484,190 @@ fn probe_group(pgid: i32) -> Probe {
     }
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Default)]
+struct MacProcScan {
+    entries: Vec<MacProcEntry>,
+    complete: bool,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone)]
+struct MacProcEntry {
+    pid: u32,
+    pgrp: u32,
+    start: (u64, u64),
+    zombie: bool,
+}
+
+#[cfg(target_os = "macos")]
+fn mac_process_start_time(pid: libc::pid_t) -> Option<(u64, u64)> {
+    let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+    // SAFETY: `info` points to a correctly-sized output buffer for PROC_PIDTBSDINFO.
+    let read = unsafe {
+        libc::proc_pidinfo(
+            pid,
+            libc::PROC_PIDTBSDINFO,
+            0,
+            info.as_mut_ptr().cast(),
+            std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int,
+        )
+    };
+    if read != std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int {
+        return None;
+    }
+    // SAFETY: proc_pidinfo returned exactly the initialized structure size.
+    let info = unsafe { info.assume_init() };
+    Some((info.pbi_start_tvsec, info.pbi_start_tvusec))
+}
+
+/// Lists every process in a group, including zombies, via libproc. macOS does not
+/// expose `/proc`, and `killpg(..., 0)` continues to report zombie-only groups as
+/// present, so termination verification needs process state as well as the probe.
+#[cfg(target_os = "macos")]
+fn scan_process_group(pgid: i32) -> MacProcScan {
+    let mut scan = MacProcScan {
+        entries: Vec::new(),
+        complete: true,
+    };
+    let mut capacity = 64usize;
+    let pids = loop {
+        let Some(bytes) = capacity.checked_mul(std::mem::size_of::<libc::pid_t>()) else {
+            scan.complete = false;
+            return scan;
+        };
+        let Ok(buffer_size) = libc::c_int::try_from(bytes) else {
+            scan.complete = false;
+            return scan;
+        };
+        let mut pids = vec![0 as libc::pid_t; capacity];
+        // SAFETY: libproc writes at most `buffer_size` bytes to this allocated pid buffer.
+        let count = unsafe {
+            libc::proc_listpgrppids(
+                pgid,
+                pids.as_mut_ptr().cast(),
+                buffer_size,
+            )
+        };
+        if count < 0 {
+            scan.complete = false;
+            return scan;
+        }
+        let count = count as usize;
+        if count < capacity {
+            pids.truncate(count);
+            break pids;
+        }
+        if capacity >= 1_048_576 {
+            scan.complete = false;
+            return scan;
+        }
+        capacity *= 2;
+    };
+
+    for pid in pids {
+        let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+        // SAFETY: `info` points to a correctly-sized output buffer for PROC_PIDTBSDINFO.
+        let read = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                info.as_mut_ptr().cast(),
+                std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int,
+            )
+        };
+        if read == 0 {
+            // The process may have exited between enumeration and lookup. Retry with a
+            // fresh group snapshot rather than treating an unreadable pid as absent.
+            scan.complete = false;
+            continue;
+        }
+        if read != std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int {
+            scan.complete = false;
+            continue;
+        }
+        // SAFETY: proc_pidinfo returned exactly the initialized structure size.
+        let info = unsafe { info.assume_init() };
+        scan.entries.push(MacProcEntry {
+            pid: info.pbi_pid,
+            pgrp: info.pbi_pgid,
+            start: (info.pbi_start_tvsec, info.pbi_start_tvusec),
+            zombie: info.pbi_status == libc::SZOMB,
+        });
+    }
+    scan
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+enum MacScanVerdict {
+    Members(Vec<u32>),
+    Quiet,
+    Incomplete,
+    Foreign,
+}
+
+#[cfg(target_os = "macos")]
+fn classify_mac_scan(
+    scan: &MacProcScan,
+    pgid: i32,
+    leader_start: Option<(u64, u64)>,
+) -> MacScanVerdict {
+    if !scan.complete {
+        return MacScanVerdict::Incomplete;
+    }
+    if let (Some(expected), Some(leader)) = (
+        leader_start,
+        scan.entries.iter().find(|process| process.pid as i32 == pgid),
+    ) && leader.start != expected
+    {
+        return MacScanVerdict::Foreign;
+    }
+    let members: Vec<u32> = scan
+        .entries
+        .iter()
+        .filter(|process| process.pgrp as i32 == pgid && !process.zombie)
+        .map(|process| process.pid)
+        .collect();
+    if members.is_empty() {
+        MacScanVerdict::Quiet
+    } else {
+        MacScanVerdict::Members(members)
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn mac_membership_with(
+    pgid: i32,
+    leader_start: Option<(u64, u64)>,
+    probe: &mut dyn FnMut() -> Probe,
+    scan: &mut dyn FnMut() -> MacProcScan,
+    pause: &dyn Fn(),
+) -> GroupMembership {
+    match probe() {
+        Probe::Gone => return GroupMembership::Empty,
+        Probe::Unknown => return GroupMembership::Present,
+        Probe::Exists => {}
+    }
+    let mut quiet = 0;
+    for _ in 0..4 {
+        match classify_mac_scan(&scan(), pgid, leader_start) {
+            MacScanVerdict::Incomplete => return GroupMembership::Present,
+            MacScanVerdict::Foreign => return GroupMembership::Empty,
+            MacScanVerdict::Members(pids) => return GroupMembership::Members(pids),
+            MacScanVerdict::Quiet => {
+                quiet += 1;
+                if quiet == 2 {
+                    return GroupMembership::Empty;
+                }
+                pause();
+            }
+        }
+    }
+    GroupMembership::Present
+}
+
 /// Pure membership decision over injectable probe/scan sources.
 ///
 /// A group is `Empty` only when the kernel says it is gone, or when two consecutive
@@ -582,6 +766,9 @@ pub struct TrackedChild {
     /// Kernel start time of the leader; distinguishes our group from a recycled id.
     #[cfg(target_os = "linux")]
     leader_start: Option<u64>,
+    /// Kernel start time of the leader; distinguishes our group from a recycled id.
+    #[cfg(target_os = "macos")]
+    leader_start: (u64, u64),
     child: Child,
     #[cfg(windows)]
     job_handle: windows_sys::Win32::Foundation::HANDLE,
@@ -722,7 +909,19 @@ impl TrackedChild {
                     &|| std::thread::sleep(Duration::from_millis(3)),
                 )
             }
-            #[cfg(not(target_os = "linux"))]
+            #[cfg(target_os = "macos")]
+            {
+                let pgid = self.pgid;
+                let start = self.leader_start;
+                mac_membership_with(
+                    pgid,
+                    Some(start),
+                    &mut || probe_group(pgid),
+                    &mut || scan_process_group(pgid),
+                    &|| std::thread::sleep(Duration::from_millis(3)),
+                )
+            }
+            #[cfg(not(any(target_os = "linux", target_os = "macos")))]
             {
                 match probe_group(self.pgid) {
                     Probe::Gone => GroupMembership::Empty,
@@ -920,12 +1119,32 @@ pub fn spawn_tracked(opts: SpawnOptions) -> Result<TrackedChild, ProcessError> {
             .ok()
             .and_then(|stat| parse_proc_stat(pid, &stat))
             .map(|entry| entry.start);
+        #[cfg(target_os = "macos")]
+        let leader_start = match mac_process_start_time(pid as libc::pid_t) {
+            Some(start) => start,
+            None => {
+                // Keep the unreaped leader's pid reserved while cleaning up this just-created
+                // group; without its start time, later group-id reuse cannot be distinguished.
+                // SAFETY: this process group was created for this child and its leader is not
+                // reaped until after the signal, so the numeric group id cannot be recycled.
+                unsafe {
+                    libc::kill(-pgid, libc::SIGKILL);
+                }
+                let mut child = child;
+                let _ = child.wait();
+                return Err(ProcessError::Custom(
+                    "could not identify the spawned process before tracking its group".into(),
+                ));
+            }
+        };
 
         Ok(TrackedChild {
             command: cmd_str,
             pid,
             pgid,
             #[cfg(target_os = "linux")]
+            leader_start,
+            #[cfg(target_os = "macos")]
             leader_start,
             child,
             terminal: None,
@@ -1896,6 +2115,96 @@ mod tests {
         assert!(
             termination.verified(),
             "group verification alone cannot see the escape: {termination:?}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_membership_ignores_zombies_but_requires_two_complete_scans() {
+        let zombie_group = MacProcScan {
+            entries: vec![MacProcEntry {
+                pid: 500,
+                pgrp: 500,
+                start: (10, 20),
+                zombie: true,
+            }],
+            complete: true,
+        };
+        let mut scans = 0;
+        let membership = mac_membership_with(
+            500,
+            Some((10, 20)),
+            &mut || Probe::Exists,
+            &mut || {
+                scans += 1;
+                zombie_group.clone()
+            },
+            &|| {},
+        );
+        assert_eq!(membership, GroupMembership::Empty);
+        assert_eq!(scans, 2, "one quiet snapshot is not enough to prove empty");
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_membership_preserves_live_and_unverifiable_groups() {
+        let live_group = MacProcScan {
+            entries: vec![MacProcEntry {
+                pid: 501,
+                pgrp: 500,
+                start: (10, 21),
+                zombie: false,
+            }],
+            complete: true,
+        };
+        assert_eq!(
+            mac_membership_with(
+                500,
+                Some((10, 20)),
+                &mut || Probe::Exists,
+                &mut || live_group.clone(),
+                &|| {},
+            ),
+            GroupMembership::Members(vec![501])
+        );
+
+        let incomplete = MacProcScan {
+            entries: Vec::new(),
+            complete: false,
+        };
+        assert_eq!(
+            mac_membership_with(
+                500,
+                Some((10, 20)),
+                &mut || Probe::Exists,
+                &mut || incomplete.clone(),
+                &|| {},
+            ),
+            GroupMembership::Present
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn macos_membership_does_not_claim_a_recycled_group_id() {
+        let recycled = MacProcScan {
+            entries: vec![MacProcEntry {
+                pid: 500,
+                pgrp: 500,
+                start: (99, 1),
+                zombie: false,
+            }],
+            complete: true,
+        };
+        assert_eq!(
+            mac_membership_with(
+                500,
+                Some((10, 20)),
+                &mut || Probe::Exists,
+                &mut || recycled.clone(),
+                &|| {},
+            ),
+            GroupMembership::Empty
         );
     }
 
