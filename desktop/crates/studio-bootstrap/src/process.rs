@@ -561,12 +561,14 @@ fn scan_process_group(pgid: i32) -> MacProcScan {
 
     for pid in pids {
         let mut info = std::mem::MaybeUninit::<libc::proc_bsdinfo>::zeroed();
+        // A nonzero arg lets libproc read entries that have moved to zombproc but have
+        // not yet been reaped by their parent.
         // SAFETY: `info` points to a correctly-sized output buffer for PROC_PIDTBSDINFO.
         let read = unsafe {
             libc::proc_pidinfo(
                 pid,
                 libc::PROC_PIDTBSDINFO,
-                0,
+                1,
                 info.as_mut_ptr().cast(),
                 std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int,
             )
