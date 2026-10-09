@@ -542,13 +542,7 @@ fn scan_process_group(pgid: i32) -> MacProcScan {
         };
         let mut pids = vec![0 as libc::pid_t; capacity];
         // SAFETY: libproc writes at most `buffer_size` bytes to this allocated pid buffer.
-        let count = unsafe {
-            libc::proc_listpgrppids(
-                pgid,
-                pids.as_mut_ptr().cast(),
-                buffer_size,
-            )
-        };
+        let count = unsafe { libc::proc_listpgrppids(pgid, pids.as_mut_ptr().cast(), buffer_size) };
         if count < 0 {
             scan.complete = false;
             return scan;
@@ -619,7 +613,9 @@ fn classify_mac_scan(
     }
     if let (Some(expected), Some(leader)) = (
         leader_start,
-        scan.entries.iter().find(|process| process.pid as i32 == pgid),
+        scan.entries
+            .iter()
+            .find(|process| process.pid as i32 == pgid),
     ) && leader.start != expected
     {
         return MacScanVerdict::Foreign;
