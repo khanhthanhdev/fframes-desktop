@@ -66,6 +66,14 @@ class ArtifactTests(unittest.TestCase):
         canonical = json.dumps(raw, separators=(",", ":"))
         self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "105670909607f0b6043ddaee5e2b98a9f2b2614271831a5cbff804b3983e764b")
 
+    def test_packaged_launchers_start_the_studio_workspace_not_the_spike_ui(self):
+        packager = (assembly.ROOT / "desktop/scripts/package-phase-zero.py").read_text()
+        self.assertNotIn("spike-ui", packager)
+        self.assertIn('bin/fframes-studio.exe") studio', packager)
+        self.assertIn('fframes-studio.exe" studio %*', packager)
+        self.assertIn('bin/fframes-studio" studio', packager)
+        self.assertIn('MacOS/fframes-studio" studio', packager)
+
     @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("dpkg-deb") and shutil.which("dpkg-shlibdeps"), "requires Linux Debian packaging tools")
     def test_linux_deb_has_installed_shell_layout_and_derived_dependencies(self):
         with tempfile.TemporaryDirectory() as temporary:
