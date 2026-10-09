@@ -62,6 +62,9 @@ jobs:
     name: Desktop validation (self-hosted Windows)
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 90
+    defaults:
+      run:
+        shell: powershell
     env:
       CARGO_INCREMENTAL: "0"
       CARGO_PROFILE_DEV_DEBUG: "0"
@@ -70,7 +73,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Install Rust toolchain
-        shell: pwsh
         run: |
           $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
           $env:Path = "$cargoBin;$env:Path"
@@ -78,7 +80,7 @@ jobs:
             rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
           } else {
             $installer = Join-Path $env:RUNNER_TEMP "rustup-init.exe"
-            Invoke-WebRequest -Uri "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe" -OutFile $installer
+            Invoke-WebRequest -Uri "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe" -OutFile $installer -UseBasicParsing
             & $installer -y --default-host x86_64-pc-windows-msvc --default-toolchain 1.98.1 --profile minimal --component rustfmt --component clippy
           }
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -88,7 +90,6 @@ jobs:
           rustc --version
           cargo --version
       - name: Install Windows native build dependencies
-        shell: pwsh
         run: |
           $distribution = "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-shared-9.0"
           $release = "autobuild-2026-10-07-13-07"
@@ -96,7 +97,7 @@ jobs:
           $archive = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
           $ffmpegRoot = Join-Path $env:RUNNER_TEMP "ffmpeg"
           $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$release/$distribution.zip"
-          Invoke-WebRequest -Uri $url -OutFile $archive
+          Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
           $actualHash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
           if ($actualHash -ne $expectedHash) { throw "FFmpeg archive SHA-256 mismatch: $actualHash" }
           Expand-Archive -LiteralPath $archive -DestinationPath $ffmpegRoot -Force
