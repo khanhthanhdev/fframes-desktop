@@ -462,7 +462,11 @@ fn resource_bounds(profile: &Profile) -> Value {
         peak_rows = peak_rows.max(s.rows.len()).max(s.resources.resident_rows);
         peak_bytes = peak_bytes.max(s.resources.resident_bytes);
         peak_queue = peak_queue.max(s.resources.queue_len);
-        if let Some(task) = s.task.as_ref().filter(|t| t.phase.is_terminal()) {
+        if let Some(task) = s
+            .task
+            .as_ref()
+            .filter(|t| t.phase.is_terminal() || t.phase == TaskPhase::AwaitingReview)
+        {
             break task.clone();
         }
         assert!(
@@ -476,7 +480,23 @@ fn resource_bounds(profile: &Profile) -> Value {
         std::thread::sleep(Duration::from_millis(2));
     };
     let streamed_for = started.elapsed();
+    #[cfg(target_os = "linux")]
     assert_eq!(task.phase, TaskPhase::Accepted, "{:?}", task.error);
+    #[cfg(not(target_os = "linux"))]
+    {
+        assert_eq!(task.phase, TaskPhase::AwaitingReview, "{:?}", task.error);
+        assert!(
+            task.review
+                .as_ref()
+                .is_some_and(|review| review.apply_blocked.is_some()),
+            "unsupported publication must retain the validated candidate for review"
+        );
+        assert_eq!(
+            task.error.as_ref().map(|error| error.code.as_str()),
+            Some("apply_blocked"),
+            "unsupported publication must be reported as apply_blocked"
+        );
+    }
     let s = w.snap();
     assert!(
         !s.rows
