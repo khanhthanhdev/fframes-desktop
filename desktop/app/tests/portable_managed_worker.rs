@@ -78,9 +78,20 @@ fn portable_project_builds_after_source_and_sdk_relocation() {
     .unwrap();
     let worker_path = member.join("src/bin/studio_worker.rs");
     let source = fs::read_to_string(&worker_path).unwrap();
+    let original_media_setup = r#"let media = directory
+        .process_media_source()
+        .map_err(|error| format!("could not prepare project media: {error:?}"))?;"#;
+    assert!(
+        source.contains(original_media_setup),
+        "generated worker media setup changed; update this integration fixture"
+    );
     let source = source.replace(
-        "let directory = fframes::MediaDirectory::read_folder(\"media\")?;\n    let media = directory.process_media_source()?;",
-        "let directory = fframes::MediaDirectory::read_folder(\"media\")?;\n    let _runtime_media = directory.process_media_source()?;\n    assert_eq!(std::fs::read(\"media/test.txt\")?, b\"copied\");\n    let media = WorkspaceMedia::prepare()?;",
+        original_media_setup,
+        r#"let _runtime_media = directory
+        .process_media_source()
+        .map_err(|error| format!("could not prepare project media: {error:?}"))?;
+    assert_eq!(std::fs::read("media/test.txt")?, b"copied");
+    let media = WorkspaceMedia::prepare()?;"#,
     );
     assert!(source.contains("WorkspaceMedia::prepare"));
     assert!(source.contains("MediaDirectory::read_folder(\"media\")"));
