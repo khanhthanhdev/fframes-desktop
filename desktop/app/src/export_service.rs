@@ -24,6 +24,7 @@ use crate::{
 const PROGRESS_LINE_LIMIT: usize = 64 * 1024;
 const DIAGNOSTIC_LIMIT: usize = 32;
 const POLL_INTERVAL: Duration = Duration::from_millis(25);
+const VERIFY_FRAME_RATE: usize = 30;
 const EXPORT_ACTIVE: u8 = 0;
 const EXPORT_CANCELLED: u8 = 1;
 const EXPORT_PUBLISHING: u8 = 2;
@@ -301,7 +302,7 @@ pub fn export_mp4(
 fn verify_mp4(path: &Path) -> Result<(), String> {
     // Verify in the app process: a successful worker exit and its own decoder check
     // are not sufficient evidence for publishing the output.
-    let mut video = unsafe { FFmpegDecoder::new(path, 30, 1) }
+    let mut video = unsafe { FFmpegDecoder::new(path, VERIFY_FRAME_RATE, 1) }
         .map_err(|error| format!("export output is not a decodable MP4: {error:?}"))?;
     let decoded_video = unsafe { video.decode_up_to(0) }
         .map_err(|error| format!("export video stream could not be decoded: {error:?}"))?;
@@ -314,16 +315,8 @@ fn verify_mp4(path: &Path) -> Result<(), String> {
     let Some(last_frame_offset) = video.get_last_frame_offset() else {
         return Err("export MP4 does not report a usable video duration".into());
     };
-    let decoded_middle_frame = unsafe { video.decode_up_to(last_frame_offset / 2) }
-        .map_err(|error| format!("export video midpoint could not be decoded: {error:?}"))?;
-    if !decoded_middle_frame {
-        return Err("export MP4 contains no decodable middle video frame".into());
-    }
-    let decoded_last_frame = unsafe { video.decode_up_to(last_frame_offset) }
-        .map_err(|error| format!("export video tail could not be decoded: {error:?}"))?;
-    if !decoded_last_frame {
-        return Err("export MP4 contains no decodable final video frame".into());
-    }
+    decode_video_through_offset(&mut video, last_frame_offset / 2, "midpoint")?;
+    decode_video_through_offset(&mut video, last_frame_offset, "final frame")?;
     if video.has_audio_stream() {
         let mut audio = AudioDecoder::new(path, None)
             .map_err(|error| format!("export audio stream is invalid: {error:?}"))?;
@@ -333,6 +326,34 @@ fn verify_mp4(path: &Path) -> Result<(), String> {
         if channels.is_empty() || channels[0].is_empty() {
             return Err("export MP4 contains no decodable audio samples".into());
         }
+    }
+    Ok(())
+}
+
+fn decode_video_through_offset(
+    video: &mut FFmpegDecoder,
+    offset: i64,
+    description: &str,
+) -> Result<(), String> {
+    let decoded = unsafe { video.decode_up_to(offset) }
+        .map_err(|error| format!("export video {description} could not be decoded: {error:?}"))?;
+    if !decoded {
+        return Err(format!(
+            "export MP4 contains no decodable {description} video frame"
+        ));
+    }
+
+    // `decode_up_to` may return the last available frame when demuxing reaches EOF. That is
+    // useful when displaying a short stream, but must not let a truncated export pass as if
+    // it reached its reported midpoint or tail. Allow one verification tick for frame-rate
+    // rounding while requiring the decoded frame to be near the requested position.
+    let requested_seconds = offset as f64 / VERIFY_FRAME_RATE as f64;
+    let decoded_seconds = f64::from(unsafe { video.get_raw_frame().timestamp_seconds() });
+    let one_frame_seconds = 1.0 / VERIFY_FRAME_RATE as f64;
+    if !decoded_seconds.is_finite() || decoded_seconds + one_frame_seconds < requested_seconds {
+        return Err(format!(
+            "export video ended before its requested {description} frame"
+        ));
     }
     Ok(())
 }
@@ -554,7 +575,11 @@ mod tests {
             .unwrap()
             .set_len(length / 2)
             .unwrap();
-        assert!(verify_mp4(&path).is_err(), "truncated MP4 must not verify");
+        let error = verify_mp4(&path).unwrap_err();
+        assert!(
+            error.contains("ended before its requested"),
+            "truncated MP4 must fail its frame-position check, got: {error}"
+        );
     }
 
     #[test]
