@@ -34,17 +34,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions-rust-lang/setup-rust-toolchain@v1
+        if: runner.os == 'Linux'
         with:
           toolchain: "1.98.1"
           components: rustfmt, clippy
-      - name: Install Linux native prerequisites
+      - name: Verify Linux native prerequisites
         run: |
-          sudo apt-get update
-          sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm
+          for tool in clang cmake pkg-config nasm; do
+            command -v "$tool" >/dev/null || { echo "Missing Linux tool: $tool" >&2; exit 1; }
+          done
+          for package in openssl fontconfig alsa xkbcommon-x11 wayland-client egl gl xcb xcb-shape xcb-xfixes x11-xcb libzstd; do
+            pkg-config --exists "$package" || { echo "Missing Linux development package: $package" >&2; exit 1; }
+          done
           llvm_lib="$(find /usr/lib -name "libclang.so" 2>/dev/null | head -n1)"
-          if [ -n "$llvm_lib" ]; then
-            echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
-          fi
+          [ -n "$llvm_lib" ] || { echo "Missing libclang.so (install libclang-dev)" >&2; exit 1; }
+          echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
       - name: Check formatting
         run: cargo fmt --manifest-path desktop/Cargo.toml --all --check
       - name: Test desktop workspace
@@ -64,10 +68,46 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: "1.98.1"
-          components: rustfmt, clippy
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Install Rust toolchain
+        shell: pwsh
+        run: |
+          $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+          $env:Path = "$cargoBin;$env:Path"
+          if (Test-Path (Join-Path $cargoBin "rustup.exe")) {
+            rustup toolchain install 1.98.1 --profile minimal --component rustfmt --component clippy
+          } else {
+            $installer = Join-Path $env:RUNNER_TEMP "rustup-init.exe"
+            Invoke-WebRequest -Uri "https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe" -OutFile $installer
+            & $installer -y --default-host x86_64-pc-windows-msvc --default-toolchain 1.98.1 --profile minimal --component rustfmt --component clippy
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "$cargoBin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+          "RUSTUP_TOOLCHAIN=1.98.1" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          $env:RUSTUP_TOOLCHAIN = "1.98.1"
+          rustc --version
+          cargo --version
+      - name: Install Windows native build dependencies
+        shell: pwsh
+        run: |
+          $distribution = "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-shared-9.0"
+          $release = "autobuild-2026-10-07-13-07"
+          $expectedHash = "124799f0643a75eb84a64a589f1abac8f81732587942f3f34458688036153f0d"
+          $archive = Join-Path $env:RUNNER_TEMP "ffmpeg.zip"
+          $ffmpegRoot = Join-Path $env:RUNNER_TEMP "ffmpeg"
+          $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/$release/$distribution.zip"
+          Invoke-WebRequest -Uri $url -OutFile $archive
+          $actualHash = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($actualHash -ne $expectedHash) { throw "FFmpeg archive SHA-256 mismatch: $actualHash" }
+          Expand-Archive -LiteralPath $archive -DestinationPath $ffmpegRoot -Force
+          $ffmpegDir = Join-Path $ffmpegRoot $distribution
+          if (-not (Test-Path (Join-Path $ffmpegDir "include\libavcodec\avcodec.h"))) { throw "FFmpeg headers were not found in $ffmpegDir" }
+          if (-not (Test-Path (Join-Path $ffmpegDir "bin\ffmpeg.exe"))) { throw "FFmpeg executable was not found in $ffmpegDir" }
+          $llvmBin = "C:\Program Files\LLVM\bin"
+          if (-not (Test-Path (Join-Path $llvmBin "libclang.dll"))) { throw "Install LLVM with libclang at $llvmBin before running this workflow" }
+          "FFMPEG_DIR=$ffmpegDir" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "LIBCLANG_PATH=$llvmBin" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          (Join-Path $ffmpegDir "bin") | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: Check formatting
         run: cargo fmt --manifest-path desktop/Cargo.toml --all --check
       - name: Test desktop workspace
