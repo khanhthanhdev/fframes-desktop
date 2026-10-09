@@ -337,12 +337,23 @@ impl World {
             .wait_for(self.limit, predicate)
             .unwrap_or_else(|| {
                 let s = self.snap();
+                let errors: Vec<_> = s
+                    .rows
+                    .iter()
+                    .filter_map(|row| match &row.kind {
+                        RowKind::Error(error) => {
+                            Some(format!("{}: {}", error.code, error.detail))
+                        }
+                        _ => None,
+                    })
+                    .collect();
                 panic!(
-                    "timed out waiting for {what}; task phase {:?}, error {:?}, queue {}, rows {}",
+                    "timed out waiting for {what}; task phase {:?}, error {:?}, queue {}, rows {}, row errors {:?}",
                     s.task.as_ref().map(|t| t.phase),
                     s.task.as_ref().and_then(|t| t.error.clone()),
                     s.queue.len(),
-                    s.rows.len()
+                    s.rows.len(),
+                    errors
                 )
             })
     }
