@@ -38,7 +38,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             worker_generation: generation,
         };
         let mut config =
-            PreviewWorkerConfig::new(identity, value("--sdk-version")?.clone(), "1.1.0");
+            PreviewWorkerConfig::new(identity, value("--sdk-version")?.clone(), "1.2.0");
         if let Ok(cache) = value("--audio-cache") {
             config.cache_directory = cache.into();
         }

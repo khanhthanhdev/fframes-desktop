@@ -162,7 +162,7 @@ fn main() -> std::process::ExitCode {
                 args.iter().position(|a| a == flag).and_then(|p| args.get(p + 1)).map_or_else(|| fallback.to_owned(), Clone::clone)
             };
             let identity = PreviewIdentity { project_id: value("--project-id", "annotated-video"), open_session: value("--open-session", "qualification"), source_revision: rev.into(), worker_generation };
-            let mut config = PreviewWorkerConfig::new(identity, value("--sdk-version", "standalone"), "1.1.0");
+            let mut config = PreviewWorkerConfig::new(identity, value("--sdk-version", "standalone"), "1.2.0");
             if args.iter().any(|a| a == "--audio-cache") { config.cache_directory = value("--audio-cache", "").into(); }
             serve_preview_worker(&video, &options, transport, config)
         } else {

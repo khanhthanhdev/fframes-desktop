@@ -42,7 +42,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
 
             println!("Creating new project '{name}' at {:?}", dir);
-            let created = ProjectManager::generate_cpu_project(&name, &dir, "1.1.0")?;
+            let manifest = CompatibilityManifest::default_linux_x64();
+            let created =
+                ProjectManager::generate_cpu_project(&name, &dir, &manifest.fframes_version)?;
             println!("Project generated successfully at {:?}", created);
         }
         "help" | "--help" | "-h" => {

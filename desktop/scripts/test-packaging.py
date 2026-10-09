@@ -60,11 +60,22 @@ class ArtifactTests(unittest.TestCase):
         path.write_text(json.dumps(record))
         return qualification.validate(path)
 
-    def test_legacy_sdk_manifest_has_stable_digest_and_no_preview_fields(self):
+    def test_sdk_manifest_has_stable_digest_and_no_preview_fields(self):
         raw = json.loads((assembly.ROOT / "desktop/packaging/sdk/phase-zero-sdk.json").read_text())
         self.assertNotIn("preview_contract_versions", raw)
         canonical = json.dumps(raw, separators=(",", ":"))
-        self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "105670909607f0b6043ddaee5e2b98a9f2b2614271831a5cbff804b3983e764b")
+        self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "ea63cd1fcc3487be84bf7100cc219b8498585e29a3dc8b908f3e418f8f85884a")
+        fframes_version = tomllib.loads((assembly.ROOT / "fframes/Cargo.toml").read_text())["package"]["version"]
+        cargo_fframes_version = tomllib.loads((assembly.ROOT / "cargo-fframes/Cargo.toml").read_text())["package"]["version"]
+        self.assertEqual(raw["fframes_version"], fframes_version)
+        self.assertEqual(raw["cargo_fframes_version"], cargo_fframes_version)
+        fixture = assembly.ROOT / "desktop/fixtures/annotated-video-overlay"
+        fixture_manifest = tomllib.loads((fixture / "Cargo.toml").read_text())
+        fixture_lock = tomllib.loads((fixture / "Cargo.lock").read_text())
+        locked_fframes = next(package for package in fixture_lock["package"] if package["name"] == "fframes")
+        self.assertEqual(fixture_manifest["dependencies"]["fframes"]["version"], fframes_version)
+        self.assertEqual(locked_fframes["version"], fframes_version)
+        self.assertIn(f'"{fframes_version}"', (fixture / "src/main.rs").read_text())
 
     def test_packaged_launchers_start_the_studio_workspace_not_the_spike_ui(self):
         packager = (assembly.ROOT / "desktop/scripts/package-phase-zero.py").read_text()

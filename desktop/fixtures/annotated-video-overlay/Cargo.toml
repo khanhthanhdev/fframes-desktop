@@ -7,7 +7,7 @@ license = "MIT"
 [workspace]
 
 [dependencies]
-fframes = { path = "../../../fframes", version = "1.1.0", features = ["cli", "compile-time-svgtree"] }
+fframes = { path = "../../../fframes", version = "1.2.0", features = ["cli", "compile-time-svgtree"] }
 fframes-studio-protocol = { path = "../../../fframes-studio-protocol", version = "0.1.0" }
 fframes-studio-runtime = { path = "../../../fframes-studio-runtime", version = "0.1.0" }
 sha2 = "0.10"

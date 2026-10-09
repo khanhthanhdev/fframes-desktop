@@ -285,14 +285,14 @@ mod tests {
     }
 
     #[test]
-    fn legacy_manifest_digest_and_serialization_are_stable() {
+    fn default_manifest_digest_and_serialization_are_stable() {
         let manifest = CompatibilityManifest::default_linux_x64();
         assert!(manifest.preview_contract_versions.is_empty());
         let json = serde_json::to_string(&manifest).unwrap();
         assert!(!json.contains("preview_contract"));
         assert_eq!(
             manifest.digest(),
-            "105670909607f0b6043ddaee5e2b98a9f2b2614271831a5cbff804b3983e764b"
+            "ea63cd1fcc3487be84bf7100cc219b8498585e29a3dc8b908f3e418f8f85884a"
         );
     }
 
