@@ -1,0 +1,131 @@
+{
+  "authentic_status": "not_run",
+  "checks": {
+    "workflow_safety": {
+      "commands": [
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--manifest-path",
+            "desktop/Cargo.toml",
+            "-p",
+            "studio-agent-spike",
+            "--test",
+            "acp_v1"
+          ],
+          "exit_code": 0,
+          "log": "workflow_safety-1.log",
+          "log_sha256": "c2f83d90fc28cf7ee1a2944e6bbfcd823e357856d9f601b19d9421d640fe966b",
+          "process_exited": true,
+          "status": "pass"
+        },
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--manifest-path",
+            "desktop/Cargo.toml",
+            "-p",
+            "fframes-studio",
+            "--test",
+            "agent_workflow"
+          ],
+          "exit_code": 0,
+          "log": "workflow_safety-2.log",
+          "log_sha256": "60267a60ec9b189e56997f968f018f2f1968f4c822718ad54f3cb4ab776c4f2d",
+          "process_exited": true,
+          "status": "pass"
+        },
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--manifest-path",
+            "desktop/Cargo.toml",
+            "-p",
+            "fframes-studio",
+            "--test",
+            "agent_tools"
+          ],
+          "exit_code": 0,
+          "log": "workflow_safety-3.log",
+          "log_sha256": "f70d4fb2e71dc1ab3fc908785567f259002b28fa7b59f5a426f33eb5f911e7ed",
+          "process_exited": true,
+          "status": "pass"
+        },
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--manifest-path",
+            "desktop/Cargo.toml",
+            "-p",
+            "fframes-studio",
+            "--test",
+            "scoped_editing"
+          ],
+          "exit_code": 0,
+          "log": "workflow_safety-4.log",
+          "log_sha256": "ae22cc406dbba3a1aa3e28e94d4d9bed848e1f524ad11813af76c68ef6f6925e",
+          "process_exited": true,
+          "status": "pass"
+        },
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--manifest-path",
+            "desktop/Cargo.toml",
+            "-p",
+            "studio-engine",
+            "--test",
+            "task_recovery"
+          ],
+          "exit_code": 0,
+          "log": "workflow_safety-5.log",
+          "log_sha256": "1bc95d79d6c9e0120fbad64211ec54390fc06dc815731a5579d34ba17af567ba",
+          "process_exited": true,
+          "status": "pass"
+        },
+        {
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--manifest-path",
+            "desktop/Cargo.toml",
+            "-p",
+            "studio-engine",
+            "--test",
+            "edit_transaction"
+          ],
+          "exit_code": 0,
+          "log": "workflow_safety-6.log",
+          "log_sha256": "481de55d2b1c1c123b46146415e8f664a023d6e067c14ca62b4348747e074fc1",
+          "process_exited": true,
+          "status": "pass"
+        }
+      ],
+      "failed_commands": 0,
+      "passed_commands": 6,
+      "status": "pass"
+    }
+  },
+  "development_checks_status": "pass",
+  "environment": {
+    "arch": "x86_64",
+    "os": "Linux"
+  },
+  "finished_at": "2026-10-07T12:23:18.986329+00:00",
+  "ledger_updated": false,
+  "mode": "development",
+  "notice": "Fixture/development evidence cannot qualify a real provider or recommendation.",
+  "schema": "m6-run/1",
+  "started_at": "2026-10-07T12:22:19.686088+00:00"
+}

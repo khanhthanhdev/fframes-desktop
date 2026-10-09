@@ -1,0 +1,28 @@
+
+running 21 tests
+test session_save_failure_visibly_disables_restoration ... ok
+test bounded_handoff_context_budget_enforcement ... ok
+test session_manifest_lifecycle_and_redaction ... ok
+test idle_switch_transitions_to_pending_and_can_cancel ... ok
+test continuation_choices_apply_correct_draft_preparation ... ok
+test submit_while_switch_pending_is_queued_not_started ... ok
+test unqualified_adapter_switch_is_blocked ... ok
+test crash_restart_recovery_preserves_retained_draft_and_marks_unproven_writer_unsafe ... ok
+test late_permission_reply_rejected_after_switch ... ok
+test two_retained_queued_briefs_explicit_clear ... ok
+test restore_session_rejects_changed_adapter_closure ... ok
+test switch_at_apply_commit_cannot_cancel_until_published ... ok
+test restart_from_accepted_discards_uncommitted_draft_edits ... ok
+test tool_snapshot_race_waits_for_tool_snapshot_to_drain_before_draft_capture ... ok
+test switch_when_candidate_awaiting_review_preserves_candidate ... ok
+test restore_session_binds_to_provider_and_launch_digest_and_reaches_driver ... ok
+test restore_session_rejects_changed_draft_location ... ok
+test two_retained_queued_briefs_without_automatic_execution_and_explicit_transfer ... ok
+test continue_draft_preserves_outgoing_draft_edits_for_incoming_provider ... ok
+test unsupported_expired_resume_failure_falls_back_to_fresh_session ... ok
+test switch_during_undo_waits_for_undo_to_settle_then_resumes_teardown ... ok
+
+test result: ok. 21 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.41s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/provider_handoff.rs (desktop/target/debug/deps/provider_handoff-82e544a876b6bdf6)

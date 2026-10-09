@@ -1,0 +1,22 @@
+   Compiling fframes-studio v0.1.0 (<private-path>/desktop/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.03s
+     Running tests/provider_profiles.rs (desktop/target/debug/deps/provider_profiles-e86cbde6b527f8c1)
+
+running 14 tests
+test default_registry_contains_four_profiles_and_starts_unselected ... ok
+test validation_rejects_duplicate_ids ... ok
+test validation_rejects_credentials_in_auth_env_names ... ok
+test validation_rejects_newer_schema_version_as_diagnostic_only ... ok
+test scratch_probe_records_authentic_prerequisites_for_all_four_providers ... ok
+test qualification_resolution_strictly_refuses_unqualified_m6_launch_without_m3_fallback ... ok
+test qualification_resolution_grants_m6_containment_with_authentic_evidence ... ok
+test qualification_resolution_falls_back_to_m3_when_launch_not_in_m6 ... ok
+test qualification_resolution_refuses_when_second_cited_file_is_tampered ... ok
+test migration_matches_builtin_provider_by_name ... ok
+test migration_from_custom_adapter_preserves_all_fields_and_selects_it ... ok
+test registry_save_load_round_trip_re_derives_builtin_and_experimental_flags ... ok
+test save_registry_does_not_modify_legacy_agent_adapter_json ... ok
+test save_settings_updates_registry_without_clobbering_builtin_defaults ... ok
+
+test result: ok. 14 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s
+

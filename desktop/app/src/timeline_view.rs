@@ -1,5 +1,7 @@
 //! Native compiled tracks. Geometry/selection are engine-owned; textures are window-owned.
+use crate::design_system::colors::{ACCENT, BORDER, MUTED};
 use crate::{
+    design_system::{self, ButtonStyle},
     frame_image::create_render_image,
     thumbnail_cache::{ThumbnailCache, ThumbnailKey},
 };
@@ -295,44 +297,42 @@ impl TimelineView {
         let action = std::rc::Rc::new(action);
         let click = action.clone();
         let entity = cx.entity();
-        div()
-            .id(id)
-            .relative()
-            .role(gpui::Role::Button)
-            .aria_label(label)
-            .tab_index(0)
-            .tab_stop(enabled)
-            .px_2()
-            .py_1()
-            .rounded_sm()
-            .border_1()
-            .border_color(rgb(0x303c4d))
-            .opacity(if enabled { 1. } else { 0.45 })
-            .focus_visible(|s| s.border_color(rgb(0x78b7fa)))
-            .on_click(cx.listener(move |view, _, _, cx| {
-                if enabled {
-                    click(view, cx);
-                }
-            }))
-            .on_key_down(cx.listener(move |view, event: &gpui::KeyDownEvent, _, cx| {
-                if enabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    action(view, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .child(label)
-            .children((id == "timeline-fit").then(|| {
-                canvas(
-                    move |bounds, _, cx| {
-                        entity.update(cx, |view, _| view.fit_bounds = Some(bounds));
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-            }))
+        design_system::button(
+            div()
+                .id(id)
+                .relative()
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .tab_index(0)
+                .tab_stop(enabled)
+                .text_xs(),
+            ButtonStyle::Secondary,
+            enabled,
+        )
+        .on_click(cx.listener(move |view, _, _, cx| {
+            if enabled {
+                click(view, cx);
+            }
+        }))
+        .on_key_down(cx.listener(move |view, event: &gpui::KeyDownEvent, _, cx| {
+            if enabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                action(view, cx);
+                cx.stop_propagation();
+            }
+        }))
+        .child(label)
+        .children((id == "timeline-fit").then(|| {
+            canvas(
+                move |bounds, _, cx| {
+                    entity.update(cx, |view, _| view.fit_bounds = Some(bounds));
+                },
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        }))
     }
 }
 
@@ -389,7 +389,7 @@ impl Render for TimelineView {
             .min_w_0()
             .flex_shrink_0()
             .border_t_1()
-            .border_color(rgb(0x303c4d))
+            .border_color(rgb(BORDER))
             .pt_2()
             .child(toolbar);
         let Some(model) = &self.model else {
@@ -397,10 +397,11 @@ impl Render for TimelineView {
                 div()
                     .h(px(130.))
                     .text_sm()
-                    .text_color(rgb(0x9aaabd))
+                    .text_color(rgb(MUTED))
                     .child("No compiled timeline available."),
             );
         };
+        let colors = design_system::tokens().palette;
         let geometry = self.viewport.geometry(model);
         let entity = cx.entity().downgrade();
         let mut tracks = div()
@@ -412,8 +413,9 @@ impl Render for TimelineView {
             .h(px(138.))
             .overflow_hidden()
             .border_1()
-            .border_color(rgb(0x303c4d))
-            .focus_visible(|s| s.border_color(rgb(0x78b7fa)))
+            .border_color(rgb(BORDER))
+            .bg(rgb(colors.surface))
+            .focus_visible(|s| s.border_color(rgb(ACCENT)))
             .on_key_down(cx.listener(|view, event, _, cx| view.key(event, cx)))
             .on_mouse_down(
                 MouseButton::Left,
@@ -477,7 +479,7 @@ impl Render for TimelineView {
                     .left(px(tick.x as f32))
                     .top_0()
                     .text_xs()
-                    .text_color(rgb(0x9aaabd))
+                    .text_color(rgb(MUTED))
                     .child(tick.label),
             );
         }
@@ -491,7 +493,7 @@ impl Render for TimelineView {
                     .top(px(22.))
                     .w(px((end - start) as f32))
                     .h(px(114.))
-                    .bg(rgb(0x263e57)),
+                    .bg(rgb(colors.accent_tint)),
             );
         }
         // Tracks scroll vertically independently of the ruler. Only horizontal visible geometry is rendered.
@@ -527,9 +529,13 @@ impl Render for TimelineView {
                     .overflow_hidden()
                     .px_1()
                     .rounded_sm()
-                    .bg(rgb(if selected { 0x476b92 } else { 0x2b4057 }))
+                    .bg(rgb(if selected {
+                        colors.accent_tint
+                    } else {
+                        colors.surface_raised
+                    }))
                     .text_xs()
-                    .focus_visible(|s| s.border_1().border_color(rgb(0x78b7fa)))
+                    .focus_visible(|s| s.border_1().border_color(rgb(ACCENT)))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |v, e: &gpui::MouseDownEvent, w, cx| {
@@ -570,7 +576,7 @@ impl Render for TimelineView {
                     .overflow_hidden()
                     .px_1()
                     .rounded_sm()
-                    .bg(rgb(0x274a40))
+                    .bg(rgb(colors.success_surface))
                     .text_xs()
                     .child(format!("♫ {} · {:.3}s", audio.file, audio.start_seconds)),
             );
@@ -583,7 +589,7 @@ impl Render for TimelineView {
                 .top_0()
                 .bottom_0()
                 .w(px(1.))
-                .bg(rgb(0x78b7fa)),
+                .bg(rgb(ACCENT)),
         );
         let mut thumbs = div().relative().h(px(38.)).overflow_hidden();
         for frame in self.viewport.thumbnail_frames(model) {
@@ -619,12 +625,13 @@ impl Render for TimelineView {
                         .map_or(String::new(), |_| " · scene selected".into())
                 )
             });
-        root = root.child(tracks).child(thumbs).child(
-            div().text_xs().text_color(rgb(0x9aaabd)).child(format!(
-                "{} · {selected} · drag tracks / Shift-drag for range",
-                model.time_label(self.position)
-            )),
-        );
+        root =
+            root.child(tracks)
+                .child(thumbs)
+                .child(div().text_xs().text_color(rgb(MUTED)).child(format!(
+                    "{} · {selected} · drag tracks / Shift-drag for range",
+                    model.time_label(self.position)
+                )));
         root
     }
 }

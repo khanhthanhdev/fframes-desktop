@@ -6,6 +6,7 @@ pub mod build_service;
 pub mod candidate_runner;
 pub mod canvas_view;
 pub mod conversation_panel;
+pub mod design_system;
 mod evidence_preview;
 pub mod export_service;
 pub mod frame_image;

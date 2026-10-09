@@ -1,3 +1,5 @@
+use crate::design_system;
+use crate::design_system::colors::{ACCENT, BORDER, MUTED, PANEL};
 use gpui::{
     App, Bounds, ClipboardItem, Context, CursorStyle, Element, ElementId, ElementInputHandler,
     Entity, EntityInputHandler, FocusHandle, Focusable, GlobalElementId, InteractiveElement,
@@ -458,19 +460,15 @@ impl Render for TextInput {
             .on_action(cx.listener(Self::cut))
             .on_action(cx.listener(Self::copy))
             .on_action(cx.listener(Self::paste_action))
-            .p_2()
+            .p(px(design_system::tokens().metrics.space_2))
             .border_1()
-            .border_color(if is_focused {
-                rgb(0x3B82F6)
-            } else {
-                rgb(0x444444)
-            })
-            .bg(rgb(0x1E1E1E))
-            .rounded_md()
+            .border_color(if is_focused { rgb(ACCENT) } else { rgb(BORDER) })
+            .bg(rgb(PANEL))
+            .rounded(px(design_system::tokens().metrics.radius_md))
             .w_full()
             .flex()
             .flex_col()
-            .gap_1()
+            .gap(px(design_system::tokens().metrics.space_1))
             .child(
                 div()
                     .h(px(24.))
@@ -480,7 +478,7 @@ impl Render for TextInput {
             .children((!self.compact || self.marked_range.is_some()).then(|| {
                 div()
                     .text_xs()
-                    .text_color(rgb(0x888888))
+                    .text_color(rgb(MUTED))
                     .child(composition_info)
             }))
     }
@@ -544,7 +542,10 @@ impl Element for TextElement {
         let style = window.text_style();
 
         let (display_text, text_color) = if content.is_empty() {
-            (input.placeholder.clone(), gpui::hsla(0., 0., 0.6, 0.7))
+            (
+                input.placeholder.clone(),
+                gpui::Hsla::from(rgb(design_system::tokens().palette.muted)),
+            )
         } else {
             (content, style.color)
         };
@@ -599,7 +600,7 @@ impl Element for TextElement {
                         point(bounds.left() + cursor_pos, bounds.top()),
                         size(px(2.), bounds.bottom() - bounds.top()),
                     ),
-                    rgb(0x3B82F6),
+                    rgb(design_system::tokens().palette.accent),
                 )),
             )
         } else {
@@ -615,7 +616,7 @@ impl Element for TextElement {
                             bounds.bottom(),
                         ),
                     ),
-                    rgba(0x3B82F640),
+                    rgba(design_system::tokens().palette.selection_overlay),
                 )),
                 None,
             )

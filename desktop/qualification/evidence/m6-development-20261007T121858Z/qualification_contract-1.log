@@ -1,0 +1,42 @@
+Running M6 qualification validator negative tests...
+PASS: M6 runner keeps fixture development checks separate from authentic provider readiness
+
+== timeout ==
+$ /usr/bin/python3 -c import time; time.sleep(60)
+Timed out after 1s; see <private-path>/desktop/qualification/evidence/m6-runner-timeout-6xjspgsk/timeout-1.log
+PASS: M6 runner timeout stops its owned process group
+PASS: Baseline m6-results.json validates cleanly
+PASS: Missing provider in matrix -> rejected with: Invalid M6 providers matrix: must contain claude, codex, pi, and antigravity
+PASS: Pass claimed without evidence -> rejected with: claude.create_edit_export claims a pass without evidence
+PASS: Pass with prerequisite -> rejected with: claude.create_edit_export claims a pass without evidence
+PASS: Unrun gate with too-short prerequisite -> rejected with: claude.create_edit_export is not_run without prerequisite
+PASS: Unrun gate citing evidence -> rejected with: claude.create_edit_export is not_run but cites evidence
+PASS: Recommending unqualified provider -> rejected with: Cannot recommend unqualified provider: claude
+PASS: Recommend with unmet gates -> rejected with: Provider claude claims qualified status but has unmet mandatory gates
+PASS: Ranking status recommended with empty list -> rejected with: Ranking status must be insufficient_evidence when fewer than 2 providers qualify
+PASS: Status recommended with 0 qualified -> rejected with: Ranking status must be insufficient_evidence when fewer than 2 providers qualify
+PASS: Secret in ledger file -> rejected with: ledger: credential-like text (openai-style key) in tmptgyb3ykr.json
+PASS: Invalid launch identity format -> rejected with: Invalid launch identity digest for claude
+PASS: Authentic acceptance without 2 qualified -> rejected with: M6 authentic acceptance requires at least two qualified providers
+
+Running real evidence file negative tests...
+PASS: Tampered evidence hash -> rejected with: Evidence changed: <private-path><private-path>6w2mthhc/evidence/ev1.json
+PASS: Fixture agent in authentic evidence -> rejected with: claude.interruption_and_cleanup authentic evidence uses fixture adapter
+PASS: Fixture agent_name field bypass rejected -> rejected with: claude.interruption_and_cleanup authentic evidence uses fixture adapter
+PASS: Launch identity mismatch -> rejected with: claude.interruption_and_cleanup launch identity does not match provider
+PASS: Platform mismatch in evidence -> rejected with: claude.interruption_and_cleanup authentic evidence records wrong platform: Darwin
+PASS: Development evidence for authentic gate -> rejected with: claude.interruption_and_cleanup authentic gate cites development or fixture evidence
+PASS: Development kind on provider gates rejected -> rejected with: claude.create_edit_export must be of kind authentic (provider gates are authentic-only)
+PASS: Writer contract missing edit scenario rejected -> rejected with: writer containment: scenario edit was not measured
+PASS: Shared evidence across gates -> rejected with: Evidence file cited by multiple gates: ev_shared.json
+PASS: Teardown failure in evidence -> rejected with: claude.interruption_and_cleanup authentic evidence did not measure clean teardown (owned_processes_after != 0)
+PASS: Native app export claim in M6 -> rejected with: claude claims native app export in M6; export UI remains M7
+PASS: Credential in evidence file -> rejected with: evidence of claude.interruption_and_cleanup: credential-like text (openai-style key) in ev_secret.json
+PASS: Private path in evidence file -> rejected with: evidence of claude.interruption_and_cleanup: absolute private path in ev_path.json
+PASS: Incomparable environments rejected by ranking -> rejected with: Incomparable ranking: providers measured on different environments: {'linux-runner-02', 'linux-runner-01'}
+PASS: Alphabetical recommendation rejected when evidence favors codex -> rejected with: Ranking recommendation mismatch: deterministic ranking requires ['codex', 'claude'], but ledger recommended ['claude', 'codex']
+
+Running positive qualification evidence test...
+PASS: Two providers with genuine authentic evidence qualify and recommend based on evidence, not names!
+
+ALL M6 qualification tests passed cleanly!

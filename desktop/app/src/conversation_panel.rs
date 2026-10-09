@@ -66,6 +66,9 @@ fn evidence_image_key(task: &studio_engine::AgentTaskId, artifact_id: &str) -> S
     format!("{}:{artifact_id}", task.0)
 }
 
+use crate::design_system::colors::{
+    ACCENT, BORDER, BUBBLE, CARD, DANGER, MUTED, PANEL, SUCCESS, TEXT, WARNING,
+};
 use crate::{
     agent_workflow::{
         AdapterReadiness, AgentWorkflow, ChangeCard, ConflictView, HandoffState, HistoryEntry,
@@ -73,7 +76,7 @@ use crate::{
         Row, RowKind, StructuredError, TaskPhase, ToolCard, UndoView, UserSource, ValidationCard,
         WorkflowSnapshot,
     },
-    studio_shell::{ACCENT, BORDER, MUTED, PANEL, TEXT},
+    design_system::{self, ButtonStyle},
     text_input::TextInput,
 };
 use controls::{
@@ -100,12 +103,6 @@ use std::{
 };
 use studio_agent_spike::driver::{ConfigKind, OptionValue, ToolStatus};
 use studio_engine::{DraftState, ReviewPolicy, TaskScope, app_paths::AppPaths};
-
-const DANGER: u32 = 0x442c27;
-const WARNING: u32 = 0x3a3420;
-const SUCCESS: u32 = 0x1f3a2c;
-const BUBBLE: u32 = 0x223048;
-const CARD: u32 = 0x1d2736;
 
 /// Events the shell reacts to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1056,64 +1053,60 @@ impl ConversationPanel {
             _ => None,
         };
         let entity = cx.entity();
-        let (background, border) = match tone {
-            Tone::Normal => (PANEL, BORDER),
-            Tone::Primary => (0x24476f, ACCENT),
-            Tone::Danger => (0x5a2f2b, 0xc8736a),
+        let style = match tone {
+            Tone::Normal => ButtonStyle::Secondary,
+            Tone::Primary => ButtonStyle::Primary,
+            Tone::Danger => ButtonStyle::Destructive,
         };
-        div()
-            .id(id)
-            .relative()
-            .role(gpui::Role::Button)
-            .aria_label(label.clone())
-            .tab_index(0)
-            .tab_stop(enabled)
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(border))
-            .bg(rgb(background))
-            .text_xs()
-            .text_color(rgb(if enabled { TEXT } else { MUTED }))
-            .opacity(if enabled { 1.0 } else { 0.45 })
-            .focus_visible(|s| s.border_color(rgb(0xffffff)))
-            .on_click(cx.listener(move |this, _, window, cx| {
-                if enabled {
-                    on_click(this, window, cx);
+        design_system::button(
+            div()
+                .id(id)
+                .relative()
+                .role(gpui::Role::Button)
+                .aria_label(label.clone())
+                .tab_index(0)
+                .tab_stop(enabled)
+                .text_xs()
+                .font_weight(gpui::FontWeight::MEDIUM),
+            style,
+            enabled,
+        )
+        .on_click(cx.listener(move |this, _, window, cx| {
+            if enabled {
+                on_click(this, window, cx);
+            }
+        }))
+        .on_key_down(
+            cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
+                if enabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    action(this, window, cx);
+                    cx.stop_propagation();
                 }
-            }))
-            .on_key_down(
-                cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
-                    if enabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        action(this, window, cx);
-                        cx.stop_propagation();
-                    }
-                }),
+            }),
+        )
+        .child(label)
+        .children(measured.map(|name| {
+            canvas(
+                move |bounds, _, cx| {
+                    entity.update(cx, |panel, _| {
+                        panel.button_bounds.insert(
+                            name,
+                            [
+                                f32::from(bounds.left()),
+                                f32::from(bounds.top()),
+                                f32::from(bounds.size.width),
+                                f32::from(bounds.size.height),
+                            ],
+                        );
+                    });
+                },
+                |_, _, _, _| {},
             )
-            .child(label)
-            .children(measured.map(|name| {
-                canvas(
-                    move |bounds, _, cx| {
-                        entity.update(cx, |panel, _| {
-                            panel.button_bounds.insert(
-                                name,
-                                [
-                                    f32::from(bounds.left()),
-                                    f32::from(bounds.top()),
-                                    f32::from(bounds.size.width),
-                                    f32::from(bounds.size.height),
-                                ],
-                            );
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-            }))
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        }))
     }
 
     fn tab_button(
@@ -1134,7 +1127,7 @@ impl ConversationPanel {
             .border_b_2()
             .border_color(rgb(if active { ACCENT } else { PANEL }))
             .text_color(rgb(if active { TEXT } else { MUTED }))
-            .focus_visible(|s| s.border_color(rgb(0xffffff)))
+            .focus_visible(|s| s.border_color(rgb(ACCENT)))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.tab = tab;
                 cx.notify();

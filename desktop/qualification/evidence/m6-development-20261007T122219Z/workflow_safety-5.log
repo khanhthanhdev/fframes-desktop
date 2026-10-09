@@ -1,0 +1,29 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.23s
+     Running tests/task_recovery.rs (desktop/target/debug/deps/task_recovery-86acf3acd833057f)
+
+running 12 tests
+test kill_child ... ignored, spawned by real_process_death_at_publication_boundaries
+
+running 1 test
+test an_existing_version_one_installation_migrates_with_a_backup_and_keeps_its_history ... ok
+test the_boundary_sequence_covers_every_durable_step ... ok
+test a_newer_task_journal_or_database_opens_nothing_and_changes_nothing ... ok
+
+running 1 test
+test journal_tail_truncation_and_interior_corruption_are_handled_without_data_loss ... ok
+test a_recreated_destination_during_a_crashed_displacement_halts_as_a_conflict ... ok
+test recovery_never_overwrites_bytes_an_editor_wrote_while_the_app_was_down ... ok
+
+running 1 test
+test the_projection_is_rebuilt_from_the_journal_when_lost_or_stale ... ok
+
+running 1 test
+
+running 1 test
+test real_process_death_at_publication_boundaries ... ok
+test a_process_death_during_recovery_itself_still_converges ... ok
+test a_process_death_at_every_durable_boundary_recovers_without_loss ... ok
+test an_io_failure_at_every_durable_boundary_ends_cleanly_or_suspends_for_recovery ... ok
+
+test result: ok. 11 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 31.05s
+

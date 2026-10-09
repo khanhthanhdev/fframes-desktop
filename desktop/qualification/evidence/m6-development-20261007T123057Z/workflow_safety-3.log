@@ -1,0 +1,47 @@
+   Compiling fframes-studio v0.1.0 (<private-path>/desktop/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.06s
+     Running tests/agent_tools.rs (desktop/target/debug/deps/agent_tools-737026e0d62d100b)
+
+running 39 tests
+test all_unique_tools_are_listed_by_mcp_and_descriptions ... ok
+test dispatcher_refuses_cross_project_and_stale_revision ... ok
+test capability_socket_and_runtime_dir_are_private ... ok
+test dispatcher_bounds_text_replies_and_artifacts ... ok
+test frame_selection_resolve_is_bounded_sorted_and_deduplicated ... ok
+test a_second_broker_in_the_same_runtime_dir_is_refused_and_stale_files_are_cleared ... ok
+test client_refuses_unsafe_or_malformed_capability_files ... ok
+test dropping_the_broker_shuts_it_down ... ok
+test initialize_answers_the_one_revision_this_server_implements_whatever_the_client_asks ... ok
+test insecure_runtime_directories_are_refused ... ok
+test dead_tasks_are_stale_for_new_and_established_connections ... ok
+test mcp_forwards_calls_verbatim_and_maps_replies_and_errors ... ok
+test at_most_eight_connections_are_served ... ok
+test mcp_lifecycle_errors_and_lazy_connection ... ok
+test a_panicking_backend_is_an_internal_error_and_the_broker_keeps_serving ... ok
+test known_revision_history_is_bounded_lru_and_status_summary_stays_small ... ok
+test request_parsing_rejects_bad_shapes_and_accepts_documented_ones ... ok
+test client_roundtrip_and_error_mapping ... ok
+test cli_and_mcp_return_byte_identical_replies_without_the_secret_on_argv ... ok
+test mcp_stderr_is_bounded_to_sixteen_kib ... ok
+test cli_exit_codes_and_list ... ok
+test a_dropped_connection_cancels_its_executing_call_and_queued_calls ... ok
+test oversized_request_lines_close_the_connection_without_executing ... ok
+test revoke_cancels_an_executing_call ... ok
+test queue_holds_sixteen_behind_two_workers_and_the_nineteenth_is_busy ... ok
+test revoke_refuses_reconnect_and_the_next_call ... ok
+test mcp_flags_and_a_missing_broker ... ok
+test shutdown_cancels_joins_and_removes_socket_and_capabilities ... ok
+test unknown_methods_and_bad_params_are_answered_without_closing ... ok
+test wrong_secret_and_unknown_capability_are_indistinguishable ... ok
+test client_call_timeout_marks_the_connection_broken ... ok
+test requests_on_one_connection_run_in_order ... ok
+test shutdown_with_live_drippers_is_bounded_and_peers_see_the_close ... ok
+test grants_are_short_lived_and_expired_ones_do_not_linger ... ok
+test a_client_call_against_a_dripping_reply_fails_at_its_deadline ... ok
+test an_oversized_hello_is_rejected_at_the_limit_before_any_newline ... ok
+test expiry_refuses_new_and_established_connections ... ok
+test a_hello_dripped_without_a_newline_is_closed_at_the_deadline_and_frees_capacity ... ok
+test hello_must_arrive_within_five_seconds ... ok
+
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.28s
+

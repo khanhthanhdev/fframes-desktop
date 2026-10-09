@@ -1,0 +1,20 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.37s
+     Running tests/agent_workflow_ui.rs (desktop/target/debug/deps/agent_workflow_ui-ae3e82a2f4e96607)
+
+running 13 tests
+test a_missing_description_leaves_the_workflow_unconfigured_and_the_panel_says_how_to_start ... ok
+test opening_through_the_host_reads_the_saved_description_and_launches_no_agent ... ok
+test controls_derive_switch_choice_and_block_new_submissions ... ok
+test the_production_policy_never_lets_a_saved_adapter_claim_containment ... ok
+test controls_derive_session_restore_and_retained_queue ... ok
+test advertised_options_are_offered_only_while_the_agent_advertises_them ... ok
+test saving_a_description_reconfigures_an_idle_workflow_and_is_refused_while_a_task_runs ... ok
+test manual_review_exposes_apply_discard_and_the_frozen_policy ... ok
+test the_ui_sink_queues_the_promotion_and_the_shell_acknowledgement_reaches_the_snapshot ... ok
+test a_long_real_conversation_pages_back_inside_the_resident_limits ... ok
+test a_real_permission_card_is_answered_once_and_closed_cards_refuse_clicks ... ok
+test a_clarification_turns_the_prompt_into_an_answer_for_that_task ... ok
+test the_controls_follow_a_real_task_from_start_to_acceptance ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.04s
+

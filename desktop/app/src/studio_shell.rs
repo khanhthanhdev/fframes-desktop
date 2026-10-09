@@ -1,3 +1,4 @@
+use crate::design_system::colors::{ACCENT, BACKGROUND, BORDER, MUTED, PANEL, TEXT};
 use crate::{
     agent_workflow::{AgentWorkflow, BuildSettings},
     conversation_panel::{
@@ -11,6 +12,7 @@ use crate::{
 use crate::{
     audio_service::{AudioEvent, AudioService, OutputDevice, OutputHandle},
     canvas_view::CanvasViewState,
+    design_system::{self, ButtonStyle},
     export_service::{ExportControl, ExportProgress, export_mp4},
     frame_image::{ImagePresentationManager, create_render_image},
     preset_panel::{
@@ -39,13 +41,6 @@ use studio_engine::{
 };
 use studio_project::{ProjectId, manifest::CargoEntry};
 use studio_sdk::{CompatibilityManifest, Doctor};
-
-pub(crate) const BACKGROUND: u32 = 0x10151e;
-pub(crate) const PANEL: u32 = 0x19212e;
-pub(crate) const BORDER: u32 = 0x303c4d;
-pub(crate) const TEXT: u32 = 0xe3eaf3;
-pub(crate) const MUTED: u32 = 0x9aaabd;
-pub(crate) const ACCENT: u32 = 0x78b7fa;
 
 #[derive(Clone)]
 struct Recent {
@@ -2519,6 +2514,19 @@ impl StudioShell {
         let action = std::rc::Rc::new(action);
         let click = action.clone();
         let id = id.into();
+        let style = match &id {
+            gpui::ElementId::Name(name)
+                if matches!(name.as_ref(), "Project" | "Assets" | "Style")
+                    && name.as_ref() == self.navigation =>
+            {
+                ButtonStyle::Selected
+            }
+            gpui::ElementId::Name(name) if matches!(name.as_ref(), "build-preview" | "create") => {
+                ButtonStyle::Primary
+            }
+            gpui::ElementId::Name(name) if name.as_ref() == "close" => ButtonStyle::Destructive,
+            _ => ButtonStyle::Secondary,
+        };
         let name = match &id {
             gpui::ElementId::Name(name)
                 if self.qualifying
@@ -2541,59 +2549,54 @@ impl StudioShell {
             _ => None,
         };
         let entity = cx.entity();
-        div()
-            .id(id)
-            .relative()
-            .role(gpui::Role::Button)
-            .aria_label(label.clone())
-            .tab_index(0)
-            .tab_stop(enabled)
-            .px_3()
-            .py_2()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(BORDER))
-            .bg(rgb(PANEL))
-            .text_sm()
-            .text_color(rgb(if enabled { TEXT } else { MUTED }))
-            .opacity(if enabled { 1.0 } else { 0.45 })
-            .focus_visible(|s| s.border_color(rgb(ACCENT)))
-            .on_click(cx.listener(move |shell, _, _, cx| {
-                if enabled {
-                    click(shell, cx);
+        design_system::button(
+            div()
+                .id(id)
+                .relative()
+                .role(gpui::Role::Button)
+                .aria_label(label.clone())
+                .tab_index(0)
+                .tab_stop(enabled)
+                .text_sm(),
+            style,
+            enabled,
+        )
+        .on_click(cx.listener(move |shell, _, _, cx| {
+            if enabled {
+                click(shell, cx);
+            }
+        }))
+        .on_key_down(
+            cx.listener(move |shell, event: &gpui::KeyDownEvent, _, cx| {
+                if enabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    action(shell, cx);
+                    cx.stop_propagation();
                 }
-            }))
-            .on_key_down(
-                cx.listener(move |shell, event: &gpui::KeyDownEvent, _, cx| {
-                    if enabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                        action(shell, cx);
-                        cx.stop_propagation();
-                    }
-                }),
+            }),
+        )
+        .child(label)
+        .children(name.map(|name| {
+            canvas(
+                move |bounds, _, cx| {
+                    entity.update(cx, |shell, _| {
+                        shell.button_bounds.insert(
+                            name,
+                            [
+                                f32::from(bounds.left()),
+                                f32::from(bounds.top()),
+                                f32::from(bounds.size.width),
+                                f32::from(bounds.size.height),
+                            ],
+                        );
+                    });
+                },
+                |_, _, _, _| {},
             )
-            .child(label)
-            .children(name.map(|name| {
-                canvas(
-                    move |bounds, _, cx| {
-                        entity.update(cx, |shell, _| {
-                            shell.button_bounds.insert(
-                                name,
-                                [
-                                    f32::from(bounds.left()),
-                                    f32::from(bounds.top()),
-                                    f32::from(bounds.size.width),
-                                    f32::from(bounds.size.height),
-                                ],
-                            );
-                        });
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .top_0()
-                .left_0()
-                .size_full()
-            }))
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+        }))
     }
 }
 
@@ -2728,14 +2731,16 @@ impl Render for StudioShell {
         }
         self.activate_audio(cx);
         let enabled = !self.busy;
+        let tokens = design_system::tokens();
         let project = self.presentation.project.clone();
         let mut header = div()
             .flex()
             .items_center()
             .justify_between()
-            .p_4()
+            .p(px(tokens.metrics.space_4))
             .border_b_1()
             .border_color(rgb(BORDER))
+            .bg(rgb(tokens.palette.surface))
             .child(
                 div()
                     .flex()
@@ -2792,13 +2797,13 @@ impl Render for StudioShell {
                 )),
         );
         let mut navigation = div()
-            .w(px(248.))
+            .w(px(tokens.metrics.sidebar_width))
             .flex_shrink_0()
             .flex()
             .flex_col()
-            .gap_3()
-            .p_4()
-            .bg(rgb(PANEL))
+            .gap(px(tokens.metrics.space_3))
+            .p(px(tokens.metrics.space_4))
+            .bg(rgb(tokens.palette.sidebar))
             .border_r_1()
             .border_color(rgb(BORDER));
         for name in ["Project", "Assets", "Style"] {
@@ -2862,8 +2867,8 @@ impl Render for StudioShell {
             .overflow_y_scroll()
             .flex()
             .flex_col()
-            .p_4()
-            .gap_1();
+            .p(px(tokens.metrics.space_4))
+            .gap(px(tokens.metrics.space_2));
         if let Some(p) = &project {
             center = center.child(
                 div()
@@ -3025,6 +3030,7 @@ impl Render for StudioShell {
             .border_1()
             .border_color(rgb(BORDER))
             .rounded_lg()
+            .bg(rgb(tokens.palette.canvas))
             .flex()
             .flex_col()
             .items_center()
@@ -3131,7 +3137,7 @@ impl Render for StudioShell {
                     .w(px(bounds.width as f32))
                     .h(px(bounds.height as f32))
                     .border_2()
-                    .border_color(rgb(0xf2cc60)),
+                    .border_color(rgb(design_system::colors::WARNING_TEXT)),
             );
         }
         center = center.child(preview_surface);
@@ -3439,8 +3445,9 @@ impl Render for StudioShell {
                 div()
                     .id("awaiting-preview")
                     .flex_shrink_0()
-                    .p_3()
-                    .bg(rgb(0x3a3420))
+                    .p(px(tokens.metrics.space_3))
+                    .bg(rgb(design_system::colors::WARNING))
+                    .text_color(rgb(design_system::colors::WARNING_TEXT))
                     .text_sm()
                     .child(label.clone()),
             );
@@ -3452,8 +3459,9 @@ impl Render for StudioShell {
                     .max_h(px(120.))
                     .flex_shrink_0()
                     .overflow_y_scroll()
-                    .p_3()
-                    .bg(rgb(0x442c27))
+                    .p(px(tokens.metrics.space_3))
+                    .bg(rgb(design_system::colors::DANGER))
+                    .text_color(rgb(design_system::colors::DANGER_TEXT))
                     .text_sm()
                     .child(error.clone()),
             );
@@ -3481,7 +3489,7 @@ impl Render for StudioShell {
                 .child(center)
                 .child(
                     div()
-                        .w(px(400.))
+                        .w(px(tokens.metrics.agent_panel_width))
                         .flex_shrink_0()
                         .min_h_0()
                         .child(self.panel.clone()),

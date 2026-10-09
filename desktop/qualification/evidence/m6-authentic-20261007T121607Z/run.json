@@ -1,0 +1,35 @@
+{
+  "authentic_status": "not_run",
+  "environment": {
+    "arch": "x86_64",
+    "os": "Linux"
+  },
+  "finished_at": "2026-10-07T12:16:07.530953+00:00",
+  "ledger_updated": false,
+  "mode": "authentic",
+  "notice": "Readiness inventory only: no executable was launched, no credentials were read, and no gate or ledger status was changed.",
+  "providers": {
+    "antigravity": {
+      "detail": "Expected adapter executable is not discoverable on PATH; no provider was launched.",
+      "executable": "antigravity-acp",
+      "status": "blocked"
+    },
+    "claude": {
+      "detail": "Expected adapter executable is not discoverable on PATH; no provider was launched.",
+      "executable": "claude-agent-acp",
+      "status": "blocked"
+    },
+    "codex": {
+      "detail": "Expected adapter executable is not discoverable on PATH; no provider was launched.",
+      "executable": "codex-acp",
+      "status": "blocked"
+    },
+    "pi": {
+      "detail": "Expected adapter executable is not discoverable on PATH; no provider was launched.",
+      "executable": "pi-acp",
+      "status": "blocked"
+    }
+  },
+  "schema": "m6-run/1",
+  "started_at": "2026-10-07T12:16:07.530766+00:00"
+}

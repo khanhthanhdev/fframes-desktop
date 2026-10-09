@@ -1,0 +1,11 @@
+
+running 4 tests
+test a_whole_project_task_has_no_before_evidence_and_says_it_was_not_scoped ... ok
+test a_scene_scope_is_frozen_into_the_task_and_its_first_prompt_carries_references_not_pixels ... ok
+test a_queued_scope_is_visible_and_refused_when_the_displayed_preview_changes ... ok
+test a_failed_before_evidence_render_does_not_settle_candidate_evidence ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.29s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.39s
+     Running tests/scoped_editing.rs (desktop/target/debug/deps/scoped_editing-17faa44a556cf371)

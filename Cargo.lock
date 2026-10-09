@@ -1233,6 +1233,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fframes-studio-intro"
+version = "1.1.0"
+dependencies = [
+ "fframes",
+ "fframes_native_player",
+ "fframes_skia_renderer",
+]
+
+[[package]]
 name = "fframes-studio-protocol"
 version = "0.1.0"
 dependencies = [

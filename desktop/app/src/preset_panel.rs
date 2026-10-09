@@ -8,13 +8,16 @@
 //! preview ([`PresetReport::preview_request`]); a refused, conflicted or unchanged
 //! application requests nothing, and a preview that then fails leaves the previous
 //! playable preview on screen under the shell's "awaiting preview" label. The video
-//! preset's tokens never reach the Studio chrome: the panel is drawn with the shell's own
-//! constants.
+//! preset's tokens never reach the Studio chrome: the panel uses the application design
+//! system, separate from project styling.
 //!
 //! * The **model** half (everything above [`PresetPanel`]) is GPUI-free and unit-testable.
 //! * [`PresetPanel`] renders a [`PresetView`] and emits [`PresetEvent`]s for the shell.
+use crate::design_system::colors::{
+    BORDER, DANGER, DANGER_TEXT, MUTED, PANEL, SUCCESS, TEXT, WARNING,
+};
 use crate::{
-    studio_shell::{ACCENT, BORDER, MUTED, PANEL, TEXT},
+    design_system::{self, ButtonStyle},
     text_input::TextInput,
 };
 use gpui::{
@@ -36,9 +39,6 @@ use studio_engine::{
 use studio_presets::{CssStatus, Design, Package, builtin, css_import::MAX_CSS_BYTES};
 use studio_project::SourceRevision;
 
-const WARNING: u32 = 0x3a3420;
-const SUCCESS: u32 = 0x1f3a2c;
-const DANGER: u32 = 0x442c27;
 const MAX_CSS_LINES: usize = 40;
 
 // ---- catalog ---------------------------------------------------------------------------
@@ -631,34 +631,33 @@ impl PresetPanel {
         let label: SharedString = label.into();
         let action = Rc::new(action);
         let on_click = action.clone();
-        div()
-            .id(id)
-            .role(gpui::Role::Button)
-            .aria_label(label.clone())
-            .tab_index(0)
-            .tab_stop(enabled)
-            .px_2()
-            .py_1()
-            .rounded_md()
-            .border_1()
-            .border_color(rgb(if selected { ACCENT } else { BORDER }))
-            .bg(rgb(PANEL))
-            .text_xs()
-            .text_color(rgb(if enabled { TEXT } else { MUTED }))
-            .opacity(if enabled { 1.0 } else { 0.45 })
-            .focus_visible(|s| s.border_color(rgb(0xffffff)))
-            .on_click(cx.listener(move |this, _, _, cx| {
-                if enabled {
-                    on_click(this, cx);
-                }
-            }))
-            .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
-                if enabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
-                    action(this, cx);
-                    cx.stop_propagation();
-                }
-            }))
-            .child(label)
+        design_system::button(
+            div()
+                .id(id)
+                .role(gpui::Role::Button)
+                .aria_label(label.clone())
+                .tab_index(0)
+                .tab_stop(enabled)
+                .text_xs(),
+            if selected {
+                ButtonStyle::Selected
+            } else {
+                ButtonStyle::Secondary
+            },
+            enabled,
+        )
+        .on_click(cx.listener(move |this, _, _, cx| {
+            if enabled {
+                on_click(this, cx);
+            }
+        }))
+        .on_key_down(cx.listener(move |this, event: &gpui::KeyDownEvent, _, cx| {
+            if enabled && matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                action(this, cx);
+                cx.stop_propagation();
+            }
+        }))
+        .child(label)
     }
 
     fn line(text: impl Into<SharedString>, color: u32) -> gpui::Div {
@@ -791,7 +790,7 @@ impl Render for PresetPanel {
             ));
         }
         for skipped in &view.skipped {
-            list = list.child(Self::line(format!("Skipped: {skipped}"), 0xc8736a));
+            list = list.child(Self::line(format!("Skipped: {skipped}"), DANGER_TEXT));
         }
         root = root.child(list);
         let selected = self

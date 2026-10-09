@@ -1,0 +1,12 @@
+
+running 5 tests
+test capture_outgoing_draft_fails_when_draft_directory_missing ... ok
+test handoff_revision_choice_is_refused_when_source_changes_after_choice ... ok
+test prepare_refuses_when_lease_held_or_writer_active ... ok
+test prepare_with_choice_restart_from_accepted_materializes_fresh_and_preserves_archive ... ok
+test prepare_with_choice_continues_captured_draft_and_preserves_archived_copy ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.20s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.22s
+     Running tests/provider_handoff.rs (desktop/target/debug/deps/provider_handoff-ab7a756ccb55c660)

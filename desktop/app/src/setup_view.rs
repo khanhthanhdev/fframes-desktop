@@ -1,6 +1,10 @@
+use crate::design_system::colors::{
+    ACCENT, BORDER, CANVAS, DANGER_TEXT, MUTED, PANEL, SUCCESS_TEXT, TEXT, WARNING_TEXT,
+};
+use crate::design_system::{self, ButtonStyle};
 use gpui::{
     Context, FontWeight, InteractiveElement, IntoElement, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Window, div, green, red, rgb, white,
+    StatefulInteractiveElement, Styled, Window, div, rgb,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -416,6 +420,38 @@ impl SetupView {
 
         Ok((final_frame, build_time, render_time))
     }
+
+    fn action_button(
+        &self,
+        id: &'static str,
+        label: &'static str,
+        style: ButtonStyle,
+        cx: &mut Context<Self>,
+        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
+    ) -> gpui::Stateful<gpui::Div> {
+        let action = std::rc::Rc::new(action);
+        let on_click = action.clone();
+        design_system::button(
+            div()
+                .id(id)
+                .relative()
+                .role(gpui::Role::Button)
+                .aria_label(label)
+                .tab_index(0),
+            style,
+            true,
+        )
+        .on_click(cx.listener(move |this, _, window, cx| on_click(this, window, cx)))
+        .on_key_down(
+            cx.listener(move |this, event: &gpui::KeyDownEvent, window, cx| {
+                if matches!(event.keystroke.key.as_str(), "enter" | "space") {
+                    action(this, window, cx);
+                    cx.stop_propagation();
+                }
+            }),
+        )
+        .child(label)
+    }
 }
 
 impl Render for SetupView {
@@ -429,13 +465,13 @@ impl Render for SetupView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(white())
+                        .text_color(rgb(TEXT))
                         .child("Checking Host Prerequisites..."),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xAAAAAA))
+                        .text_color(rgb(MUTED))
                         .child("Running read-only preflight probes on compiler, CMake, and graphics libraries..."),
                 ),
 
@@ -452,40 +488,34 @@ impl Render for SetupView {
                         div()
                             .text_sm()
                             .font_weight(FontWeight::BOLD)
-                            .text_color(rgb(0xF59E0B))
+                            .text_color(rgb(WARNING_TEXT))
                             .child("System Prerequisites Needed"),
                     )
                     .child(
                         div()
                             .text_xs()
-                            .text_color(rgb(0xCCCCCC))
+                            .text_color(rgb(TEXT))
                             .child("The following host packages were detected as missing and require user review:"),
                     )
                     .child(
                         div()
                             .p_2()
-                            .bg(rgb(0x0A0A0A))
+                            .bg(rgb(CANVAS))
                             .rounded_sm()
                             .border_1()
-                            .border_color(rgb(0x333333))
+                            .border_color(rgb(BORDER))
                             .text_xs()
-                            .text_color(green())
+                            .text_color(rgb(ACCENT))
                             .child(pkg_cmd),
                     )
                     .child(
-                        div()
-                            .id("btn-recheck")
-                            .px_3()
-                            .py_1()
-                            .bg(rgb(0x2563EB))
-                            .text_color(white())
-                            .text_xs()
-                            .rounded_sm()
-                            .cursor_pointer()
-                            .on_click(cx.listener(|this, _event, _window, cx| {
-                                this.run_preflight(cx);
-                            }))
-                            .child("Re-run Preflight Check"),
+                        self.action_button(
+                            "btn-recheck",
+                            "Re-run Preflight Check",
+                            ButtonStyle::Primary,
+                            cx,
+                            |this, _, cx| this.run_preflight(cx),
+                        ),
                     )
             }
 
@@ -500,13 +530,13 @@ impl Render for SetupView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(white())
+                        .text_color(rgb(TEXT))
                         .child(format!("Installing SDK... ({progress_percent}%)")),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xAAAAAA))
+                        .text_color(rgb(MUTED))
                         .child(step.clone()),
                 ),
 
@@ -518,35 +548,29 @@ impl Render for SetupView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(rgb(0x3B82F6))
+                        .text_color(rgb(ACCENT))
                         .child("Host Preflight Passed — SDK Installation Required"),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xCCCCCC))
+                        .text_color(rgb(TEXT))
                         .child("Host environment verified. Ready to install app-managed toolchain & FFmpeg dependencies."),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x888888))
+                        .text_color(rgb(MUTED))
                         .child(format!("Manifest: {:.16}...", manifest_digest)),
                 )
                 .child(
-                    div()
-                        .id("btn-install-sdk")
-                        .px_3()
-                        .py_1()
-                        .bg(rgb(0x2563EB))
-                        .text_color(white())
-                        .text_xs()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.start_install_and_build(cx);
-                        }))
-                        .child("Install Managed SDK & Build Template"),
+                    self.action_button(
+                        "btn-install-sdk",
+                        "Install Managed SDK & Build Template",
+                        ButtonStyle::Primary,
+                        cx,
+                        |this, _, cx| this.start_install_and_build(cx),
+                    ),
                 ),
 
             SetupState::SdkReady {
@@ -560,46 +584,40 @@ impl Render for SetupView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(green())
+                        .text_color(rgb(SUCCESS_TEXT))
                         .child("Managed SDK Ready"),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0xCCCCCC))
+                        .text_color(rgb(TEXT))
                         .child(format!("Active location: {:?}", active_path)),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x888888))
+                        .text_color(rgb(MUTED))
                         .child(format!("Manifest Digest: {:.16}...", manifest_digest)),
                 )
                 .child(
-                    div()
-                        .id("btn-create-proj")
-                        .px_3()
-                        .py_1()
-                        .bg(rgb(0x059669))
-                        .text_color(white())
-                        .text_xs()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.start_install_and_build(cx);
-                        }))
-                        .child("Build and Render Template Project"),
+                    self.action_button(
+                        "btn-create-proj",
+                        "Build and Render Template Project",
+                        ButtonStyle::Primary,
+                        cx,
+                        |this, _, cx| this.start_install_and_build(cx),
+                    ),
                 ),
             SetupState::CreatingProject { name } => div()
                 .text_sm()
                 .font_weight(FontWeight::BOLD)
-                .text_color(white())
+                .text_color(rgb(TEXT))
                 .child(format!("Generating project '{name}' outside workspace...")),
 
             SetupState::Building { name } => div()
                 .text_sm()
                 .font_weight(FontWeight::BOLD)
-                .text_color(white())
+                .text_color(rgb(TEXT))
                 .child(format!("Building '{name}' with isolated SDK toolchain...")),
 
             SetupState::Rendered {
@@ -614,25 +632,25 @@ impl Render for SetupView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(green())
+                        .text_color(rgb(SUCCESS_TEXT))
                         .child("Project Rendered Successfully!"),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(white())
+                        .text_color(rgb(TEXT))
                         .child(format!("Build duration: {:?}", build_time)),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(white())
+                        .text_color(rgb(TEXT))
                         .child(format!("Frame render duration: {:?}", render_time)),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(rgb(0x888888))
+                        .text_color(rgb(MUTED))
                         .child(format!("Output PNG: {:?}", frame_path)),
                 ),
 
@@ -644,29 +662,23 @@ impl Render for SetupView {
                     div()
                         .text_sm()
                         .font_weight(FontWeight::BOLD)
-                        .text_color(red())
+                        .text_color(rgb(DANGER_TEXT))
                         .child("Setup / Build Failed"),
                 )
                 .child(
                     div()
                         .text_xs()
-                        .text_color(white())
+                        .text_color(rgb(TEXT))
                         .child(error.clone()),
                 )
                 .child(
-                    div()
-                        .id("btn-retry")
-                        .px_3()
-                        .py_1()
-                        .bg(rgb(0xDC2626))
-                        .text_color(white())
-                        .text_xs()
-                        .rounded_sm()
-                        .cursor_pointer()
-                        .on_click(cx.listener(|this, _event, _window, cx| {
-                            this.run_preflight(cx);
-                        }))
-                        .child("Retry"),
+                    self.action_button(
+                        "btn-retry",
+                        "Retry",
+                        ButtonStyle::Destructive,
+                        cx,
+                        |this, _, cx| this.run_preflight(cx),
+                    ),
                 ),
         };
 
@@ -674,10 +686,10 @@ impl Render for SetupView {
             .flex()
             .flex_col()
             .p_4()
-            .bg(rgb(0x181818))
-            .rounded_md()
+            .bg(rgb(PANEL))
+            .rounded_lg()
             .border_1()
-            .border_color(rgb(0x2A2A2A))
+            .border_color(rgb(BORDER))
             .child(content)
     }
 }

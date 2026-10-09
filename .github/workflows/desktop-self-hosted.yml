@@ -1,0 +1,78 @@
+name: Desktop self-hosted validation
+
+on:
+  push:
+    paths:
+      - "desktop/**"
+      - "fframes-studio-*/**"
+      - "fframes/**"
+      - "fframes-media/**"
+      - "svgr-macro/**"
+      - "media-dir-macro/**"
+      - "webvtt-parser/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - ".github/workflows/desktop-self-hosted.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-self-hosted-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Desktop validation (self-hosted Linux)
+    runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt, clippy
+      - name: Install Linux native prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang libclang-dev cmake pkg-config libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm
+          llvm_lib="$(find /usr/lib -name "libclang.so" 2>/dev/null | head -n1)"
+          if [ -n "$llvm_lib" ]; then
+            echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
+          fi
+      - name: Check formatting
+        run: cargo fmt --manifest-path desktop/Cargo.toml --all --check
+      - name: Test desktop workspace
+        run: cargo test --locked --manifest-path desktop/Cargo.toml -p studio-project -p studio-engine -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio
+      - name: Lint desktop workspace
+        run: cargo clippy --locked --manifest-path desktop/Cargo.toml -p studio-project -p studio-engine -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio --all-targets -- -D warnings
+      - name: Test studio protocol and runtime
+        run: cargo test --locked -p fframes-studio-protocol -p fframes-studio-runtime
+
+  windows:
+    name: Desktop validation (self-hosted Windows)
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 90
+    env:
+      CARGO_INCREMENTAL: "0"
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CARGO_PROFILE_TEST_DEBUG: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "1.98.1"
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --manifest-path desktop/Cargo.toml --all --check
+      - name: Test desktop workspace
+        run: cargo test --locked --manifest-path desktop/Cargo.toml -p studio-project -p studio-engine -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio
+      - name: Lint desktop workspace
+        run: cargo clippy --locked --manifest-path desktop/Cargo.toml -p studio-project -p studio-engine -p studio-bootstrap -p studio-sdk -p studio-agent-spike -p fframes-studio --all-targets -- -D warnings
+      - name: Test studio protocol and runtime
+        run: cargo test --locked -p fframes-studio-protocol -p fframes-studio-runtime

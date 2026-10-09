@@ -1,0 +1,32 @@
+
+running 25 tests
+test a_source_edit_after_launch_refuses_with_the_candidate_preserved ... ok
+test an_object_that_decays_after_planning_rolls_back_cleanly ... ok
+test a_write_through_an_open_descriptor_after_displacement_is_retained ... ok
+test a_journal_append_failure_suspends_mutation_and_the_next_open_recovers ... ok
+test a_blocked_gate_refuses_every_publication_and_keeps_the_candidate_ready ... ok
+test apply_publishes_a_multi_file_set_as_a_validated_task_revision ... ok
+test a_filesystem_with_only_the_link_pair_blocks_apply_and_undo_without_touching_files ... ok
+test an_in_place_write_between_verification_and_displacement_is_retained ... ok
+test an_external_edit_between_preparing_and_publishing_undo_refuses ... ok
+test an_editor_save_by_rename_during_displacement_keeps_the_new_file_in_place ... ok
+test a_late_descriptor_write_before_the_commit_is_caught_by_the_final_slot_check ... ok
+test a_destination_recreated_between_displacement_and_publication_is_never_overwritten ... ok
+test conflicts_block_new_mutation_until_resolved_and_survive_reopen ... ok
+test the_publication_primitive_is_proved_on_this_filesystem_before_apply_is_enabled ... ok
+test a_task_history_change_after_launch_fences_the_task ... ok
+test directory_swaps_and_links_halt_without_following ... ok
+test dirty_imported_bytes_are_the_task_base_and_the_old_checkpoint_is_never_restored ... ok
+test a_nonpassing_or_foreign_report_never_authorizes_publication ... ok
+test a_declined_publication_entry_changes_nothing_for_apply_and_undo ... ok
+test corrupt_or_missing_candidate_objects_fail_before_any_byte_changes ... ok
+test undo_conflicts_on_a_touched_file_and_changes_nothing ... ok
+test review_policy_defaults_to_automatic_and_manual_review_waits_for_an_explicit_apply ... ok
+test disk_full_while_staging_rolls_back_with_no_trace ... ok
+test links_and_special_files_at_a_destination_are_refused_at_planning ... ok
+test undo_reverses_only_its_own_files_and_keeps_unrelated_external_edits ... ok
+
+test result: ok. 25 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.23s
+
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.24s
+     Running tests/edit_transaction.rs (desktop/target/debug/deps/edit_transaction-b7507c7c7f9c5a9f)
