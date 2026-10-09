@@ -18,8 +18,14 @@ fn overlay_keeps_source_and_sdk_unchanged_and_rejects_external_dependencies() {
         fs::write(dir.join("Cargo.toml"), "[package]").unwrap();
     }
     fs::create_dir_all(sdk.join("framework/vendor")).unwrap();
-    let project =
-        studio_project::create(&root, "Video", sdk_pin(&compatibility), "1.1.0", "0.1.0").unwrap();
+    let project = studio_project::create(
+        &root,
+        "Video",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
+        "0.1.0",
+    )
+    .unwrap();
     let build = materialize(
         &project,
         &sdk,
@@ -74,8 +80,14 @@ fn contained_dependency_with_absolute_path_is_rewritten_to_copied_workspace() {
     }
     fs::create_dir_all(sdk.join("framework/vendor")).unwrap();
 
-    let _project =
-        studio_project::create(&root, "Video", sdk_pin(&compatibility), "1.1.0", "0.1.0").unwrap();
+    let _project = studio_project::create(
+        &root,
+        "Video",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
+        "0.1.0",
+    )
+    .unwrap();
 
     let helper = root.join("helper");
     fs::create_dir_all(&helper).unwrap();
@@ -126,7 +138,14 @@ fn cancelled_copy_removes_partial_tree_and_preserves_captured_source() {
     let sdk = temp.path().join("sdk");
     fs::create_dir(&sdk).unwrap();
     let compatibility = CompatibilityManifest::default_linux_x64();
-    studio_project::create(&root, "Video", sdk_pin(&compatibility), "1.1.0", "0.1.0").unwrap();
+    studio_project::create(
+        &root,
+        "Video",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
+        "0.1.0",
+    )
+    .unwrap();
     let bytes = vec![93; 2 * 1024 * 1024];
     fs::write(root.join("media/large.bin"), &bytes).unwrap();
     let project = studio_project::open(&root).unwrap();

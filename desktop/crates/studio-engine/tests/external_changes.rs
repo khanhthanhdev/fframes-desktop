@@ -9,11 +9,12 @@ fn source_reads_do_not_dirty_the_install_fence_but_external_writes_do() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -61,11 +62,12 @@ fn external_edit_rejects_late_completion_and_preserves_baseline_and_draft() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -109,11 +111,12 @@ fn invalid_source_interrupts_work_and_edit_back_cannot_resurrect_it() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("video");
         let paths = AppPaths::new(temp.path().join("history")).unwrap();
+        let compatibility = CompatibilityManifest::default_linux_x64();
         let project = studio_project::create(
             &root,
             "Video",
-            sdk_pin(&CompatibilityManifest::default_linux_x64()),
-            "1.1.0",
+            sdk_pin(&compatibility),
+            &compatibility.fframes_version,
             "0.1.0",
         )
         .unwrap();
@@ -198,11 +201,12 @@ fn restore_comparison_is_strict_and_independent_export_survives_invalid_source()
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();

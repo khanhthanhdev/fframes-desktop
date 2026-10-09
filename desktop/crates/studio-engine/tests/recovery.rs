@@ -32,11 +32,12 @@ fn killed_at_every_durable_job_boundary_replays_without_source_overwrite() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("video");
         let paths = AppPaths::new(temp.path().join("history")).unwrap();
+        let compatibility = CompatibilityManifest::default_linux_x64();
         studio_project::create(
             &root,
             "Video",
-            sdk_pin(&CompatibilityManifest::default_linux_x64()),
-            "1.1.0",
+            sdk_pin(&compatibility),
+            &compatibility.fframes_version,
             "0.1.0",
         )
         .unwrap();
@@ -115,11 +116,12 @@ fn missing_object_and_newer_database_fail_without_mutating_source() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     let project = studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -155,11 +157,12 @@ fn failed_checkpoint_transitions_to_failed_allowing_retry() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     let _project = studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -186,11 +189,12 @@ fn missing_declared_asset_allows_checkpoint_recovery() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     let _project = studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -219,11 +223,12 @@ fn database_failure_after_journal_commit_does_not_rollback_accepted() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     let _project = studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -291,11 +296,12 @@ fn database_failure_during_startup_settles_job_and_preserves_draft_for_retry() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("video");
         let paths = AppPaths::new(temp.path().join("history")).unwrap();
+        let compatibility = CompatibilityManifest::default_linux_x64();
         studio_project::create(
             &root,
             "Video",
-            sdk_pin(&CompatibilityManifest::default_linux_x64()),
-            "1.1.0",
+            sdk_pin(&compatibility),
+            &compatibility.fframes_version,
             "0.1.0",
         )
         .unwrap();
@@ -345,11 +351,12 @@ fn missing_asset_during_checkpoint_never_accepts_and_retry_after_repair_succeeds
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -393,11 +400,12 @@ fn failed_invalidation_write_cannot_resurrect_an_old_result_after_source_repair(
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -429,11 +437,12 @@ fn failed_draft_publication_retains_attempt_and_retry_uses_a_new_directory() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     let project = studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();

@@ -10,11 +10,12 @@ fn complete_foundation_flow_retains_source_assets_draft_and_checkpoint() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("project");
     let paths = AppPaths::new(temp.path().join("app")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();

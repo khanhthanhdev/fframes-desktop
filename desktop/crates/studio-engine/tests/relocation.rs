@@ -9,11 +9,12 @@ fn relocation_relinks_but_duplicate_existing_id_is_never_attached() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     let project = studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
@@ -58,11 +59,12 @@ fn both_unversioned_histories_reopen_relocate_and_export_without_rewriting_check
             let temp = tempfile::tempdir().unwrap();
             let root = temp.path().join("video");
             let paths = AppPaths::new(temp.path().join("history")).unwrap();
+            let compatibility = CompatibilityManifest::default_linux_x64();
             let project = studio_project::create(
                 &root,
                 "Video",
-                sdk_pin(&CompatibilityManifest::default_linux_x64()),
-                "1.1.0",
+                sdk_pin(&compatibility),
+                &compatibility.fframes_version,
                 "0.1.0",
             )
             .unwrap();

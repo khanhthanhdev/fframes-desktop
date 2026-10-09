@@ -268,7 +268,7 @@ fn source(samples: &[[f32; 2]], rate: u32) -> Arc<studio_engine::PreparedAudioSo
         &root,
         "AudioTest",
         sdk_pin(&compatibility),
-        "1.1.0",
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();

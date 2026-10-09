@@ -49,11 +49,12 @@ pub fn fixture() -> Fx {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
     let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = CompatibilityManifest::default_linux_x64();
     studio_project::create(
         &root,
         "Video",
-        sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();

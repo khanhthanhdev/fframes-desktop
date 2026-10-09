@@ -111,7 +111,15 @@ pub fn manifest() -> CompatibilityManifest {
 }
 
 pub fn create_project(root: &Path) -> OpenProject {
-    studio_project::create(root, "Video", sdk_pin(&manifest()), "1.1.0", "0.1.0").unwrap()
+    let compatibility = manifest();
+    studio_project::create(
+        root,
+        "Video",
+        sdk_pin(&compatibility),
+        &compatibility.fframes_version,
+        "0.1.0",
+    )
+    .unwrap()
 }
 
 /// Rewrite `src/lib.rs` so the project has a different immutable revision.

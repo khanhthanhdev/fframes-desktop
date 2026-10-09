@@ -6,11 +6,12 @@ use studio_engine::{Controller, JobKind, JobResult, app_paths::AppPaths};
 use studio_sdk::{CompatibilityManifest, SdkInstaller};
 
 fn create_test_project(root: &std::path::Path) {
+    let compatibility = CompatibilityManifest::default_linux_x64();
     studio_project::create(
         root,
         "Export source",
-        studio_engine::build_materialization::sdk_pin(&CompatibilityManifest::default_linux_x64()),
-        "1.1.0",
+        studio_engine::build_materialization::sdk_pin(&compatibility),
+        &compatibility.fframes_version,
         "0.1.0",
     )
     .unwrap();
