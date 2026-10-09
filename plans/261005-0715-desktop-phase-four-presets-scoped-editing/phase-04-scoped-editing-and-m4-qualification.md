@@ -149,7 +149,7 @@ retry, infer a pass from partial output, or use an unavailable advisor as a gate
 
 | Risk | Response |
 |---|---|
-| Selected scope is stale after queued task or rebuild | Bind to project/source/preview identity; re-resolve only exact scene identity on matching compiled source; otherwise ask for reselection and preserve the brief without launching a mis-scoped task. |
+| Selected scope is stale after queued task or rebuild | Bind to project/source/preview identity; re-resolve only exact scene identity on matching compiled source; otherwise ask for reselection and preserve the brief without launching an incorrectly scoped task. |
 | Agent changes shared helper or preset token and affects outside frames | Keep broadening for Rust/Cargo/style/shared or unknown changes; show full-project coverage requirement and never imply scope isolation. |
 | Screenshot/source refs cross task revisions or leak project paths | Bind refs to task/project/revision, keep them app-owned/bounded, redact outside-project paths and expire/release on close. |
 | Best-effort source search claims an exact implementation incorrectly | Return ambiguity/confidence and all bounded candidates; no automatic spans or exact-selection claim in M4. |

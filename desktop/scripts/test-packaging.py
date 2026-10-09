@@ -938,7 +938,7 @@ class M3LedgerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported evidence type"):
                 qualification.scan_for_secrets(odd, "evidence")
             text = directory / "latin.log"
-            text.write_bytes(b"caf\xe9")
+            text.write_bytes(bytes((0x63, 0x61, 0x66, 0xE9)))
             with self.assertRaisesRegex(ValueError, "not valid UTF-8"):
                 qualification.scan_for_secrets(text, "evidence")
 

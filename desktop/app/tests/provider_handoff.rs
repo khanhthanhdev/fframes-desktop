@@ -54,7 +54,12 @@ fn session_manifest_lifecycle_and_redaction() {
     };
 
     assert!(manifest.is_resumable());
-    assert_eq!(manifest.redacted_id(), "sessio…5678");
+    let redacted_id = manifest.redacted_id();
+    let wire_session_id = manifest.wire_session_id.as_deref().unwrap();
+    assert!(redacted_id.starts_with(&wire_session_id[..6]));
+    assert!(redacted_id.ends_with("…5678"));
+    assert!(!redacted_id.contains(wire_session_id));
+    assert!(!redacted_id.contains("token-secret"));
 
     fframes_studio::agent_workflow::session_store::SessionStore::save(
         &app_paths,

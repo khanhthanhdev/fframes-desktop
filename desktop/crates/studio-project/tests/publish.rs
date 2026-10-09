@@ -371,7 +371,7 @@ fn the_source_inventory_excludes_exact_internal_files_but_never_user_files() {
     let with_internal = SourceInventory::scan(root).unwrap();
     assert_eq!(with_internal.revision, plain.revision);
     assert_eq!(with_internal.files, plain.files);
-    // Look-alikes are user content.
+    // Similar-looking filenames are user content.
     fs::write(root.join(".fframes-tx-mine.stage"), "user").unwrap();
     fs::write(root.join(format!(".fframes-tx-{id}-0.stage.bak")), "user").unwrap();
     let with_user = SourceInventory::scan(root).unwrap();
