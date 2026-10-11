@@ -64,10 +64,56 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: "1.98.1"
-          components: rustfmt, clippy
+      # The runner service does not inherit the interactive profile: it has no ~/.cargo/bin,
+      # FFMPEG_DIR, LIBCLANG_PATH or `python` (spawned by test fixtures) on its environment.
+      # setup-rust-toolchain is deliberately not used here: on this shared machine it reinstalled
+      # rustup with a GNU default host, and the job left ~/.cargo/bin without rustup.exe.
+      - name: Prepare the Windows build environment
+        shell: powershell
+        run: |
+          $ErrorActionPreference = "Stop"
+          # AppendAllText writes UTF-8 without a BOM, which Windows PowerShell's Out-File would add.
+          function Add-Line([string]$File, [string]$Line) { [IO.File]::AppendAllText($File, "$Line`n") }
+          $cargoBin = Join-Path $env:USERPROFILE ".cargo\bin"
+          if (-not (Test-Path (Join-Path $cargoBin "rustup.exe"))) { throw "rustup is not installed for the runner user ($cargoBin)" }
+          Add-Line $env:GITHUB_PATH $cargoBin
+          # An explicit MSVC triple, so the result never depends on rustup's default host.
+          & (Join-Path $cargoBin "rustup.exe") toolchain install 1.98.1-x86_64-pc-windows-msvc --profile minimal --component rustfmt --component clippy --no-self-update
+          if ($LASTEXITCODE -ne 0) { throw "rustup toolchain install failed" }
+          Add-Line $env:GITHUB_ENV "RUSTUP_TOOLCHAIN=1.98.1-x86_64-pc-windows-msvc"
+
+          # Same pinned FFmpeg build as the release workflow, kept in the runner's tool cache.
+          $distribution = "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-shared-9.0"
+          $release = "autobuild-2026-10-07-13-07"
+          $expected = "124799F0643A75EB84A64A589F1ABAC8F81732587942F3F34458688036153F0D"
+          $cache = Join-Path $env:RUNNER_TOOL_CACHE "fframes-ffmpeg"
+          $ffmpeg = Join-Path $cache $distribution
+          if (-not (Test-Path (Join-Path $ffmpeg "bin\avcodec-63.dll"))) {
+            New-Item -ItemType Directory -Force -Path $cache | Out-Null
+            $archive = Join-Path $env:RUNNER_TEMP "$distribution.zip"
+            Invoke-WebRequest -UseBasicParsing "https://github.com/BtbN/FFmpeg-Builds/releases/download/$release/$distribution.zip" -OutFile $archive
+            if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $expected) { throw "FFmpeg download checksum mismatch" }
+            # Windows' bsdtar reads ZIPs and copes with long paths, unlike Expand-Archive. Extract
+            # into a staging folder and move it into place, so a failure leaves no partial cache.
+            $staging = Join-Path $cache ".partial"
+            Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
+            New-Item -ItemType Directory -Path $staging | Out-Null
+            & "$env:SystemRoot\System32\tar.exe" -xf $archive -C $staging
+            if ($LASTEXITCODE -ne 0) { Remove-Item -LiteralPath $staging -Recurse -Force; throw "FFmpeg extraction failed" }
+            Remove-Item -LiteralPath $ffmpeg -Recurse -Force -ErrorAction SilentlyContinue
+            Move-Item -LiteralPath (Join-Path $staging $distribution) -Destination $ffmpeg
+            Remove-Item -LiteralPath $staging, $archive -Recurse -Force
+          }
+          Add-Line $env:GITHUB_ENV "FFMPEG_DIR=$ffmpeg"
+          Add-Line $env:GITHUB_PATH (Join-Path $ffmpeg "bin")
+
+          $llvm = Join-Path $env:ProgramFiles "LLVM\bin"
+          if (-not (Test-Path (Join-Path $llvm "libclang.dll"))) { throw "LLVM (libclang) not found at $llvm" }
+          Add-Line $env:GITHUB_ENV "LIBCLANG_PATH=$llvm"
+
+          $python = & py -3 -c "import os, sys; print(os.path.dirname(sys.executable))"
+          if ($LASTEXITCODE -ne 0 -or -not $python) { throw "No Python 3 found through the py launcher" }
+          Add-Line $env:GITHUB_PATH $python
       - name: Check formatting
         run: cargo fmt --manifest-path desktop/Cargo.toml --all --check
       - name: Test desktop workspace

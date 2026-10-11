@@ -1,6 +1,8 @@
 param(
     [Parameter(Mandatory = $true)]
-    [string]$PackagePath
+    [string]$PackagePath,
+    # Also builds the per-user Setup.exe here, signing it and its uninstaller.
+    [string]$InstallerPath
 )
 
 Set-StrictMode -Version Latest
@@ -100,6 +102,20 @@ try {
     & python $finalizer $resolvedPackage
     if ($LASTEXITCODE -ne 0) {
         Stop-Signing "signed package inventory/archive refresh failed (exit $LASTEXITCODE)"
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($InstallerPath)) {
+        # Inno Setup substitutes $q with a quote and $f with the quoted file it signs.
+        $signCommand = '$q' + $signToolPath + '$q sign /sha1 ' + $certificate.Thumbprint + ' /s My /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 /d $qfframes Studio Setup$q $f'
+        $installerScript = Join-Path $PSScriptRoot "package-windows-installer.py"
+        & python $installerScript --source $resolvedPackage --out $InstallerPath --sign-command $signCommand
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Signing "signed installer build failed (exit $LASTEXITCODE)"
+        }
+        & $signToolPath verify /pa /all /v $InstallerPath
+        if ($LASTEXITCODE -ne 0) {
+            Stop-Signing "Authenticode verification failed for the installer (exit $LASTEXITCODE)"
+        }
     }
 }
 finally {

@@ -150,9 +150,9 @@
       "kind": "authentic",
       "status": "not_run",
       "criteria": "A Windows run proves displayed-frame semantic selection and hash-verified source-anchor retrieval through the managed SDK.",
-      "notes": "No Windows host is available in this environment.",
+      "notes": "Windows development evidence now exists (m0-results.json additional_platforms, evidence/windows-m0-2026-10-11): the desktop workspace suite passes on x86_64-pc-windows-msvc and the packaged app installs the managed SDK, compiles a worker and presents frames with native input on a Windows Server 2022 VM. Displayed-frame selection of intro.title through the letterboxed preview passed there with SendInput, but the complete M5 workflow (scoped prompt, Apply/Undo, reopen) was not run.",
       "evidence": [],
-      "prerequisite": "Run the complete M5 development workflow on a Windows host with native input."
+      "prerequisite": "Run the complete M5 workflow on a Windows host with native input and an authenticated provider."
     },
     "auth_macos": {
       "kind": "authentic",

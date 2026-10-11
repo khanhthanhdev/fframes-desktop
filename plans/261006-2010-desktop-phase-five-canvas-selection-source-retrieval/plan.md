@@ -61,4 +61,8 @@ Focused stage checks, both Cargo workspace test suites, formatter/clippy checks,
 
 2026-10-06: Remediated review findings across scope validation/labels, UTF-8 source spans/snippet windows/helper attribution, optional worker capability negotiation, duplicate scene identities, metadata bounds, task-tool schemas/errors, canvas status/modifier/redraw behavior, and qualification contracts. Added a runtime-string SVG fragment regression, restored the full repository `AGENTS.md` guidance, and refreshed the resource measurement plus hash-bound proof. Focused protocol/runtime/core/project/engine/app tests and both Rust format checks pass; all authentic-provider, physical-input and cross-platform gates remain not_run.
 
+## Windows development run (2026-10-10)
+
+On 2026-10-10 a Windows Server 2022 x64 VM (virtual RDP display, no GPU) ran the Windows development checks: the full desktop workspace suite (79 test targets) passes on MSVC, the Windows SDK assembles with its offline double build, and the packaged app installs the managed SDK into a fresh home, compiles a worker, presents 1,000 frames and accepts native SendInput typing and preview selection with no leftover processes. Results and evidence are in the [M0 ledger](../../desktop/qualification/m0-results.json) under `additional_platforms`. Displayed-frame selection through the letterboxed preview passed there with native input. `auth_windows` in the [M5 ledger](../../desktop/qualification/m5-results.json) stays `not_run` because the full scoped workflow needs an authenticated provider.
+
 <!-- slug: desktop-phase-five-canvas-selection-source-retrieval -->

@@ -11,7 +11,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match args[1].as_str() {
         "doctor" => {
             let json_mode = args.iter().any(|a| a == "--json");
-            let manifest = CompatibilityManifest::default_linux_x64();
+            let manifest = packaged_manifest()?;
             let report = Doctor::run_host_preflight(&manifest);
 
             if json_mode {
@@ -58,6 +58,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     Ok(())
+}
+
+/// The packaged SDK's manifest (`FFRAMES_SDK_BUNDLE`, else `<package>/sdk` beside `bin/`),
+/// so the doctor checks this platform's target; the Linux default only without a package.
+fn packaged_manifest() -> Result<CompatibilityManifest, Box<dyn std::error::Error>> {
+    let bundle = std::env::var_os("FFRAMES_SDK_BUNDLE")
+        .map(PathBuf::from)
+        .or_else(|| {
+            let exe = std::env::current_exe().ok()?;
+            Some(exe.parent()?.parent()?.join("sdk"))
+        });
+    match bundle.map(|dir| dir.join("compatibility.json")) {
+        Some(path) if path.is_file() => Ok(CompatibilityManifest::from_json_str(
+            &std::fs::read_to_string(path)?,
+        )?),
+        _ => Ok(CompatibilityManifest::default_linux_x64()),
+    }
 }
 
 fn print_usage() {

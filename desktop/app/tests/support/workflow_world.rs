@@ -34,6 +34,9 @@ mod preview_fixture;
 const WAIT: Duration = Duration::from_secs(90);
 const GOOD_CONFIG: &str = r#"{"frames":120,"tracks":[[0.0,2.0]],"audio":"tone","pixel":40}"#;
 
+/// The scripted agent's interpreter; Windows Python installs provide `python`, not `python3`.
+const PYTHON: &str = if cfg!(windows) { "python" } else { "python3" };
+
 fn agent_script() -> String {
     format!("{}/tests/support/acp-agent.py", env!("CARGO_MANIFEST_DIR"))
 }
@@ -282,10 +285,10 @@ impl World {
             (Some(executable), _) => executable.clone(),
             (None, Some((first, rest))) => {
                 args.extend(rest.iter().cloned());
-                args.push("python3".into());
+                args.push(PYTHON.into());
                 first.clone()
             }
-            (None, None) => "python3".to_owned(),
+            (None, None) => PYTHON.to_owned(),
         };
         args.push(agent_script());
         args.push(self.agent.to_string_lossy().into_owned());

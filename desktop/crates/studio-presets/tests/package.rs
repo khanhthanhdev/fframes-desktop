@@ -178,7 +178,13 @@ fn symlinks_and_special_files_are_refused() {
 #[test]
 fn traversal_and_non_portable_paths_are_refused() {
     let (temp, src) = source_dir(&base());
-    fs::write(src.join("bad:name.txt"), b"x").unwrap();
+    if cfg!(windows) {
+        // NTFS reads `bad:name.txt` as a data stream of `bad`; a verbatim (`\\?\`) path is
+        // the route by which a trailing dot, invalid in portable paths, reaches the disk.
+        fs::write(fs::canonicalize(&src).unwrap().join("bad."), b"x").unwrap();
+    } else {
+        fs::write(src.join("bad:name.txt"), b"x").unwrap();
+    }
     let e = import_dir(&src, &temp.path().join("store/x")).unwrap_err();
     assert!(e.has(Code::InvalidPath), "{e}");
     // Manifest declared traversal never reaches the filesystem: ProjectPath rejects it.

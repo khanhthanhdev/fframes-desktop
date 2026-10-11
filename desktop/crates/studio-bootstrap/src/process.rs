@@ -74,7 +74,13 @@ impl ChildEnvironment {
         #[cfg(windows)]
         const ALLOWED_KEYS: &[&str] = &[
             "SystemRoot",
+            "SystemDrive",
             "WINDIR",
+            // rustc locates the MSVC linker through the Visual Studio setup instances under
+            // %ProgramData% (and vswhere under Program Files) when no developer prompt is set.
+            "ProgramData",
+            "ProgramFiles",
+            "ProgramFiles(x86)",
             "APPDATA",
             "LOCALAPPDATA",
             "USERPROFILE",
@@ -138,12 +144,27 @@ impl ChildEnvironment {
         let path_str = path.as_ref().to_string_lossy().to_string();
         let path_key = if cfg!(windows) { "Path" } else { "PATH" };
 
-        let current_path = self
-            .vars
-            .get("PATH")
-            .or_else(|| self.vars.get("Path"))
-            .cloned()
-            .unwrap_or_default();
+        // Windows variable names are case-insensitive: fold every spelling (the host
+        // allowlist reads `PATH`) into the one key written here, preferring that key's
+        // value, so a second prepend extends the first instead of the host value.
+        let current_path = if cfg!(windows) {
+            let spellings: Vec<String> = self
+                .vars
+                .keys()
+                .filter(|key| key.eq_ignore_ascii_case("PATH"))
+                .cloned()
+                .collect();
+            let mut current = None;
+            for key in spellings {
+                let value = self.vars.remove(&key);
+                if key == path_key || current.is_none() {
+                    current = value.or(current);
+                }
+            }
+            current.unwrap_or_default()
+        } else {
+            self.vars.get("PATH").cloned().unwrap_or_default()
+        };
         let new_path = if current_path.is_empty() {
             path_str
         } else {
@@ -1202,8 +1223,10 @@ pub fn spawn_tracked(opts: SpawnOptions) -> Result<TrackedChild, ProcessError> {
                 ));
             }
 
-            // Spawn suspended so it cannot execute or break away before assignment
-            command.creation_flags(CREATE_SUSPENDED);
+            // Spawn suspended so it cannot execute or break away before assignment, and
+            // without a console window: the studio is a GUI process, so every console child
+            // (cargo, the worker, .cmd adapters) would otherwise open its own.
+            command.creation_flags(CREATE_SUSPENDED | CREATE_NO_WINDOW);
             let child = command.spawn().map_err(|source| {
                 CloseHandle(job);
                 ProcessError::SpawnFailed {
@@ -1512,6 +1535,28 @@ mod tests {
 
         #[cfg(unix)]
         assert_eq!(env.get("PATH"), Some("/custom/bin:/usr/bin"));
+    }
+
+    /// The host allowlist stores `PATH`; on Windows every prepend must build on the last
+    /// one (toolchain, then FFmpeg DLLs) and leave a single spelling for the child.
+    #[cfg(windows)]
+    #[test]
+    fn test_child_environment_repeated_prepend_keeps_every_entry_on_windows() {
+        let mut env = ChildEnvironment::empty();
+        env.set("PATH", r"C:\host");
+        env.prepend_path(r"C:\sdk\toolchain\bin");
+        env.prepend_path(r"C:\sdk\ffmpeg\bin");
+
+        assert_eq!(
+            env.get("Path"),
+            Some(r"C:\sdk\ffmpeg\bin;C:\sdk\toolchain\bin;C:\host")
+        );
+        assert_eq!(
+            env.iter()
+                .filter(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+                .count(),
+            1
+        );
     }
 
     #[test]

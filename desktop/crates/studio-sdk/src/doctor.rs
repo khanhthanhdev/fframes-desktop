@@ -71,12 +71,96 @@ impl DoctorReport {
 
         if !self.missing_system_packages.is_empty() {
             out.push_str(&format!(
-                "\nRequired system packages to install (reviewed by user):\n  sudo apt-get install -y {}\n",
-                self.missing_system_packages.join(" ")
+                "\nRequired system packages to install (reviewed by user):\n  {}\n",
+                install_hint(&self.missing_system_packages)
             ));
         }
 
         out
+    }
+}
+
+/// How the user installs missing host prerequisites on this platform.
+/// A probe process that opens no console window when the doctor runs inside the GUI app.
+fn probe_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+    #[allow(unused_mut)]
+    let mut command = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
+}
+
+pub fn install_hint(packages: &[String]) -> String {
+    if cfg!(windows) {
+        format!(
+            "Install with the Visual Studio Installer or LLVM setup: {}",
+            packages.join(", ")
+        )
+    } else {
+        format!("sudo apt-get install -y {}", packages.join(" "))
+    }
+}
+
+const WINDOWS_MSVC_PACKAGE: &str =
+    "Visual Studio Build Tools with the \"Desktop development with C++\" workload";
+const WINDOWS_LLVM_PACKAGE: &str =
+    "LLVM (libclang) from https://github.com/llvm/llvm-project/releases";
+
+/// The installation path of a Visual Studio instance with the x64 MSVC tools, found the way
+/// rustc finds the linker (the Visual Studio setup registry via vswhere), not through PATH:
+/// `cl.exe` is only on PATH inside a developer prompt.
+fn windows_msvc_installation() -> Option<String> {
+    let program_files =
+        std::env::var_os("ProgramFiles(x86)").or_else(|| std::env::var_os("ProgramFiles"))?;
+    let vswhere = Path::new(&program_files).join(r"Microsoft Visual Studio\Installer\vswhere.exe");
+    let output = probe_command(vswhere)
+        .args([
+            "-latest",
+            "-products",
+            "*",
+            "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+            "-property",
+            "installationPath",
+        ])
+        .output()
+        .ok()?;
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    (output.status.success() && !path.is_empty()).then_some(path)
+}
+
+/// libclang for bindgen, resolved the same way `SdkEnvironment` does on Windows.
+fn windows_libclang() -> Option<String> {
+    std::env::var("LIBCLANG_PATH")
+        .ok()
+        .into_iter()
+        .chain([r"C:\Program Files\LLVM\bin".to_owned()])
+        .find(|dir| Path::new(dir).join("libclang.dll").is_file())
+}
+
+fn found_or_missing(
+    id: &str,
+    name: &str,
+    description: &str,
+    found: Option<String>,
+    package: &str,
+) -> DoctorItem {
+    DoctorItem {
+        id: id.into(),
+        name: name.into(),
+        description: description.into(),
+        status: if found.is_some() {
+            ProbeStatus::Pass
+        } else {
+            ProbeStatus::Fail
+        },
+        failure_reason: found.is_none().then(|| format!("{name} was not found")),
+        package_to_install: found.is_none().then(|| package.into()),
+        observed_version_or_path: found,
     }
 }
 
@@ -119,105 +203,129 @@ impl Doctor {
             });
         }
 
-        // 2. Probe Compiler (clang or gcc)
-        let compiler_output = Command::new("clang")
-            .arg("--version")
-            .output()
-            .or_else(|_| Command::new("gcc").arg("--version").output());
+        if cfg!(windows) {
+            // clang/gcc, CMake and pkg-config are Unix build prerequisites. Windows SDK
+            // builds link with MSVC and run bindgen against libclang.
+            items.push(found_or_missing(
+                "msvc",
+                "MSVC compiler",
+                "Visual Studio C++ tools found through the Visual Studio setup registry",
+                windows_msvc_installation(),
+                WINDOWS_MSVC_PACKAGE,
+            ));
+            items.push(found_or_missing(
+                "libclang",
+                "libclang",
+                "bindgen for the FFmpeg bindings",
+                windows_libclang(),
+                WINDOWS_LLVM_PACKAGE,
+            ));
+        } else {
+            // 2. Probe Compiler (clang or gcc)
+            let compiler_output = probe_command("clang")
+                .arg("--version")
+                .output()
+                .or_else(|_| probe_command("gcc").arg("--version").output());
 
-        match compiler_output {
-            Ok(out) if out.status.success() => {
-                let first_line = String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("compiler found")
-                    .to_string();
-                items.push(DoctorItem {
-                    id: "c_compiler".into(),
-                    name: "C/C++ Compiler".into(),
-                    description: "Native build-script and bindgen compiler".into(),
-                    status: ProbeStatus::Pass,
-                    observed_version_or_path: Some(first_line),
-                    package_to_install: None,
-                    failure_reason: None,
-                });
+            match compiler_output {
+                Ok(out) if out.status.success() => {
+                    let first_line = String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("compiler found")
+                        .to_string();
+                    items.push(DoctorItem {
+                        id: "c_compiler".into(),
+                        name: "C/C++ Compiler".into(),
+                        description: "Native build-script and bindgen compiler".into(),
+                        status: ProbeStatus::Pass,
+                        observed_version_or_path: Some(first_line),
+                        package_to_install: None,
+                        failure_reason: None,
+                    });
+                }
+                _ => {
+                    items.push(DoctorItem {
+                        id: "c_compiler".into(),
+                        name: "C/C++ Compiler".into(),
+                        description: "Native build-script and bindgen compiler".into(),
+                        status: ProbeStatus::Fail,
+                        observed_version_or_path: None,
+                        package_to_install: Some("clang build-essential".into()),
+                        failure_reason: Some("No C compiler found on PATH".into()),
+                    });
+                }
             }
-            _ => {
-                items.push(DoctorItem {
-                    id: "c_compiler".into(),
-                    name: "C/C++ Compiler".into(),
-                    description: "Native build-script and bindgen compiler".into(),
-                    status: ProbeStatus::Fail,
-                    observed_version_or_path: None,
-                    package_to_install: Some("clang build-essential".into()),
-                    failure_reason: Some("No C compiler found on PATH".into()),
-                });
-            }
-        }
 
-        // 3. Probe CMake
-        let cmake_output = Command::new("cmake").arg("--version").output();
-        match cmake_output {
-            Ok(out) if out.status.success() => {
-                let line = String::from_utf8_lossy(&out.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("cmake found")
-                    .to_string();
-                items.push(DoctorItem {
-                    id: "cmake".into(),
-                    name: "CMake Build System".into(),
-                    description: "Native build tool".into(),
-                    status: ProbeStatus::Pass,
-                    observed_version_or_path: Some(line),
-                    package_to_install: None,
-                    failure_reason: None,
-                });
+            // 3. Probe CMake
+            let cmake_output = probe_command("cmake").arg("--version").output();
+            match cmake_output {
+                Ok(out) if out.status.success() => {
+                    let line = String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("cmake found")
+                        .to_string();
+                    items.push(DoctorItem {
+                        id: "cmake".into(),
+                        name: "CMake Build System".into(),
+                        description: "Native build tool".into(),
+                        status: ProbeStatus::Pass,
+                        observed_version_or_path: Some(line),
+                        package_to_install: None,
+                        failure_reason: None,
+                    });
+                }
+                _ => {
+                    items.push(DoctorItem {
+                        id: "cmake".into(),
+                        name: "CMake Build System".into(),
+                        description: "Native build tool".into(),
+                        status: ProbeStatus::Fail,
+                        observed_version_or_path: None,
+                        package_to_install: Some("cmake".into()),
+                        failure_reason: Some("cmake not found on PATH".into()),
+                    });
+                }
             }
-            _ => {
-                items.push(DoctorItem {
-                    id: "cmake".into(),
-                    name: "CMake Build System".into(),
-                    description: "Native build tool".into(),
-                    status: ProbeStatus::Fail,
-                    observed_version_or_path: None,
-                    package_to_install: Some("cmake".into()),
-                    failure_reason: Some("cmake not found on PATH".into()),
-                });
-            }
-        }
 
-        // 4. Probe Pkg-Config
-        let pkg_config_output = Command::new("pkg-config").arg("--version").output();
-        match pkg_config_output {
-            Ok(out) if out.status.success() => {
-                let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
-                items.push(DoctorItem {
-                    id: "pkg_config".into(),
-                    name: "pkg-config".into(),
-                    description: "Library locator".into(),
-                    status: ProbeStatus::Pass,
-                    observed_version_or_path: Some(format!("pkg-config {ver}")),
-                    package_to_install: None,
-                    failure_reason: None,
-                });
-            }
-            _ => {
-                items.push(DoctorItem {
-                    id: "pkg_config".into(),
-                    name: "pkg-config".into(),
-                    description: "Library locator".into(),
-                    status: ProbeStatus::Fail,
-                    observed_version_or_path: None,
-                    package_to_install: Some("pkg-config".into()),
-                    failure_reason: Some("pkg-config not found on PATH".into()),
-                });
+            // 4. Probe Pkg-Config
+            let pkg_config_output = probe_command("pkg-config").arg("--version").output();
+            match pkg_config_output {
+                Ok(out) if out.status.success() => {
+                    let ver = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    items.push(DoctorItem {
+                        id: "pkg_config".into(),
+                        name: "pkg-config".into(),
+                        description: "Library locator".into(),
+                        status: ProbeStatus::Pass,
+                        observed_version_or_path: Some(format!("pkg-config {ver}")),
+                        package_to_install: None,
+                        failure_reason: None,
+                    });
+                }
+                _ => {
+                    items.push(DoctorItem {
+                        id: "pkg_config".into(),
+                        name: "pkg-config".into(),
+                        description: "Library locator".into(),
+                        status: ProbeStatus::Fail,
+                        observed_version_or_path: None,
+                        package_to_install: Some("pkg-config".into()),
+                        failure_reason: Some("pkg-config not found on PATH".into()),
+                    });
+                }
             }
         }
 
         // 5. Run manifest-specified host probes
         for probe in &manifest.host_prerequisites {
-            let res = Command::new(&probe.command).args(&probe.args).output();
+            // `cl.exe` is only on PATH inside a developer prompt; the MSVC probe above
+            // answers it through the Visual Studio setup registry instead.
+            if cfg!(windows) && matches!(probe.command.as_str(), "cl" | "cl.exe") {
+                continue;
+            }
+            let res = probe_command(&probe.command).args(&probe.args).output();
             match res {
                 Ok(out) if out.status.success() => {
                     items.push(DoctorItem {
@@ -512,6 +620,41 @@ mod tests {
         ));
     }
     use super::*;
+
+    #[test]
+    fn install_hints_name_this_platforms_installer() {
+        let hint = install_hint(&["a".into(), "b".into()]);
+        if cfg!(windows) {
+            assert!(!hint.contains("apt-get"), "{hint}");
+            assert!(hint.contains("Visual Studio Installer"), "{hint}");
+        } else {
+            assert_eq!(hint, "sudo apt-get install -y a b");
+        }
+    }
+
+    /// Windows never probes Unix-only tools, and the SDK manifest's `cl.exe` probe is
+    /// answered by MSVC discovery instead of PATH.
+    #[cfg(windows)]
+    #[test]
+    fn windows_preflight_skips_unix_tools_and_path_bound_cl() {
+        let mut manifest = CompatibilityManifest::default_linux_x64();
+        manifest.target_triple = "x86_64-pc-windows-msvc".into();
+        manifest.host_prerequisites = vec![crate::manifest::HostPrerequisiteProbe {
+            id: "msvc".into(),
+            name: "MSVC compiler".into(),
+            description: "Visual Studio native build environment".into(),
+            command: "cl.exe".into(),
+            args: vec![],
+            package_name: "Visual Studio C++ Build Tools".into(),
+            required: true,
+        }];
+        let report = Doctor::run_host_preflight(&manifest);
+        let ids: Vec<_> = report.items.iter().map(|item| item.id.as_str()).collect();
+        for unix_only in ["c_compiler", "cmake", "pkg_config"] {
+            assert!(!ids.contains(&unix_only), "{ids:?}");
+        }
+        assert_eq!(ids.iter().filter(|id| **id == "msvc").count(), 1, "{ids:?}");
+    }
 
     #[test]
     fn test_host_preflight_on_current_machine() {

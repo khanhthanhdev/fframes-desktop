@@ -479,7 +479,7 @@ impl Render for SetupView {
                 missing_packages,
                 summary: _summary,
             } => {
-                let pkg_cmd = format!("sudo apt-get install -y {}", missing_packages.join(" "));
+                let pkg_cmd = studio_sdk::install_hint(missing_packages);
                 div()
                     .flex()
                     .flex_col()

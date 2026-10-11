@@ -23,6 +23,9 @@ use studio_bootstrap::{ProcessTreeManager, WriterOwnership};
 const SECRET: &str = "sentinel-credential-7f3a9c";
 const WAIT: Duration = Duration::from_secs(20);
 
+/// The fixture peer interpreter; Windows Python installs provide `python`, not `python3`.
+const PYTHON: &str = if cfg!(windows) { "python" } else { "python3" };
+
 fn search() -> ExecutableSearch {
     ExecutableSearch {
         managed_dirs: vec![],
@@ -32,7 +35,7 @@ fn search() -> ExecutableSearch {
 
 fn config(root: &Path, mode: &str) -> DriverConfig {
     let adapter = AdapterConfig {
-        executable: "python3".into(),
+        executable: PYTHON.into(),
         args: vec![
             format!("{}/tests/acp-peer.py", env!("CARGO_MANIFEST_DIR")),
             mode.into(),
@@ -43,7 +46,7 @@ fn config(root: &Path, mode: &str) -> DriverConfig {
     let launch = AdapterLaunch::resolve_with_env(&adapter, &search(), |name| {
         (name == "ACP_SECRET").then(|| SECRET.to_owned())
     })
-    .expect("python3 resolves through the explicit search path");
+    .expect("Python resolves through the explicit search path");
     DriverConfig {
         provider: "fixture".into(),
         task: "task-1".into(),

@@ -71,6 +71,37 @@ Installation verifies compiler version/target, native libraries and complete SDK
 
 Packaging creates the native app, setup companion, worker source/font notices, SDK, inventory/checksums and a zip. Windows includes FFmpeg DLLs; macOS includes an unsigned `.app`; Unix records native dependency inventory. Omitting `--sdk-bundle` produces an app-only artifact, with SDK/setup gates still unmet. The [CI matrix](../../.github/workflows/desktop-phase-zero.yml) builds on Linux x64, Windows x64 MSVC and macOS arm64, assembles the native SDK and retains pending qualification records. Its Linux job additionally runs the isolated X11 procedure and retains evidence. Feasibility/CI artifacts remain unsigned; the separate [Desktop Release workflow](../../.github/workflows/desktop-release.yml) signs tag builds and opt-in manual release builds before upload.
 
+### Windows installer
+
+[package-windows-installer.py](../../desktop/scripts/package-windows-installer.py) turns the native Windows package directory into a per-user `fframes-studio-x86_64-pc-windows-msvc-setup.exe` with the pinned Inno Setup 7.1.0 compiler (`--iscc` or `INNO_SETUP_COMPILER`), using the [installer script](../../desktop/packaging/windows/fframes-studio.iss):
+
+```powershell
+py desktop/scripts/package-windows-installer.py --source <package-dir> --out fframes-studio-x86_64-pc-windows-msvc-setup.exe
+```
+
+Setup needs no administrator rights and shows only progress and a finish page. It installs into `%LOCALAPPDATA%\Programs\fframes Studio`, adds Start menu and desktop shortcuts and an Apps & features entry, and upgrades an existing install in place. It closes a running studio first. The installer embeds the SDK because guided online SDK acquisition is not connected yet. This differs from the Linux `.deb`. The shortcuts start `bin\fframes-studio.exe` directly, a GUI-subsystem executable that finds `sdk\` beside `bin\` and starts its build, worker and adapter processes without console windows. Uninstall removes the install folder and shortcuts only. Projects (`%USERPROFILE%\.fframes`), the managed SDK and app state (`%LOCALAPPDATA%\fframes-studio`) are kept. The Desktop Release workflow retains the installer as an attested candidate artifact, signed together with the package when signing is requested. Unsigned preview releases publish it (below); the consumer release waits for the M7 signed-installer and clean-machine checks. Unsigned builds trigger the SmartScreen "unknown publisher" prompt when downloaded with a browser.
+
+### Unsigned preview releases
+
+Pushing a `v<version>` tag, or a manual Desktop Release run with `preview_release`, publishes an unsigned preview GitHub release. The tag must match `desktop/app/Cargo.toml`, and an existing release is never replaced. The `publish-preview` job collects every target ZIP, the Windows Setup.exe and the Linux `.deb`. [prepare-github-release.py](../../desktop/scripts/prepare-github-release.py) then adds:
+
+- winget manifests (`khanhthanhdev.fframesStudio`, schema 1.12.0, Inno per-user installer, ProductCode from the installer's AppId),
+- a Scoop manifest (`fframes-studio.json`, portable ZIP with a shortcut and a `fframes-studio` shim),
+- [install.ps1](../../desktop/packaging/windows/install.ps1), which downloads Setup.exe, verifies it against `SHA256SUMS.txt` and installs per user,
+- `SHA256SUMS.txt` and release notes with install instructions.
+
+Preview releases are not marked as prereleases unless requested, because `releases/latest/download`, used by `install.ps1` and the Scoop URL, only follows full releases. The M7-gated consumer release job is unchanged.
+
+Users install with any of:
+
+```powershell
+irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex
+scoop install https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/fframes-studio.json
+winget install khanhthanhdev.fframesStudio
+```
+
+winget only works after the package is accepted into [microsoft/winget-pkgs](https://github.com/microsoft/winget-pkgs). To submit, place the three released `khanhthanhdev.fframesStudio*.yaml` files in `manifests/k/khanhthanhdev/fframesStudio/<version>/` of a fork and open a pull request, or run `wingetcreate submit <that folder>`. Later versions can be submitted the same way, or automated with a token-holding action once the package exists.
+
 ### Native release signing
 
 Tag builds sign the macOS and Windows packages. A manual Desktop Release run can opt in with `sign_artifacts`; setting `consumer_release` also requires signing when it builds fresh artifacts. macOS uses a Developer ID Application certificate, notarizes the app bundle, staples the accepted ticket, verifies Gatekeeper assessment, and refreshes the package inventory/archive after signatures are applied. Windows Authenticode-signs the app executables and runtime DLLs in the package's `bin/` directory, timestamps signatures, verifies each file, then refreshes inventory/archive. GitHub artifact attestations provide provenance for each target ZIP and the Linux `.deb`; these attestations do not replace platform code signing.
@@ -102,6 +133,19 @@ sudo /usr/bin/python3 desktop/scripts/qualify-linux-native.py \
 ```
 
 The harness rejects occupied display/output paths. It uses a fresh home for UID 65534, no host Cargo cache, an owned PID namespace, and a network namespace with loopback only for worker IPC. SDK staging builds/renders project A before promotion; the GUI then builds a fresh annotated project B with a separate target directory. An Xvfb window presents all 1,000 real worker frames. Readiness comes from painted viewport/input geometry; native keyboard and pointer events type into the registered component and select the title through letterboxing. JSON records, logs and a window screenshot are saved before owned processes are reaped. Noncompletion, typing or selection failure returns nonzero. `qualify-presentation` is also available directly with `--bundle`, `--sdk-home`, `--project` and `--output`; without the harness its process is not network/account isolated.
+
+## Reproduce Windows development evidence
+
+Windows needs Visual Studio Build Tools with the C++ workload, LLVM (libclang) and the FFmpeg 9 shared install in `FFMPEG_DIR`. In an interactive desktop session, build the SDK and package with the pinned compiler, then run the native harness against the extracted package:
+
+```powershell
+$env:RUSTUP_TOOLCHAIN = "1.98.1-x86_64-pc-windows-msvc"
+desktop\scripts\build-phase-zero-sdk.ps1 -FfmpegRoot $env:FFMPEG_DIR -Out C:\fq\sdk
+py -3 desktop\scripts\package-phase-zero.py --out C:\fq\pkg\fframes-studio-x86_64-pc-windows-msvc --sdk-bundle C:\fq\sdk
+py -3 desktop\scripts\qualify-windows-native.py --package C:\fq\pkg\fframes-studio-x86_64-pc-windows-msvc --out C:\fq\evidence
+```
+
+Keep the output paths short; nested Cargo targets otherwise exceed MSVC path limits. Packaging links the Windows executables against the static C runtime and writes their import tables to `native-dependencies.txt`; it fails if any packaged binary imports a Visual C++ Redistributable DLL such as `VCRUNTIME140.dll`, so a machine without the Redistributable can start the app. The harness gives the app only a user session's system variables plus a fresh home, Cargo and rustup location, so no developer toolchain or developer prompt participates. It runs `qualify-presentation`, then drives the real GPUI window with Win32 `SendInput` typing and a click through the letterboxed preview, captures only the studio window, checks that no descendant process outlives the app, and normalizes private paths in its evidence. It does not create a separate account or disable networking. Over Remote Desktop, keep the session displayed: Windows stops composing frames while the RDP client is minimized, and the presentation watchdog then fails the run. The resulting records are development evidence; the [M0 ledger](../../desktop/qualification/m0-results.json) lists them under `additional_platforms` with the Windows checks that remain unmet. The desktop test suite on Windows expects `python` on `PATH`.
 
 ## Qualification evidence
 

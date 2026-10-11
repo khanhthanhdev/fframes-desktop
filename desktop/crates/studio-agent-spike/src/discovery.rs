@@ -74,13 +74,23 @@ fn is_executable_file(path: &Path) -> bool {
 }
 
 fn candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
+    // Windows cannot start a file without an executable extension, and npm installs an
+    // extensionless shell script next to the `.cmd` launcher, so a bare name only matches
+    // with an extension appended.
     #[cfg(windows)]
     {
-        let mut all = vec![dir.join(name)];
-        for ext in ["exe", "cmd", "bat", "com"] {
-            all.push(dir.join(format!("{name}.{ext}")));
+        const EXTENSIONS: [&str; 4] = ["exe", "cmd", "bat", "com"];
+        let has_executable_extension = Path::new(name)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(|ext| EXTENSIONS.iter().any(|e| ext.eq_ignore_ascii_case(e)));
+        if has_executable_extension {
+            return vec![dir.join(name)];
         }
-        all
+        EXTENSIONS
+            .iter()
+            .map(|ext| dir.join(format!("{name}.{ext}")))
+            .collect()
     }
     #[cfg(not(windows))]
     {
@@ -91,11 +101,16 @@ fn candidates(dir: &Path, name: &str) -> Vec<PathBuf> {
 impl ExecutableSearch {
     /// Every search root in order: managed directories, then the explicit GUI `PATH`.
     /// Relative roots would resolve against whatever directory the adapter later runs
-    /// in, so any relative root is rejected.
+    /// in, so any relative root is rejected. On Windows an empty `PATH` entry (a trailing
+    /// or doubled `;`, which is common) names no directory and is skipped; on Unix it means
+    /// the current directory and stays rejected.
     pub fn roots(&self) -> Result<Vec<PathBuf>, ResolveError> {
         let mut dirs: Vec<PathBuf> = self.managed_dirs.clone();
         if let Some(gui) = &self.gui_path {
-            dirs.extend(std::env::split_paths(gui));
+            dirs.extend(
+                std::env::split_paths(gui)
+                    .filter(|dir| !(cfg!(windows) && dir.as_os_str().is_empty())),
+            );
         }
         match dirs.iter().find(|dir| !dir.is_absolute()) {
             Some(relative) => Err(ResolveError::RelativeRoot(relative.clone())),
@@ -618,5 +633,45 @@ mod tests {
                 .unwrap()
                 .is_absolute()
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_skips_extensionless_scripts_for_the_launcher() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("adapter"), b"#!/bin/sh").unwrap();
+        let launcher = dir.path().join("adapter.cmd");
+        std::fs::write(&launcher, b"@echo off").unwrap();
+        let search = ExecutableSearch {
+            managed_dirs: vec![dir.path().to_owned()],
+            gui_path: None,
+        };
+        assert_eq!(resolve_executable("adapter", &search).unwrap(), launcher);
+        assert_eq!(
+            resolve_executable("adapter.cmd", &search).unwrap(),
+            launcher
+        );
+        let dotted = dir.path().join("adapter-2.5.exe");
+        std::fs::write(&dotted, b"MZ").unwrap();
+        assert_eq!(resolve_executable("adapter-2.5", &search).unwrap(), dotted);
+    }
+
+    #[test]
+    fn empty_path_entries_are_skipped_only_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("adapter.exe"), b"").unwrap();
+        let mut gui = std::env::join_paths([dir.path()]).unwrap();
+        gui.push(if cfg!(windows) { ";;" } else { "::" });
+        let search = ExecutableSearch {
+            managed_dirs: vec![],
+            gui_path: Some(gui),
+        };
+        if cfg!(windows) {
+            assert_eq!(search.roots().unwrap(), vec![dir.path().to_owned()]);
+            assert!(resolve_executable("adapter", &search).is_ok());
+        } else {
+            // An empty Unix entry means the current directory.
+            assert!(matches!(search.roots(), Err(ResolveError::RelativeRoot(_))));
+        }
     }
 }

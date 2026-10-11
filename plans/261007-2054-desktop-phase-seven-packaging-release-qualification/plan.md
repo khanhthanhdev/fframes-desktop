@@ -67,4 +67,8 @@ Hard planning route; three release-policy questions answered by the user. CLI fo
 
 Historical planning handoff: `/ak:cook plans/261007-2054-desktop-phase-seven-packaging-release-qualification/plan.md`. Execution is underway; stages 1–3 remain incomplete, with installed-location/runtime behavior, durable export recovery, paired updates, signatures and codec/source-distribution qualification unresolved. No consumer release is published or claimed qualified.
 
+## Windows development run (2026-10-10)
+
+On 2026-10-10 a Windows Server 2022 x64 VM (virtual RDP display, no GPU) ran the Windows development checks: the full desktop workspace suite (79 test targets) passes on MSVC, the Windows SDK assembles with its offline double build, and the packaged app installs the managed SDK into a fresh home, compiles a worker, presents 1,000 frames and accepts native SendInput typing and preview selection with no leftover processes. Results and evidence are in the [M0 ledger](../../desktop/qualification/m0-results.json) under `additional_platforms`. The Windows host doctor now recognizes MSVC through the Visual Studio setup registry and libclang instead of demanding Unix tools, and its install hint no longer prints apt-get. The `x86_64-pc-windows-msvc` candidate in the [M7 ledger](../../desktop/qualification/m7-results.json) keeps every gate open: no installer or installed-location run, no signing identity, no clean-machine launch (the executables now link the C runtime statically), no clean-user guided setup, no authenticated provider and no physical devices.
+
 <!-- slug: desktop-phase-seven-packaging-release-qualification -->

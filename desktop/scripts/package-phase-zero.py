@@ -10,6 +10,7 @@ import plistlib
 import shutil
 import subprocess
 import time
+import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -19,6 +20,10 @@ APP_BINARY = "fframes-studio"
 # finds both next to its own executable (`agent_tools::sibling_binary` in app/src/agent_tools.rs).
 HELPER_BINARIES = ("studio-tools", "studio-mcp")
 PACKAGED_BINARIES = (APP_BINARY, "studio_setup", *HELPER_BINARIES)
+# Windows ships the Universal CRT (api-ms-win-crt-*), but these DLLs come only from the Visual C++
+# Redistributable, which a clean machine lacks. The Windows binaries link the C runtime statically.
+WINDOWS_STATIC_CRT = "-C target-feature=+crt-static"
+REDISTRIBUTABLE_DLL_PREFIXES = ("vcruntime", "msvcp", "concrt", "vccorlib")
 
 
 def run(args, **kwargs):
@@ -42,7 +47,51 @@ def verify_helpers(app_binary, suffix):
         raise ValueError(f"Project-tool helpers are not next to the application executable: {', '.join(missing)}")
 
 
+def pe_imports(path):
+    """DLL names in the import directory of a PE executable or library."""
+    data = Path(path).read_bytes()
+    header = int.from_bytes(data[0x3C:0x40], "little")
+    if data[header:header + 4] != b"PE\0\0":
+        raise ValueError(f"{path} is not a PE file")
+    word = lambda offset, size=4: int.from_bytes(data[offset:offset + size], "little")
+    coff = header + 4
+    optional = coff + 20
+    directories = optional + (112 if word(optional, 2) == 0x20B else 96)
+    table = optional + word(coff + 16, 2)
+    sections = [(word(s + 12), max(word(s + 8), word(s + 16)), word(s + 20)) for s in range(table, table + 40 * word(coff + 2, 2), 40)]
+
+    def offset(rva):
+        for address, size, raw in sections:
+            if address <= rva < address + size:
+                return raw + rva - address
+        raise ValueError(f"{path}: address {rva:#x} is outside every section")
+
+    names = []
+    import_rva = word(directories + 8)
+    entry = offset(import_rva) if import_rva else None
+    while entry is not None and any(data[entry:entry + 20]):
+        start = offset(word(entry + 12))
+        names.append(data[start:data.index(b"\0", start)].decode("ascii"))
+        entry += 20
+    return names
+
+
+def windows_dependencies(bin_dir):
+    sections = []
+    for path in sorted(Path(bin_dir).iterdir()):
+        if path.suffix.lower() not in {".exe", ".dll"}:
+            continue
+        imports = pe_imports(path)
+        redistributable = [name for name in imports if name.lower().startswith(REDISTRIBUTABLE_DLL_PREFIXES)]
+        if redistributable:
+            raise ValueError(f"{path.name} needs the Visual C++ Redistributable ({', '.join(redistributable)})")
+        sections.append(f"# {path.name}\n" + "".join(f"{name}\n" for name in imports))
+    return "\n".join(sections)
+
+
 def native_dependencies(bin_dir):
+    if os.name == "nt":
+        return windows_dependencies(bin_dir)
     tool = "ldd" if platform.system() == "Linux" else "otool"
     sections = []
     for name in (APP_BINARY, *HELPER_BINARIES):
@@ -92,9 +141,16 @@ def package(output, sdk_bundle=None):
         raise ValueError("SDK target does not match native application build")
     started = time.monotonic()
     desktop_manifest = ROOT / "desktop/Cargo.toml"
-    run(["cargo", "build", "--locked", "--release", "--manifest-path", str(desktop_manifest), "-p", "fframes-studio", "-p", "studio-sdk"])
+    build = ["cargo", "build", "--locked", "--release", "--manifest-path", str(desktop_manifest), "-p", "fframes-studio", "-p", "studio-sdk"]
+    environment = None
+    if os.name == "nt":
+        # An explicit --target keeps the flag off build scripts and proc macros and gives the
+        # static build its own directory instead of rebuilding the development one.
+        build += ["--target", target]
+        environment = {**os.environ, f"CARGO_TARGET_{target.upper().replace('-', '_')}_RUSTFLAGS": WINDOWS_STATIC_CRT}
+    run(build, env=environment)
     metadata = json.loads(run(["cargo", "metadata", "--no-deps", "--format-version", "1", "--manifest-path", str(desktop_manifest)], capture_output=True).stdout)
-    release = Path(metadata["target_directory"]) / "release"
+    release = Path(metadata["target_directory"]) / (target if os.name == "nt" else "") / "release"
     output.mkdir(parents=True)
     bin_dir = output / "bin"
     bin_dir.mkdir()
@@ -115,7 +171,8 @@ def package(output, sdk_bundle=None):
             raise ValueError("FFMPEG_DIR contains no runtime DLLs")
         for dll in dlls:
             shutil.copy2(dll, bin_dir)
-        (output / "launch.ps1").write_text('$ErrorActionPreference = "Stop"\n$env:FFRAMES_SDK_BUNDLE = Join-Path $PSScriptRoot "sdk"\n& (Join-Path $PSScriptRoot "bin/fframes-studio.exe") studio\nexit $LASTEXITCODE\n')
+        (output / "native-dependencies.txt").write_text(native_dependencies(bin_dir))
+        (output / "launch.ps1").write_text('$ErrorActionPreference = "Stop"\n$env:FFRAMES_SDK_BUNDLE = Join-Path $PSScriptRoot "sdk"\n& (Join-Path $PSScriptRoot "bin/fframes-studio.exe") studio | Out-Null\nexit $LASTEXITCODE\n')
         (output / "launch.bat").write_text('@echo off\r\nset "FFRAMES_SDK_BUNDLE=%~dp0sdk"\r\n"%~dp0bin\\fframes-studio.exe" studio %*\r\n')
     else:
         launcher = output / "launch.sh"
@@ -130,6 +187,7 @@ def package(output, sdk_bundle=None):
             verify_helpers(contents / "MacOS/fframes-studio", "")
             if sdk_bundle:
                 shutil.move(str(output / "sdk"), str(contents / "sdk"))
+            app_version = tomllib.loads((ROOT / "desktop/app/Cargo.toml").read_text())["package"]["version"]
             with (contents / "Info.plist").open("wb") as stream:
                 plistlib.dump(
                     {
@@ -138,8 +196,8 @@ def package(output, sdk_bundle=None):
                         "CFBundleInfoDictionaryVersion": "6.0",
                         "CFBundleName": "fframes Studio",
                         "CFBundlePackageType": "APPL",
-                        "CFBundleShortVersionString": "0.1.0",
-                        "CFBundleVersion": "0.1.0",
+                        "CFBundleShortVersionString": app_version,
+                        "CFBundleVersion": app_version,
                         "NSHighResolutionCapable": True,
                     },
                     stream,
@@ -147,6 +205,8 @@ def package(output, sdk_bundle=None):
             launcher.write_text('#!/usr/bin/env sh\nset -eu\npackage_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\nexport FFRAMES_SDK_BUNDLE="$package_dir/fframes Studio.app/Contents/sdk"\nexec "$package_dir/fframes Studio.app/Contents/MacOS/fframes-studio" studio\n')
     ledger = json.loads((ROOT / "desktop/qualification/m0-results.json").read_text())
     ledger["timestamp"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    # Other platforms' results cite repository evidence that the package does not carry.
+    ledger.pop("additional_platforms", None)
     ledger["target_platform"] = {"os": platform.system().lower(), "arch": target.split("-")[0], "triple": target, "status": "PENDING"}
     ledger["metrics"] = {"native_package_build_seconds": time.monotonic() - started}
     ledger["build_evidence"] = {"native_build": "PASSED", "sdk_included": bool(sdk), "interactive_qualification": "NOT_RUN", "sterile_offline_build": "NOT_RUN", "authenticated_acp": "NOT_RUN"}

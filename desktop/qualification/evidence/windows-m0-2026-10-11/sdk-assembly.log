@@ -1,0 +1,10 @@
+# assemble-phase-zero-sdk.py --ffmpeg-root <FFmpeg 9 shared> (RUSTUP_TOOLCHAIN=1.98.1); elapsed 322 s, exit 0.
+# Two offline builds/renders with an empty Cargo home and separate target directories:
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 14s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.52s
+     Running `<tmp>\studio-sdk-f661o3dy\build-first\debug\sdk-qualification-worker.exe frame 0 -o frames`
+0 frame 0 0.00s -> frames\0.png
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1m 10s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.45s
+     Running `<tmp>\studio-sdk-f661o3dy\build-second\debug\sdk-qualification-worker.exe frame 0 -o frames`
+0 frame 0 0.00s -> frames\0.png

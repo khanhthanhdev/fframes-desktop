@@ -1,0 +1,233 @@
+{
+  "confirmed_presentations": 1000,
+  "verified_render_requests": 2000,
+  "coalesced_seeks": 2000,
+  "paint_submissions": 1000,
+  "release_requests": 1000,
+  "release_failures": 0,
+  "queue_high_water": 1,
+  "managed_current_images_high_water": 1,
+  "host_rss_baseline_bytes": 251113472,
+  "host_rss_high_water_bytes": 310513664,
+  "worker_rss_high_water_bytes": 24956928,
+  "memory_samples": [
+    {
+      "verified_render_requests": 50,
+      "host_rss_bytes": 302321664,
+      "worker_rss_bytes": 24883200
+    },
+    {
+      "verified_render_requests": 100,
+      "host_rss_bytes": 301539328,
+      "worker_rss_bytes": 24883200
+    },
+    {
+      "verified_render_requests": 150,
+      "host_rss_bytes": 301666304,
+      "worker_rss_bytes": 24862720
+    },
+    {
+      "verified_render_requests": 200,
+      "host_rss_bytes": 309997568,
+      "worker_rss_bytes": 24862720
+    },
+    {
+      "verified_render_requests": 250,
+      "host_rss_bytes": 310157312,
+      "worker_rss_bytes": 24862720
+    },
+    {
+      "verified_render_requests": 300,
+      "host_rss_bytes": 310132736,
+      "worker_rss_bytes": 24862720
+    },
+    {
+      "verified_render_requests": 350,
+      "host_rss_bytes": 310190080,
+      "worker_rss_bytes": 24956928
+    },
+    {
+      "verified_render_requests": 400,
+      "host_rss_bytes": 310108160,
+      "worker_rss_bytes": 24903680
+    },
+    {
+      "verified_render_requests": 450,
+      "host_rss_bytes": 310353920,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 500,
+      "host_rss_bytes": 310358016,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 550,
+      "host_rss_bytes": 310288384,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 600,
+      "host_rss_bytes": 310378496,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 650,
+      "host_rss_bytes": 310337536,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 700,
+      "host_rss_bytes": 310304768,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 750,
+      "host_rss_bytes": 310317056,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 800,
+      "host_rss_bytes": 310353920,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 850,
+      "host_rss_bytes": 310231040,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 900,
+      "host_rss_bytes": 310276096,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 950,
+      "host_rss_bytes": 310259712,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 1000,
+      "host_rss_bytes": 310325248,
+      "worker_rss_bytes": 24911872
+    },
+    {
+      "verified_render_requests": 1050,
+      "host_rss_bytes": 310358016,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1100,
+      "host_rss_bytes": 310276096,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1150,
+      "host_rss_bytes": 310366208,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1200,
+      "host_rss_bytes": 310276096,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1250,
+      "host_rss_bytes": 310349824,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1300,
+      "host_rss_bytes": 310362112,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1350,
+      "host_rss_bytes": 310366208,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1400,
+      "host_rss_bytes": 310292480,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1450,
+      "host_rss_bytes": 310362112,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1500,
+      "host_rss_bytes": 310321152,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1550,
+      "host_rss_bytes": 310366208,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1600,
+      "host_rss_bytes": 310403072,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1650,
+      "host_rss_bytes": 310403072,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1700,
+      "host_rss_bytes": 310198272,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1750,
+      "host_rss_bytes": 310378496,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1800,
+      "host_rss_bytes": 310308864,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1850,
+      "host_rss_bytes": 310382592,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1900,
+      "host_rss_bytes": 310382592,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 1950,
+      "host_rss_bytes": 310394880,
+      "worker_rss_bytes": 24924160
+    },
+    {
+      "verified_render_requests": 2000,
+      "host_rss_bytes": 310435840,
+      "worker_rss_bytes": 24924160
+    }
+  ],
+  "native_input_observed": "native typing 123",
+  "selected_source": {
+    "element_id": "intro.title",
+    "source_path": "src/main.rs",
+    "containing_symbol": "render_frame",
+    "byte_span": [
+      2228,
+      2279
+    ],
+    "code_snippet": "        let title_text = \"fframes desktop studio\";\n"
+  },
+  "heartbeat_samples": 2810,
+  "heartbeat_max_gap_ms": 81.3606,
+  "render_transfer_ms": 96860.93759999984,
+  "conversion_ms": 8686.6026,
+  "elapsed_ms": 176617.8992,
+  "completed": true,
+  "failure": null
+}

@@ -1,0 +1,151 @@
+{
+  "target": "x86_64-pc-windows-msvc",
+  "sdk_included": true,
+  "files": [
+    {
+      "path": "bin/avcodec-63.dll",
+      "size_bytes": 119067648,
+      "sha256": "d2bd25fa6d41eb482d2c68a97eb38df52c29136287c73735136867a3a5e372d2"
+    },
+    {
+      "path": "bin/avdevice-63.dll",
+      "size_bytes": 4948480,
+      "sha256": "a935f3bea88a4c6cc7f34df9793f01f9b9aa33bddabd807b49758eec48bbfc91"
+    },
+    {
+      "path": "bin/avfilter-12.dll",
+      "size_bytes": 37342208,
+      "sha256": "c3cc4f55f429abdd309c215ee172faa053da22dce0a5bd1de6033d55eded1329"
+    },
+    {
+      "path": "bin/avformat-63.dll",
+      "size_bytes": 23015936,
+      "sha256": "a6885b6bcc5db6f8dbc345b915fcdb1740f48720c5b1e33f88e9909f5fd78e14"
+    },
+    {
+      "path": "bin/avutil-61.dll",
+      "size_bytes": 3016704,
+      "sha256": "5b047f5756326bdfa1d5c062654d8aa1eca71ff27003b84b1cc0ecc88633493a"
+    },
+    {
+      "path": "bin/fframes-studio.exe",
+      "size_bytes": 32230912,
+      "sha256": "e1499721460e9ee3004e1bea8868cf9942aa01d2e279a2724873709fbb5a4cf7"
+    },
+    {
+      "path": "bin/studio-mcp.exe",
+      "size_bytes": 2658304,
+      "sha256": "e51e2ac68cd86de180ecb65743b0d557efc597814eb8a59797baff1dced2d51f"
+    },
+    {
+      "path": "bin/studio-tools.exe",
+      "size_bytes": 2618368,
+      "sha256": "f3eb0ba5133d1942ad185c55e53057edd0b3d665fbec23852ab7336c2a392abd"
+    },
+    {
+      "path": "bin/studio_setup.exe",
+      "size_bytes": 946688,
+      "sha256": "a090396af7f7412fd0f6e04949a98180a880c94e2674290e4c66c1f828b62c99"
+    },
+    {
+      "path": "bin/swresample-7.dll",
+      "size_bytes": 734720,
+      "sha256": "fe0fd6454773088a841432a99b371ed35224e0ab56846a4450a68ae24ce4da99"
+    },
+    {
+      "path": "bin/swscale-10.dll",
+      "size_bytes": 2332160,
+      "sha256": "12d80bee04637570bcda0152c46a1f7cf6d019b78e509aeb5482ee1af2ef4bf5"
+    },
+    {
+      "path": "launch.bat",
+      "size_bytes": 90,
+      "sha256": "08892b194989ba221f3f12dceb9c969f1e289caea3d08c377660c7771c2b08ca"
+    },
+    {
+      "path": "launch.ps1",
+      "size_bytes": 182,
+      "sha256": "93fdfe764d21aa6bb29043d29230af83b9233dafaf900bf3ba5d4c05b75a49f3"
+    },
+    {
+      "path": "native-dependencies.txt",
+      "size_bytes": 5196,
+      "sha256": "6c25efc97e388d8380ab6421a3cccd1e44e687b969591336b2680f8706b0b3f2"
+    },
+    {
+      "path": "notices/DM-Sans-OFL.txt",
+      "size_bytes": 4389,
+      "sha256": "2af94f4fb533be8fa23282eb33e08ca311ddf47c2f32777e2040b282deeec65c"
+    },
+    {
+      "path": "notices/LICENSE.txt",
+      "size_bytes": 428,
+      "sha256": "464fc680f9d924a87cba50d9ce4dda6f63f12d3ffc825262699ee26da0682b88"
+    },
+    {
+      "path": "qualification.json",
+      "size_bytes": 5224,
+      "sha256": "0157cecf121992d6d64b305cb180dad3e5cb346fbca83f4dc57e27ca35cf617a"
+    },
+    {
+      "path": "sdk/artifacts/ffmpeg-x86_64-pc-windows-msvc.tar.gz",
+      "size_bytes": 84149344,
+      "sha256": "79bb64d8259a95e390cab80377e3586a636ff9d4f69e89ba8c17e575ebb937e1"
+    },
+    {
+      "path": "sdk/artifacts/framework-x86_64-pc-windows-msvc.tar.gz",
+      "size_bytes": 44431241,
+      "sha256": "b1689448b11ddce5fca0b65b5fe7d7eb1fdabf08ea2356ce6475923a0c43f818"
+    },
+    {
+      "path": "sdk/artifacts/toolchain-x86_64-pc-windows-msvc.tar.gz",
+      "size_bytes": 237743438,
+      "sha256": "7ef8c8876ec045869e5b4ea18b76080405c1a9df057381cc30a21675cd315954"
+    },
+    {
+      "path": "sdk/compatibility.json",
+      "size_bytes": 2005,
+      "sha256": "9b8bcdc3ad24a07fbdfdcb2f24acbe4d7df5237c5a9424c21b3bfae6d91a6f4f"
+    },
+    {
+      "path": "sdk/notices/DM-Sans-OFL.txt",
+      "size_bytes": 4389,
+      "sha256": "2af94f4fb533be8fa23282eb33e08ca311ddf47c2f32777e2040b282deeec65c"
+    },
+    {
+      "path": "sdk/notices/LICENSE.txt",
+      "size_bytes": 428,
+      "sha256": "464fc680f9d924a87cba50d9ce4dda6f63f12d3ffc825262699ee26da0682b88"
+    },
+    {
+      "path": "sdk/provenance.json",
+      "size_bytes": 343,
+      "sha256": "8baa4381493aafee252d4b32d91cc8259a1a1d975b383011e3f95174695ceb8d"
+    },
+    {
+      "path": "worker-source/Cargo.lock",
+      "size_bytes": 66994,
+      "sha256": "196dea43bb6529cc3865740b27d1462691d93ae8ef27e9362c744b7f45cd5eb4"
+    },
+    {
+      "path": "worker-source/Cargo.toml",
+      "size_bytes": 420,
+      "sha256": "b3508788787ccd8f08b26f76e1835ee08f195385fe876a4247e1b21b3d571632"
+    },
+    {
+      "path": "worker-source/media/DMSans-Medium.ttf",
+      "size_bytes": 73300,
+      "sha256": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033"
+    },
+    {
+      "path": "worker-source/media/OFL.txt",
+      "size_bytes": 4389,
+      "sha256": "2af94f4fb533be8fa23282eb33e08ca311ddf47c2f32777e2040b282deeec65c"
+    },
+    {
+      "path": "worker-source/src/main.rs",
+      "size_bytes": 6762,
+      "sha256": "51d8c7342edec7c87865284e57da4dd556cb7027a61c8934280c57eeafc56cba"
+    }
+  ]
+}

@@ -291,6 +291,64 @@ def validate_m0(path, record):
     for metric, value in record["metrics"].items():
         if type(value) not in {int, float} or not math.isfinite(value) or value < 0:
             raise ValueError(f"Invalid measured metric: {metric}")
+    validate_m0_additional_platforms(path, record)
+
+
+# Per-target M0 checks for a platform other than the ledger's primary target. Every one
+# must pass before that platform can be QUALIFIED; a development run passes only some.
+M0_PLATFORM_CHECKS = {
+    "workspace_tests",
+    "sdk_assembly_offline_double_build",
+    "managed_compilation_fresh_home",
+    "native_presentation_input_selection",
+    "process_cleanup",
+    "separate_account",
+    "network_disabled_build",
+    "worker_crash_restart",
+    "guided_setup",
+    "vc_runtime_clean_machine",
+    "physical_display_ime",
+}
+M0_PLATFORM_TRIPLES = {"x86_64-pc-windows-msvc", "aarch64-apple-darwin", "x86_64-unknown-linux-gnu"}
+
+
+def validate_m0_additional_platforms(path, record):
+    platforms = record.get("additional_platforms", [])
+    if type(platforms) is not list:
+        raise ValueError("additional_platforms must be a list")
+    seen = {record["target_platform"].get("triple")}
+    for platform_record in platforms:
+        triple = platform_record.get("triple") if type(platform_record) is dict else None
+        if triple not in M0_PLATFORM_TRIPLES or triple in seen:
+            raise ValueError(f"Invalid or duplicate additional platform: {triple}")
+        seen.add(triple)
+        status = platform_record.get("status")
+        if status not in {"QUALIFIED", "BLOCKED", "PENDING"}:
+            raise ValueError(f"{triple}: invalid platform status")
+        checks = platform_record.get("checks")
+        if type(checks) is not dict or set(checks) != M0_PLATFORM_CHECKS:
+            raise ValueError(f"{triple}: checks must be exactly {sorted(M0_PLATFORM_CHECKS)}")
+        all_passed = True
+        for name, check in checks.items():
+            label = f"{triple}.{name}"
+            if type(check) is not dict or check.get("status") not in {"PASSED", "FAILED", "NOT_RUN", "BLOCKED"}:
+                raise ValueError(f"{label}: invalid check status")
+            if type(check.get("notes")) is not str or not check["notes"].strip():
+                raise ValueError(f"{label}: notes are required")
+            evidence = check.get("evidence", [])
+            if check["status"] == "PASSED":
+                if not evidence:
+                    raise ValueError(f"{label} claims a pass without evidence")
+                for source in evidence_files(path, label, evidence):
+                    scan_for_secrets(source, label)
+            else:
+                all_passed = False
+                if evidence:
+                    raise ValueError(f"{label}: only a passed check cites evidence")
+                if check["status"] in {"NOT_RUN", "BLOCKED"} and not str(check.get("prerequisite", "")).strip():
+                    raise ValueError(f"{label}: {check['status']} requires a prerequisite")
+        if status == "QUALIFIED" and not all_passed:
+            raise ValueError(f"{triple}: platform cannot qualify with unmet checks")
 
 
 def validate_m2(path, record):

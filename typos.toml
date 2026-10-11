@@ -5,3 +5,5 @@ hd = "hd"
 # "PNGs" is split into "PN" + "Gs"
 PN = "PN"
 seeked = "seeked"
+# Windows system library (Secur32.dll) in recorded import tables
+Secur = "Secur"

@@ -1,3 +1,6 @@
+// A GUI-subsystem executable, so Start menu and Explorer launches open no console window.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
 use fframes_studio::StudioSpikeApp;
 use gpui::{App, AppContext, Bounds, WindowBounds, WindowOptions, px, size};
 use std::{
@@ -12,7 +15,24 @@ struct PresentationQualification {
     output: PathBuf,
     manifest: CompatibilityManifest,
 }
+/// Reattaches the terminal a command was typed in, so subcommand output and errors stay
+/// visible. Redirected handles (files, pipes) are already valid and are left alone.
+#[cfg(windows)]
+fn attach_parent_console() {
+    use windows_sys::Win32::System::Console::{
+        ATTACH_PARENT_PROCESS, AttachConsole, GetStdHandle, STD_ERROR_HANDLE,
+    };
+    // SAFETY: plain Win32 calls without pointers; failure only means no parent console.
+    unsafe {
+        if GetStdHandle(STD_ERROR_HANDLE).is_null() {
+            AttachConsole(ATTACH_PARENT_PROCESS);
+        }
+    }
+}
+
 fn main() {
+    #[cfg(windows)]
+    attach_parent_console();
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str).unwrap_or("studio") {
         "studio" => run_studio(None),

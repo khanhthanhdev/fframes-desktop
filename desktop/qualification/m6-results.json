@@ -122,7 +122,7 @@
           "kind": "authentic",
           "status": "blocked",
           "criteria": "Authentic execution verified on Windows platform.",
-          "notes": "No Windows test host configured in current environment.",
+          "notes": "A Windows Server 2022 development host now passes the desktop workspace suite and packaged-app smoke (m0-results.json additional_platforms), but this provider's ACP adapter was not installed or authenticated there.",
           "prerequisite": "Windows physical or virtual machine runner with native adapter runtime."
         },
         "platform_macos": {
@@ -253,7 +253,7 @@
           "kind": "authentic",
           "status": "blocked",
           "criteria": "Authentic execution verified on Windows platform.",
-          "notes": "No Windows test host configured in current environment.",
+          "notes": "A Windows Server 2022 development host now passes the desktop workspace suite and packaged-app smoke (m0-results.json additional_platforms), but this provider's ACP adapter was not installed or authenticated there.",
           "prerequisite": "Windows physical or virtual machine runner with native adapter runtime."
         },
         "platform_macos": {
@@ -384,7 +384,7 @@
           "kind": "authentic",
           "status": "blocked",
           "criteria": "Authentic execution verified on Windows platform.",
-          "notes": "No Windows test host configured in current environment.",
+          "notes": "A Windows Server 2022 development host now passes the desktop workspace suite and packaged-app smoke (m0-results.json additional_platforms), but this provider's ACP adapter was not installed or authenticated there.",
           "prerequisite": "Windows physical or virtual machine runner with native adapter runtime."
         },
         "platform_macos": {
@@ -515,7 +515,7 @@
           "kind": "authentic",
           "status": "blocked",
           "criteria": "Authentic execution verified on Windows platform.",
-          "notes": "No Windows test host configured in current environment.",
+          "notes": "A Windows Server 2022 development host now passes the desktop workspace suite and packaged-app smoke (m0-results.json additional_platforms), but this provider's ACP adapter was not installed or authenticated there.",
           "prerequisite": "Windows physical or virtual machine runner with native adapter runtime."
         },
         "platform_macos": {

@@ -27,13 +27,13 @@
       "artifact": null,
       "eligibility": "blocked",
       "gates": {
-        "native_package": { "status": "not_run", "evidence": [], "blockers": ["Windows runner, package inventory and installed-location checks not run in this Linux execution"] },
-        "guided_setup": { "status": "not_run", "evidence": [], "blockers": ["verified acquisition primitives and offline import exist, but the signed online setup/authentication flow and Windows clean-user qualification are not complete"] },
+        "native_package": { "status": "not_run", "evidence": [], "blockers": ["A Windows Server 2022 development run built the unsigned ZIP package (app, helpers and FFmpeg DLLs in bin/, SDK, inventory) and launched it from the extracted folder (m0-results.json additional_platforms); an unsigned per-user Setup.exe candidate (Inno Setup 7.1.0) was installed, launched from its Start menu shortcut, upgraded in place (also over a running app) and uninstalled with projects, SDK and app state retained on the same development VM, but no installer evidence is retained and no clean-machine or signed installer check ran, and although the executables now link the C runtime statically (no VCRUNTIME/MSVCP imports), no launch on a machine without the VC++ Redistributable has been run"] },
+        "guided_setup": { "status": "not_run", "evidence": [], "blockers": ["the Windows host doctor now recognizes MSVC through the Visual Studio setup registry and libclang, and transactional SDK install from the packaged bundle passed on a development VM, but the signed online setup/authentication flow, the product shell first-run flow and a clean-user Windows run are not complete"] },
         "export": { "status": "not_run", "evidence": [], "blockers": ["target-specific Windows candidate export is not run; Linux development smoke does not qualify this target, signed artifact, or codec/source distribution"] },
         "signing": { "status": "blocked", "evidence": [], "blockers": ["Windows code-signing identity unavailable"] },
         "update_rollback": { "status": "not_run", "evidence": [], "blockers": ["signed update feed and paired app/SDK recovery not implemented"] },
         "authentic_journey": { "status": "blocked", "evidence": [], "blockers": ["authentic provider workflow not qualified"] },
-        "physical_devices": { "status": "blocked", "evidence": [], "blockers": ["physical Windows display, input and audio qualification unavailable"] },
+        "physical_devices": { "status": "blocked", "evidence": [], "blockers": ["only a virtual RDP display was available: SendInput typing and preview selection passed there, but physical Windows display, GPU, IME and audio qualification are unavailable"] },
         "retention": { "status": "not_run", "evidence": [], "blockers": ["installer update, rollback and uninstall retention checks not run"] }
       }
     },

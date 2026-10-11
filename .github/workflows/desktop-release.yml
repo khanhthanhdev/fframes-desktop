@@ -7,9 +7,8 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag (e.g. v0.1.0)"
+        description: "Release tag: v + the version in desktop/app/Cargo.toml (e.g. v0.1.2)"
         required: true
-        default: "v0.1.0"
       run_id:
         description: "Run ID to attach existing artifacts from (leave empty to build fresh)"
         required: false
@@ -20,6 +19,10 @@ on:
         default: false
       prerelease:
         description: "Mark as prerelease"
+        type: boolean
+        default: false
+      preview_release:
+        description: "Publish an unsigned preview release (installer, ZIPs, winget/Scoop manifests, install.ps1); tag pushes do this automatically"
         type: boolean
         default: false
       consumer_release:
@@ -68,6 +71,22 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
+      - name: Check the release tag matches the app version
+        if: github.event_name == 'push' || inputs.preview_release == true || inputs.consumer_release == true
+        env:
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          version="$(grep -m1 '^version = ' desktop/app/Cargo.toml | cut -d'"' -f2)"
+          if [ "$TAG" != "v$version" ]; then
+            echo "Release tag $TAG does not match desktop/app/Cargo.toml version $version; bump the version before tagging." >&2
+            exit 1
+          fi
+          # Fail before the long native builds rather than at publication.
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; published bytes are immutable. Bump the version for a new release." >&2
+            exit 1
+          fi
       # Tag-triggered builds are deliberately unsigned; signing is opt-in on manual dispatches.
       - name: Check macOS signing credentials before building
         if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
@@ -190,13 +209,37 @@ jobs:
           APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
           APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
         run: bash desktop/scripts/sign-macos-package.sh "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}"
-      - name: Sign Windows executables and FFmpeg DLLs
+      - name: Install pinned Inno Setup
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $installer = Join-Path $env:RUNNER_TEMP "innosetup-7.1.0-x64.exe"
+          Invoke-WebRequest "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe" -OutFile $installer
+          if ((Get-FileHash $installer -Algorithm SHA256).Hash -ne "0362A383ED217D4C4239B5933866DD96D3EB2102737DA92F80F6057A4B40DF2F") {
+            throw "Inno Setup download checksum mismatch"
+          }
+          # Portable mode: unpacked into the runner temp directory, no uninstall entry.
+          $directory = Join-Path $env:RUNNER_TEMP "inno-setup"
+          $process = Start-Process $installer -ArgumentList "/CURRENTUSER", "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/PORTABLE=1", "/NOICONS", "/DIR=$directory" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Inno Setup install failed (exit $($process.ExitCode))" }
+          "INNO_SETUP_COMPILER=$(Join-Path $directory 'ISCC.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Sign Windows executables and FFmpeg DLLs, then build the signed installer
         if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
         env:
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
         shell: pwsh
-        run: ./desktop/scripts/sign-windows-package.ps1 -PackagePath "$env:RUNNER_TEMP/fframes-studio-${{ matrix.target }}"
+        run: ./desktop/scripts/sign-windows-package.ps1 -PackagePath "$env:RUNNER_TEMP/fframes-studio-${{ matrix.target }}" -InstallerPath "$env:RUNNER_TEMP/fframes-studio-${{ matrix.target }}-setup.exe"
+      - name: Package unsigned Windows installer candidate
+        if: runner.os == 'Windows' && !(github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true))
+        run: |
+          python3 desktop/scripts/package-windows-installer.py \
+            --source "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" \
+            --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}-setup.exe"
+      - name: Windows installer tests
+        if: runner.os == 'Windows'
+        run: python3 desktop/scripts/test-packaging.py -k windows_installer
       - name: Attest native app package provenance
         uses: actions/attest-build-provenance@v3
         with:
@@ -215,6 +258,19 @@ jobs:
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.deb
+      - name: Attest Windows installer candidate provenance
+        if: runner.os == 'Windows'
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}-setup.exe
+      - name: Retain Windows installer candidate
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: studio-windows-installer-${{ matrix.target }}
+          path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}-setup.exe
+          if-no-files-found: error
+          retention-days: 14
       - name: Retain artifact
         uses: actions/upload-artifact@v4
         with:
@@ -230,6 +286,76 @@ jobs:
           path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.deb
           if-no-files-found: error
           retention-days: 14
+
+  # Unsigned, unqualified builds for early users. The consumer release below stays gated by M7.
+  publish-preview:
+    name: Publish Unsigned Preview
+    needs: [matrix]
+    if: >-
+      always() && !cancelled() &&
+      (github.event_name == 'push' || (inputs.preview_release == true && inputs.consumer_release != true)) &&
+      (needs.matrix.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.run_id != ''))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Resolve tag and source commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
+          RUN_ID: ${{ inputs.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          if [ -n "$RUN_ID" ]; then
+            source_commit="$(gh run view "$RUN_ID" -R "$REPOSITORY" --json headSha -q .headSha)"
+          else
+            source_commit="$GITHUB_SHA"
+          fi
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            tag_commit="$(git rev-parse "$TAG^{commit}")"
+            if [ "$tag_commit" != "$source_commit" ]; then
+              echo "Tag $TAG points at $tag_commit, but the artifacts were built from $source_commit." >&2
+              exit 1
+            fi
+          fi
+          if gh release view "$TAG" -R "$REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; published bytes are immutable. Bump the version for a new release." >&2
+            exit 1
+          fi
+          git checkout --quiet "$source_commit"
+          echo "RELEASE_TAG=$TAG" >> "$GITHUB_ENV"
+          echo "SOURCE_COMMIT=$source_commit" >> "$GITHUB_ENV"
+      - name: Fetch built packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.run_id }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh run download "${RUN_ID:-$GITHUB_RUN_ID}" -R "$REPOSITORY" -D raw-artifacts
+          mkdir dist
+          find raw-artifacts -type f \( -name 'fframes-studio-*.zip' -o -name 'fframes-studio-*-setup.exe' -o -name 'fframes-studio-*.deb' \) -exec cp {} dist/ \;
+          ls -lh dist
+      - name: Generate manifests, install script, checksums and notes
+        run: python3 desktop/scripts/prepare-github-release.py --tag "$RELEASE_TAG" --dist dist --repository "$GITHUB_REPOSITORY"
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_PRERELEASE: ${{ inputs.prerelease }}
+          INPUT_DRAFT: ${{ inputs.draft }}
+        run: |
+          extra_args=()
+          # Not a prerelease by default: releases/latest/download (install.ps1, Scoop) only follows full releases.
+          if [ "$INPUT_PRERELEASE" = "true" ]; then extra_args+=("--prerelease"); fi
+          if [ "$INPUT_DRAFT" = "true" ]; then extra_args+=("--draft"); fi
+          find dist -maxdepth 1 -type f ! -name release-notes.md -print0 | sort -z | xargs -0 \
+            gh release create "$RELEASE_TAG" --target "$SOURCE_COMMIT" \
+              --title "fframes Studio $RELEASE_TAG (unsigned preview)" \
+              --notes-file dist/release-notes.md "${extra_args[@]}"
+          echo "Published: $(gh release view "$RELEASE_TAG" --json url -q .url)"
 
   publish:
     name: Publish Release

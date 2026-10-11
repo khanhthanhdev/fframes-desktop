@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "sdk_id": "studio-sdk-x86_64-pc-windows-msvc-v2",
+  "compatible_app_range": "^0.1.0",
+  "target_triple": "x86_64-pc-windows-msvc",
+  "arch": "x86_64",
+  "os_baseline": "Windows 11 x64 with Visual Studio C++ Build Tools and Windows SDK",
+  "rust_toolchain": {
+    "channel": "1.98.1",
+    "components": [
+      "rustfmt",
+      "clippy"
+    ],
+    "targets": [
+      "x86_64-pc-windows-msvc"
+    ]
+  },
+  "fframes_version": "1.2.0",
+  "cargo_fframes_version": "1.2.0",
+  "artifacts": [
+    {
+      "name": "toolchain",
+      "url": "file://artifacts/toolchain-x86_64-pc-windows-msvc.tar.gz",
+      "sha256": "7ef8c8876ec045869e5b4ea18b76080405c1a9df057381cc30a21675cd315954",
+      "size_bytes": 237743438,
+      "destination_subdir": "toolchain"
+    },
+    {
+      "name": "ffmpeg",
+      "url": "file://artifacts/ffmpeg-x86_64-pc-windows-msvc.tar.gz",
+      "sha256": "79bb64d8259a95e390cab80377e3586a636ff9d4f69e89ba8c17e575ebb937e1",
+      "size_bytes": 84149344,
+      "destination_subdir": "ffmpeg"
+    },
+    {
+      "name": "framework",
+      "url": "file://artifacts/framework-x86_64-pc-windows-msvc.tar.gz",
+      "sha256": "b1689448b11ddce5fca0b65b5fe7d7eb1fdabf08ea2356ce6475923a0c43f818",
+      "size_bytes": 44431241,
+      "destination_subdir": "framework"
+    }
+  ],
+  "ffmpeg": {
+    "tag": "9.0.0",
+    "link_mode": "shared",
+    "headers_rel_path": "ffmpeg/include",
+    "libs_rel_path": "ffmpeg/lib",
+    "bin_rel_path": "ffmpeg/bin"
+  },
+  "host_prerequisites": [
+    {
+      "id": "msvc",
+      "name": "MSVC compiler",
+      "description": "Visual Studio native build environment",
+      "command": "cl.exe",
+      "args": [],
+      "package_name": "Visual Studio C++ Build Tools",
+      "required": true
+    }
+  ],
+  "preview_contract_versions": [
+    1
+  ],
+  "preview_capabilities": [
+    "preview_identity_v1",
+    "scaled_frame_v1",
+    "inspect_v1",
+    "prepared_audio_v1"
+  ]
+}

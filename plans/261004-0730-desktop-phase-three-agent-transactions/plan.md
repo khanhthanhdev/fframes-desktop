@@ -61,4 +61,8 @@ The [validation record](../reports/validation-261004-0730-desktop-phase-three-ag
 
 Next execution: `/ak:cook /root/fframes-desktop/plans/261004-0730-desktop-phase-three-agent-transactions/plan.md`. Begin with Stage 1 baseline regression checks; this planning task does not authorize implementation.
 
+## Windows development run (2026-10-10)
+
+On 2026-10-10 a Windows Server 2022 x64 VM (virtual RDP display, no GPU) ran the Windows development checks: the full desktop workspace suite (79 test targets) passes on MSVC, the Windows SDK assembles with its offline double build, and the packaged app installs the managed SDK into a fresh home, compiles a worker, presents 1,000 frames and accepts native SendInput typing and preview selection with no leftover processes. Results and evidence are in the [M0 ledger](../../desktop/qualification/m0-results.json) under `additional_platforms`. `auth_windows` in the [M3 ledger](../../desktop/qualification/m3-results.json) stays `not_run`: no authenticated ACP adapter was available on the Windows host.
+
 <!-- slug: desktop-phase-three-agent-transactions -->

@@ -58,4 +58,8 @@ The five M0 gates and measurements are defined in [implementation-plan.md](../..
 - A real provider account must be available for ACP qualification; otherwise that row is `NOT RUN` and M0 remains incomplete.
 - Native clean-account runners/VMs and the exact host SDK/tool versions must be available before Windows/macOS/Linux support can be claimed.
 
+## Windows development run (2026-10-10)
+
+On 2026-10-10 a Windows Server 2022 x64 VM (virtual RDP display, no GPU) ran the Windows development checks: the full desktop workspace suite (79 test targets) passes on MSVC, the Windows SDK assembles with its offline double build, and the packaged app installs the managed SDK into a fresh home, compiles a worker, presents 1,000 frames and accepts native SendInput typing and preview selection with no leftover processes. Results and evidence are in the [M0 ledger](../../desktop/qualification/m0-results.json) under `additional_platforms`. Windows fixes found by that run: managed-toolchain PATH loss on repeated prepends, a missing `ProgramData` allowlist entry that hid MSVC from rustc, a Linux-only host doctor (apt-get, cl.exe on PATH), empty PATH entries rejecting adapter discovery and preset import inspecting non-portable names first. The Windows target stays PENDING: a separate account, OS-level network isolation, worker crash/restart, the product shell's guided first-run setup, a clean machine without the VC++ Redistributable and a physical display/IME remain unmet, and authenticated ACP is still NOT RUN. The success-criteria checkboxes stay open.
+
 <!-- slug: desktop-phase-zero-setup -->

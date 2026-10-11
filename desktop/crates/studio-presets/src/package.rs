@@ -698,6 +698,15 @@ pub fn read_dir_files(root: &Path) -> Result<BTreeMap<ProjectPath, Vec<u8>>, Pre
                 format!("{rel}/{name}")
             };
             let abs = root.join(&child_rel);
+            // Validate the name before touching it: Windows resolves a non-portable name such
+            // as `name.` to a different file, so a later check would see the wrong entry.
+            let path = ProjectPath::try_from(child_rel.clone()).map_err(|e| {
+                io_diag(
+                    Code::InvalidPath,
+                    &abs,
+                    format!("{}: {}", e.reason, e.action),
+                )
+            })?;
             let meta = fs::symlink_metadata(&abs).map_err(|e| io_diag(Code::Io, &abs, e))?;
             let kind = meta.file_type();
             if kind.is_symlink() {
@@ -723,13 +732,6 @@ pub fn read_dir_files(root: &Path) -> Result<BTreeMap<ProjectPath, Vec<u8>>, Pre
                         format!("more than {MAX_FILES} files"),
                     ));
                 }
-                let path = ProjectPath::try_from(child_rel).map_err(|e| {
-                    io_diag(
-                        Code::InvalidPath,
-                        &abs,
-                        format!("{}: {}", e.reason, e.action),
-                    )
-                })?;
                 let limit = MAX_FONT_BYTES.max(MAX_IMAGE_BYTES);
                 if meta.len() > limit || total + meta.len() > MAX_TOTAL_BYTES {
                     return Err(io_diag(
