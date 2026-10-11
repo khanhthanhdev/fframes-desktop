@@ -77,9 +77,18 @@ fn evidence(controller: &Controller, id: &TaskIdentity) -> QuiescenceEvidence {
     }
 }
 
+#[cfg(not(windows))]
 fn sleeper() -> SpawnOptions {
     let mut options = SpawnOptions::new("sleep");
     options.arg("30");
+    options
+}
+
+/// Windows has no `sleep`; `ping` to loopback waits about one second per echo.
+#[cfg(windows)]
+fn sleeper() -> SpawnOptions {
+    let mut options = SpawnOptions::new("ping");
+    options.arg("-n").arg("31").arg("127.0.0.1");
     options
 }
 

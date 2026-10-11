@@ -62,4 +62,8 @@ Hard planning route; full M6 scope held. The roadmap already fixes the product c
 
 The CLI format check and ownership-aware local link/file sweep pass. All stages remain pending; provider qualification is future execution evidence. Ready to implement using `/ak:cook /root/fframes-desktop/plans/261007-0712-desktop-phase-six-provider-qualification-handoff/plan.md`.
 
+## Windows development run (2026-10-10)
+
+On 2026-10-10 a Windows Server 2022 x64 VM (virtual RDP display, no GPU) ran the Windows development checks: the full desktop workspace suite (79 test targets) passes on MSVC, the Windows SDK assembles with its offline double build, and the packaged app installs the managed SDK into a fresh home, compiles a worker, presents 1,000 frames and accepts native SendInput typing and preview selection with no leftover processes. Results and evidence are in the [M0 ledger](../../desktop/qualification/m0-results.json) under `additional_platforms`. Adapter discovery now skips empty Windows PATH entries instead of refusing every search. Each provider's `platform_windows` gate in the [M6 ledger](../../desktop/qualification/m6-results.json) stays `blocked`: no provider's ACP adapter was installed and authenticated on the Windows host.
+
 <!-- slug: desktop-phase-six-provider-qualification-handoff -->

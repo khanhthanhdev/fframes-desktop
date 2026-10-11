@@ -12,3 +12,7 @@ Constraints: configurable ACP adapter, authenticated qualification deferred; no 
 - [x] Focused tests, Clippy, formatting, review, docs and ledger reconciliation.
 
 Result: requested implementation and available Linux evidence complete. Overall qualification remains PENDING for physical GPU/IME, Windows/macOS and authenticated ACP. See [completion report](../reports/implementation-261001-2213-phase-zero-completion.md), [native procedure](../../docs/desktop/phase-zero-feasibility.md) and [ledger](../../desktop/qualification/m0-results.json).
+
+## Windows development run (2026-10-10)
+
+On 2026-10-10 a Windows Server 2022 x64 VM (virtual RDP display, no GPU) ran the Windows development checks: the full desktop workspace suite (79 test targets) passes on MSVC, the Windows SDK assembles with its offline double build, and the packaged app installs the managed SDK into a fresh home, compiles a worker, presents 1,000 frames and accepts native SendInput typing and preview selection with no leftover processes. Results and evidence are in the [M0 ledger](../../desktop/qualification/m0-results.json) under `additional_platforms`. Windows qualification itself remains PENDING.

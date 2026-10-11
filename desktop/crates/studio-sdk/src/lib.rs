@@ -8,7 +8,7 @@ pub mod project;
 #[path = "release-manifest.rs"]
 pub mod release_manifest;
 
-pub use doctor::{Doctor, DoctorItem, DoctorReport, DoctorStage, ProbeStatus};
+pub use doctor::{Doctor, DoctorItem, DoctorReport, DoctorStage, ProbeStatus, install_hint};
 pub use download::{DownloadError, ReleaseArtifactKind, SdkDownloader};
 pub use environment::SdkEnvironment;
 pub use install::{InstallError, SdkArtifactReceipt, SdkInstallReceipt, SdkInstaller};

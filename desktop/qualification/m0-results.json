@@ -147,8 +147,144 @@
     "native_packaged_binary": "PASSED: exact executable SHA-256 in environment/package evidence",
     "linux_account_network_isolation": "PASSED",
     "physical_display_ime": "NOT_RUN",
-    "windows_macos_native": "NOT_RUN",
+    "windows_macos_native": "WINDOWS_PARTIAL_DEVELOPMENT_RUN (see additional_platforms); MACOS_NOT_RUN",
     "remote_ci_workflow": "NOT_RUN",
     "authenticated_acp": "NOT_RUN"
-  }
+  },
+  "additional_platforms": [
+    {
+      "triple": "x86_64-pc-windows-msvc",
+      "os": "windows",
+      "status": "PENDING",
+      "evidence_scope": "Windows Server 2022 x64 VM, interactive RDP session with a virtual display adapter (no GPU), Visual Studio Build Tools and LLVM preinstalled, Administrator account, network available. Development evidence only: not a clean-account, network-isolated, physical-display or IME qualification.",
+      "metrics": {
+        "sdk_assembly_seconds": 322,
+        "sdk_bundle_bytes": 366331188,
+        "package_zip_bytes": 453670255,
+        "native_run_seconds": 359.25,
+        "presentation_elapsed_ms": 176617.8992,
+        "host_rss_high_water_bytes": 310513664,
+        "worker_rss_high_water_bytes": 24956928,
+        "heartbeat_max_gap_ms": 81.3606
+      },
+      "checks": {
+        "workspace_tests": {
+          "status": "PASSED",
+          "notes": "Full desktop workspace suite on x86_64-pc-windows-msvc: 79 test targets, 0 failures; clippy -D warnings and fmt --check clean. Windows fixes made to reach this: test fixtures spawned python3/sleep, empty PATH entries rejected adapter discovery, preset import inspected non-portable names before validating them, repeated PATH prepends dropped the managed toolchain, the child allowlist dropped ProgramData needed for MSVC discovery, adapter discovery picked npm's extensionless shell script over its .cmd launcher, and the studio now builds as a GUI-subsystem executable that starts its child processes without console windows. The host Python was prepended to PATH for the run.",
+          "evidence": [
+            {
+              "path": "evidence/windows-m0-2026-10-11/workspace-tests.log",
+              "sha256": "a5d758c14cf9e2a1785a315c42d118e0486b43530ff08dcdd19b6ec57d28b1f4"
+            }
+          ]
+        },
+        "sdk_assembly_offline_double_build": {
+          "status": "PASSED",
+          "notes": "Windows SDK (studio-sdk-x86_64-pc-windows-msvc-v2, FFmpeg 9 shared) assembled from the real Rust 1.98.1 sysroot; the annotated worker compiled and rendered twice offline with an empty Cargo home and separate target directories.",
+          "evidence": [
+            {
+              "path": "evidence/windows-m0-2026-10-11/sdk-assembly.log",
+              "sha256": "abae5215a6e7cae949168635259b1b85ce9e688bb01390da632d0d2e41d1e8a1"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/sdk-compatibility.json",
+              "sha256": "d87bd506fbed00238289f4106fd34d5b5e5c6cc4a722b27a318a0a2e450cea47"
+            }
+          ]
+        },
+        "managed_compilation_fresh_home": {
+          "status": "PASSED",
+          "notes": "Packaged fframes-studio.exe qualify-presentation with a fresh USERPROFILE/APPDATA/CARGO_HOME/RUSTUP_HOME and no developer Rust or VS developer prompt on PATH: transactional SDK install, staged template and worker compile and render before promotion, then a fresh worker project compiled after promotion. Same account; network available. The executables link the C runtime statically and import no Visual C++ Redistributable DLL.",
+          "evidence": [
+            {
+              "path": "evidence/windows-m0-2026-10-11/environment.json",
+              "sha256": "9aa781bcd6c00fb4101a99c10a5ae399b58d556977308f6b2d66a10e37197f7b"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/sdk-compatibility.json",
+              "sha256": "d87bd506fbed00238289f4106fd34d5b5e5c6cc4a722b27a318a0a2e450cea47"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/package-inventory.json",
+              "sha256": "5987266aa71f13310740c4ded6f4e0c1763d91d52298734d6ad1c48450970e60"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/windows-doctor.txt",
+              "sha256": "bfad6e1ba450417c2ddd82b1f51ef0e476362691a04fd4a5d5ab25f5f02a27ed"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/binary-dependents.txt",
+              "sha256": "401175a9cad4130587f5dd6d4668ab58cbafcf8e4ff69c23767b5a798aeaca68"
+            }
+          ]
+        },
+        "native_presentation_input_selection": {
+          "status": "PASSED",
+          "notes": "Real GPUI window on the RDP virtual display: 1,000 confirmed presentations and 2,000 verified real-worker renders (queue and current-image high water 1, 0 release failures); Win32 SendInput typing observed as 'native typing 123'; a SendInput click through the letterboxed preview selected intro.title with its source span. Painting stalls while the RDP client is not displayed.",
+          "evidence": [
+            {
+              "path": "evidence/windows-m0-2026-10-11/presentation.json",
+              "sha256": "fac99d8817face37694fb709b62aef1440bf65550da06635de513e36c56491d5"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/presentation.ready.json",
+              "sha256": "d28ee4d1dd6cf1c40f20484d21760355b6fc4d4bb231978e33e06744fc7b1be3"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/native-window.png",
+              "sha256": "6d14aee6ae3f012f0451554cec0679923006e54f520cdb218d906e0c3f4a0e13"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/environment.json",
+              "sha256": "9aa781bcd6c00fb4101a99c10a5ae399b58d556977308f6b2d66a10e37197f7b"
+            }
+          ]
+        },
+        "process_cleanup": {
+          "status": "PASSED",
+          "notes": "Two owned descendants while presenting (the worker and the windowless console host that CREATE_NO_WINDOW gives each console child of the GUI-subsystem studio) and none after the application closed (CIM process-tree scan); Job Object containment tests pass in the workspace suite.",
+          "evidence": [
+            {
+              "path": "evidence/windows-m0-2026-10-11/environment.json",
+              "sha256": "9aa781bcd6c00fb4101a99c10a5ae399b58d556977308f6b2d66a10e37197f7b"
+            },
+            {
+              "path": "evidence/windows-m0-2026-10-11/workspace-tests.log",
+              "sha256": "a5d758c14cf9e2a1785a315c42d118e0486b43530ff08dcdd19b6ec57d28b1f4"
+            }
+          ]
+        },
+        "separate_account": {
+          "status": "NOT_RUN",
+          "notes": "The operator chose not to create a separate account on this shared VM.",
+          "prerequisite": "Run the harness under a fresh standard Windows account."
+        },
+        "network_disabled_build": {
+          "status": "NOT_RUN",
+          "notes": "Builds used Cargo offline mode with the SDK vendor graph, but OS-level networking stayed enabled (the VM also hosts a CI runner).",
+          "prerequisite": "Block outbound networking at the OS boundary while the fresh project compiles."
+        },
+        "worker_crash_restart": {
+          "status": "NOT_RUN",
+          "notes": "The Windows harness does not yet force-crash and restart the worker; only unit tests cover it on Windows.",
+          "prerequisite": "A native Windows force-crash, restart and rebuild run of the packaged app."
+        },
+        "guided_setup": {
+          "status": "NOT_RUN",
+          "notes": "The host doctor now passes on Windows (it previously demanded clang, cmake, pkg-config and cl.exe on PATH and printed apt-get), and the product shell reaches the managed SDK state, but the first-run install and create flow was not driven end to end.",
+          "prerequisite": "Drive the product shell's first-run setup on a clean Windows user."
+        },
+        "vc_runtime_clean_machine": {
+          "status": "NOT_RUN",
+          "notes": "The packaged executables now link the C runtime statically and packaging refuses any VCRUNTIME/MSVCP import; the FFmpeg DLLs import only the Universal CRT that Windows ships. Import tables are not a launch: this VM has Visual Studio and the Redistributable installed, so a clean-machine launch is still unproven.",
+          "prerequisite": "Launch the package on Windows without Visual Studio or the VC++ Redistributable installed."
+        },
+        "physical_display_ime": {
+          "status": "BLOCKED",
+          "notes": "Only a virtual RDP display adapter exists; no GPU, physical display or IME composition was exercised.",
+          "prerequisite": "A physical Windows display/GPU and a real IME composition run."
+        }
+      }
+    }
+  ]
 }

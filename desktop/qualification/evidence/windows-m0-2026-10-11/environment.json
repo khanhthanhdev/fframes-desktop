@@ -1,0 +1,27 @@
+{
+  "os": "Windows-2022Server-10.0.20348-SP0",
+  "machine": "AMD64",
+  "session_id": "2",
+  "display_adapters": "Red Hat VirtIO GPU DOD controller; Microsoft Remote Display Adapter",
+  "display": "interactive Windows desktop session (remote/virtual adapter)",
+  "physical_display": false,
+  "ime_composition": "NOT_RUN",
+  "fresh_home": true,
+  "fresh_cargo_and_rustup_homes": true,
+  "separate_account": false,
+  "external_network_disabled": false,
+  "application_sha256": "e1499721460e9ee3004e1bea8868cf9942aa01d2e279a2724873709fbb5a4cf7",
+  "sdk_manifest_sha256": "9b8bcdc3ad24a07fbdfdcb2f24acbe4d7df5237c5a9424c21b3bfae6d91a6f4f",
+  "candidate_template_and_worker_build_render": "PASSED",
+  "fresh_worker_build_after_promotion": "PASSED",
+  "native_keyboard_input": "PASSED",
+  "native_source_click": "PASSED",
+  "descendants_while_presenting": 2,
+  "descendants_after_close": 0,
+  "elapsed_seconds": 359.25,
+  "source": {
+    "commit": "37b698a5ac53999bd6c9adc90ac803833cecb1cf",
+    "desktop_worktree_diff_sha256": "2de3eaf6e7f6ca430c7ae3d8da38f2645eb580dfc4484ac517d7f92fdd24168a"
+  },
+  "harness_sha256": "001ea8c3c710f13f0c588141f53a94e571bdf0b62c5c03bbd6afbca4a62f1506"
+}

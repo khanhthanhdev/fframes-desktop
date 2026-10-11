@@ -86,9 +86,9 @@
       "kind": "authentic",
       "status": "not_run",
       "criteria": "The complete M4 workflow is exercised on Windows, including native interaction and task/process cleanup.",
-      "notes": "No Windows host was available for this run.",
+      "notes": "Windows development evidence now exists (m0-results.json additional_platforms, evidence/windows-m0-2026-10-11): the desktop workspace suite passes on x86_64-pc-windows-msvc and the packaged app installs the managed SDK, compiles a worker and presents frames with native input on a Windows Server 2022 VM. The M4 scoped workflow itself was not run there because no authenticated provider was available.",
       "evidence": [],
-      "prerequisite": "Run the complete M4 qualification on a Windows host with a compatible SDK and native shell."
+      "prerequisite": "Run the complete M4 qualification on a Windows host with a compatible SDK, native shell and an authenticated provider."
     },
     "auth_macos": {
       "kind": "authentic",

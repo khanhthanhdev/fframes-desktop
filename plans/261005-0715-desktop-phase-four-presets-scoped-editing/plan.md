@@ -97,4 +97,8 @@ Plan tracking remains in these phase files because no live task-management surfa
 - **Reconciled stale references:** 3 (timeline-selection ownership, task-context/tool declaration locations, nested desktop Cargo manifest path).
 - **Unresolved contradictions:** 0
 
+## Windows development run (2026-10-10)
+
+On 2026-10-10 a Windows Server 2022 x64 VM (virtual RDP display, no GPU) ran the Windows development checks: the full desktop workspace suite (79 test targets) passes on MSVC, the Windows SDK assembles with its offline double build, and the packaged app installs the managed SDK into a fresh home, compiles a worker, presents 1,000 frames and accepts native SendInput typing and preview selection with no leftover processes. Results and evidence are in the [M0 ledger](../../desktop/qualification/m0-results.json) under `additional_platforms`. The preset import now rejects non-portable names before inspecting them, which Windows needed. `auth_windows` in the [M4 ledger](../../desktop/qualification/m4-results.json) stays `not_run` until an authenticated provider runs the M4 workflow on Windows.
+
 <!-- slug: desktop-phase-four-presets-scoped-editing -->

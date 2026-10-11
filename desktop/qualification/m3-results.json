@@ -441,9 +441,9 @@
       "kind": "authentic",
       "status": "not_run",
       "criteria": "The M3 workflow, packaging and process containment (Job Objects) are exercised on Windows.",
-      "notes": "Not run on this machine: the prerequisite below is missing. No fixture or development evidence is substituted for it.",
+      "notes": "Windows development evidence now exists (m0-results.json additional_platforms, evidence/windows-m0-2026-10-11): the desktop workspace suite passes on x86_64-pc-windows-msvc and the packaged app installs the managed SDK, compiles a worker and presents frames with native input on a Windows Server 2022 VM. No authenticated ACP adapter was available on that host, so the M3 workflow was not exercised; development evidence is not substituted for this authentic gate.",
       "evidence": [],
-      "prerequisite": "A Windows host; non-Linux code is compiled by inspection only and no Windows build was run."
+      "prerequisite": "An operator-authenticated ACP adapter on a Windows host running the M3 workflow with Job Object containment."
     },
     "auth_macos": {
       "kind": "authentic",

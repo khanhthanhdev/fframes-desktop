@@ -183,10 +183,9 @@ def test_ranking_status_mismatch():
 def test_secret_in_ledger():
     record = load_baseline()
     record["environment"]["scope"] = "sk-1234567890abcdef1234567890abcdef"
-    with tempfile.NamedTemporaryFile("w", suffix=".json") as f:
-        json.dump(record, f)
-        f.flush()
-        expect_failure(record, "credential-like text", "Secret in ledger file", tmp_path=Path(f.name))
+    # A directory, not an open NamedTemporaryFile: Windows cannot reopen an open temporary file.
+    with tempfile.TemporaryDirectory() as directory:
+        expect_failure(record, "credential-like text", "Secret in ledger file", tmp_path=Path(directory) / "ledger.json")
 
 
 def test_invalid_launch_identity():

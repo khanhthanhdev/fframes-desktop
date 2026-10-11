@@ -53,4 +53,4 @@ gpui_platform = { workspace = true, features = ["font-kit"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 gpui_platform = { workspace = true }
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Threading", "Win32_System_ProcessStatus"] }
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_Console", "Win32_System_Threading", "Win32_System_ProcessStatus"] }

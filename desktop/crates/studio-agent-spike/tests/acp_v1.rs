@@ -30,6 +30,9 @@ fn peer_script() -> String {
     format!("{}/tests/acp-peer.py", env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The fixture peer interpreter; Windows Python installs provide `python`, not `python3`.
+const PYTHON: &str = if cfg!(windows) { "python" } else { "python3" };
+
 fn search() -> ExecutableSearch {
     // The "GUI PATH" is passed explicitly; nothing consults the global PATH implicitly.
     ExecutableSearch {
@@ -40,14 +43,14 @@ fn search() -> ExecutableSearch {
 
 fn launch(root: &Path, mode: &str) -> AdapterLaunch {
     let config = AdapterConfig {
-        executable: "python3".into(),
+        executable: PYTHON.into(),
         args: vec![peer_script(), mode.into(), root.to_string_lossy().into()],
         auth_env_names: vec!["ACP_SECRET".into()],
     };
     AdapterLaunch::resolve_with_env(&config, &search(), |name| {
         (name == "ACP_SECRET").then(|| SECRET.to_owned())
     })
-    .expect("python3 resolves through the explicit search path")
+    .expect("Python resolves through the explicit search path")
 }
 
 fn config(root: &Path, mode: &str) -> DriverConfig {
@@ -359,7 +362,7 @@ fn mid_turn_protocol_failures_stop_the_tree_and_surface_one_failure_event() {
 
 fn probe(root: &Path, mode: &str, verify: bool, method: Option<&str>) -> AdapterStatus {
     let config = AdapterConfig {
-        executable: "python3".into(),
+        executable: PYTHON.into(),
         args: vec![peer_script(), mode.into(), root.to_string_lossy().into()],
         auth_env_names: vec![],
     };

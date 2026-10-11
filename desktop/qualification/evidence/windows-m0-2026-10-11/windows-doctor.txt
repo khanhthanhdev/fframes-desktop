@@ -1,0 +1,10 @@
+# studio_setup doctor with the packaged Windows SDK manifest, no developer prompt
+Doctor Report [HostPreflight] for x86_64-pc-windows-msvc
+Overall Status: Pass
+
+[OK] Host Architecture & OS Baseline: Host is x86_64-pc-windows-msvc
+[OK] MSVC compiler: <ProgramFiles>\Microsoft Visual Studio\18\Community
+[OK] libclang: <ProgramFiles>\LLVM\bin
+[INSTALLABLE] App-Managed SDK Artifacts: Ready for transactional installation
+
+doctor exit 0

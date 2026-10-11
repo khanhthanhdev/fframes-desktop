@@ -188,3 +188,7 @@ Rollback is phase-local: the app can return to Phase 2 CLI-render bootstrap; gen
 - [ ] Minimal app and SDK artifacts can reproduce the passing clean-account flows without the development checkout.
 - [ ] M1 remains the future full shell/persistence milestone and M7 remains production signing/installer/update work; neither is smuggled into this spike.
 - [ ] The plan review report at [plan-review-261001-1707-desktop-phase-zero.md](../reports/plan-review-261001-1707-desktop-phase-zero.md) has no unresolved blocking finding before implementation handoff.
+
+## Windows development run (2026-10-10)
+
+Windows status (2026-10-10, rerun 2026-10-11): development evidence only, see the [M0 ledger](../../desktop/qualification/m0-results.json) `additional_platforms`. Passed: workspace tests, SDK assembly with offline double build, fresh-home managed compilation, FFmpeg DLL load at build and run, native SendInput typing and preview selection on a virtual display, process cleanup. Still open: VC runtime on a clean machine (the executables now link the C runtime statically, but no clean-machine launch ran), guided VS/LLVM first-run setup in the product shell, worker crash/restart, separate account, network-disabled build, physical display and IME. The Windows checkbox above stays unchecked.
