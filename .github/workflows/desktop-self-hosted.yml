@@ -64,14 +64,42 @@ jobs:
       CARGO_PROFILE_TEST_DEBUG: "0"
     steps:
       - uses: actions/checkout@v4
-      # The runner service's PATH has no Git Bash, which setup-rust-toolchain's bash steps need.
-      - name: Put Git Bash on PATH
+      # The runner service does not inherit the interactive profile: it has no Git Bash (needed by
+      # setup-rust-toolchain), FFMPEG_DIR, LIBCLANG_PATH or `python` (spawned by test fixtures).
+      - name: Prepare the Windows build environment
         shell: powershell
         run: |
+          $ErrorActionPreference = "Stop"
+          # AppendAllText writes UTF-8 without a BOM, which Windows PowerShell's Out-File would add.
+          function Add-Line([string]$File, [string]$Line) { [IO.File]::AppendAllText($File, "$Line`n") }
           $gitBin = Join-Path $env:ProgramFiles "Git\bin"
           if (-not (Test-Path (Join-Path $gitBin "bash.exe"))) { throw "Git Bash not found at $gitBin" }
-          # AppendAllText writes UTF-8 without a BOM, which Windows PowerShell's Out-File would add.
-          [IO.File]::AppendAllText($env:GITHUB_PATH, "$gitBin`n")
+          Add-Line $env:GITHUB_PATH $gitBin
+
+          # Same pinned FFmpeg build as the release workflow, kept in the runner's tool cache.
+          $distribution = "ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-shared-9.0"
+          $release = "autobuild-2026-10-07-13-07"
+          $expected = "124799F0643A75EB84A64A589F1ABAC8F81732587942F3F34458688036153F0D"
+          $cache = Join-Path $env:RUNNER_TOOL_CACHE "fframes-ffmpeg"
+          $ffmpeg = Join-Path $cache $distribution
+          if (-not (Test-Path (Join-Path $ffmpeg "bin\avcodec-63.dll"))) {
+            New-Item -ItemType Directory -Force -Path $cache | Out-Null
+            $archive = Join-Path $env:RUNNER_TEMP "$distribution.zip"
+            Invoke-WebRequest -UseBasicParsing "https://github.com/BtbN/FFmpeg-Builds/releases/download/$release/$distribution.zip" -OutFile $archive
+            if ((Get-FileHash $archive -Algorithm SHA256).Hash -ne $expected) { throw "FFmpeg download checksum mismatch" }
+            Expand-Archive -LiteralPath $archive -DestinationPath $cache -Force
+            Remove-Item -LiteralPath $archive
+          }
+          Add-Line $env:GITHUB_ENV "FFMPEG_DIR=$ffmpeg"
+          Add-Line $env:GITHUB_PATH (Join-Path $ffmpeg "bin")
+
+          $llvm = Join-Path $env:ProgramFiles "LLVM\bin"
+          if (-not (Test-Path (Join-Path $llvm "libclang.dll"))) { throw "LLVM (libclang) not found at $llvm" }
+          Add-Line $env:GITHUB_ENV "LIBCLANG_PATH=$llvm"
+
+          $python = & py -3 -c "import os, sys; print(os.path.dirname(sys.executable))"
+          if ($LASTEXITCODE -ne 0 -or -not $python) { throw "No Python 3 found through the py launcher" }
+          Add-Line $env:GITHUB_PATH $python
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           toolchain: "1.98.1"
