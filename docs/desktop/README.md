@@ -2,6 +2,8 @@
 
 Research date: 2026-10-01. Working product name: **fframes Studio**.
 
+**Install the unsigned Windows preview** (per user, no administrator rights), from the first preview release on: `irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex`, Scoop, or the Setup.exe from the [latest release](https://github.com/khanhthanhdev/fframes-desktop/releases/latest). winget follows once `khanhthanhdev.fframesStudio` is accepted into the community repository. See [preview releases](phase-zero-feasibility.md#unsigned-preview-releases).
+
 Build a native GPUI app in Rust where a person describes a video, watches it, selects a scene or visible object, and asks a coding agent to change it. The agent edits an ordinary fframes Rust project. The app owns project setup, style presets, agent connections, compilation, preview, validation, history and export.
 
 This direction follows the requested agent-driven authoring workflow. It supersedes the earlier proposal to make template parameters the primary project model. Templates are useful starting points; Rust source remains the authority for the video.

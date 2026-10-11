@@ -40,6 +40,8 @@ assembly = load("assemble-phase-zero-sdk")
 packaging = load("package-phase-zero")
 finalizing = load("finalize-native-package")
 debian_packaging = load("package-linux-deb")
+windows_installer = load("package-windows-installer")
+github_release = load("prepare-github-release")
 qualification = load("validate-qualification")
 harness = load("qualify-m3-agent")
 
@@ -128,6 +130,136 @@ class ArtifactTests(unittest.TestCase):
             self.assertTrue((installed / "opt/fframes-studio/notices/LICENSE.txt").is_file())
             self.assertFalse((installed / "opt/fframes-studio/sdk").exists(), "the app package must not embed the separate SDK")
 
+    def fake_windows_package(self, root):
+        source = root / "fframes-studio-x86_64-pc-windows-msvc"
+        for name in windows_installer.REQUIRED:
+            (source / name).parent.mkdir(parents=True, exist_ok=True)
+            (source / name).write_text(name)
+        return source
+
+    def test_windows_installer_is_per_user_and_keeps_user_data(self):
+        script = windows_installer.SCRIPT.read_text()
+        setup = dict(
+            line.split("=", 1)
+            for line in script.split("[Setup]", 1)[1].split("\n[", 1)[0].splitlines()
+            if "=" in line and not line.startswith(";") and not line.startswith("#")
+        )
+        self.assertEqual(setup["PrivilegesRequired"], "lowest", "the installer must not need administrator rights")
+        self.assertNotIn("PrivilegesRequiredOverridesAllowed", setup)
+        # {autopf} is %LOCALAPPDATA%\Programs for a per-user install: outside the app data root.
+        self.assertEqual(setup["DefaultDirName"], r"{autopf}\fframes Studio")
+        self.assertEqual(setup["AppId"], "{{A4FDB3DF-A64F-4AD1-AA24-245DE70251EC}", "AppId identifies upgrades; never change it")
+        self.assertNotIn("[UninstallDelete]", script, "uninstall must keep projects, the SDK and app state")
+        self.assertNotIn("{localappdata}", script.lower())
+        self.assertNotIn("{%userprofile}", script.lower())
+        for shortcut in ("{autoprograms}", "{autodesktop}"):
+            line = next(line for line in script.splitlines() if line.startswith(f'Name: "{shortcut}'))
+            self.assertIn(r'Filename: "{app}\bin\fframes-studio.exe"', line)
+        self.assertTrue((windows_installer.SCRIPT.parent / "fframes-studio.ico").is_file())
+        # The installed shortcut passes no SDK variable, so the app must find sdk\ beside bin\.
+        setup_view = (assembly.ROOT / "desktop/app/src/setup_view.rs").read_text()
+        self.assertIn('.map(|p| p.join("sdk/compatibility.json"))', setup_view)
+        main = (assembly.ROOT / "desktop/app/src/main.rs").read_text()
+        self.assertIn('#![cfg_attr(windows, windows_subsystem = "windows")]', main)
+        self.assertIn('.unwrap_or("studio")', main)
+
+    def test_windows_installer_rejects_incomplete_packages_before_compiling(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.fake_windows_package(root)
+            (source / "sdk/compatibility.json").unlink()
+            with self.assertRaisesRegex(ValueError, "missing: sdk/compatibility.json"):
+                windows_installer.package(source, root / "setup.exe", iscc=str(root / "absent.exe"))
+            existing = root / "existing.exe"
+            existing.write_bytes(b"previous")
+            with self.assertRaisesRegex(ValueError, "output already exists"):
+                windows_installer.package(source, existing)
+            self.assertEqual(existing.read_bytes(), b"previous")
+            with self.assertRaisesRegex(ValueError, "must be an .exe"):
+                windows_installer.package(source, root / "setup.msi")
+        self.assertEqual(windows_installer.app_version()[1].count("."), 3)
+
+    @unittest.skipUnless(os.environ.get("INNO_SETUP_COMPILER"), "set INNO_SETUP_COMPILER to the pinned ISCC.exe")
+    def test_windows_installer_compiles_with_the_pinned_inno_setup(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = self.fake_windows_package(root)
+            (source / "launch.bat").write_text("excluded")
+            output = windows_installer.package(source, root / "out/fframes-studio-setup.exe")
+            self.assertEqual(output.read_bytes()[:2], b"MZ")
+            self.assertEqual([path.name for path in output.parent.iterdir()], [output.name], "no temporary output is left behind")
+            with self.assertRaisesRegex(ValueError, "output already exists"):
+                windows_installer.package(source, output)
+
+    def test_preview_release_carries_matching_manifests_and_checksums(self):
+        version = tomllib.loads((assembly.ROOT / "desktop/app/Cargo.toml").read_text())["package"]["version"]
+        tag = f"v{version}"
+        with tempfile.TemporaryDirectory() as temporary:
+            dist = Path(temporary)
+            (dist / github_release.SETUP).write_bytes(b"MZ setup")
+            (dist / github_release.WINDOWS_ZIP).write_bytes(b"PK windows")
+            (dist / "fframes-studio-x86_64-unknown-linux-gnu.deb").write_bytes(b"deb")
+            with self.assertRaisesRegex(ValueError, "does not match the app version"):
+                github_release.prepare("v99.0.0", dist)
+            github_release.prepare(tag, dist, "someone/fork")
+
+            setup_sha = github_release.sha256(dist / github_release.SETUP)
+            zip_sha = github_release.sha256(dist / github_release.WINDOWS_ZIP)
+            installer = (dist / "khanhthanhdev.fframesStudio.installer.yaml").read_text()
+            self.assertIn(f"PackageVersion: {version}\n", installer)
+            self.assertIn("InstallerType: inno\nScope: user\n", installer)
+            self.assertIn(f"InstallerSha256: {setup_sha.upper()}\n", installer)
+            self.assertIn(f"https://github.com/someone/fork/releases/download/{tag}/{github_release.SETUP}", installer)
+            # ProductCode is how winget recognises the installed app; it must be the installer's AppId.
+            self.assertIn("ProductCode: '{A4FDB3DF-A64F-4AD1-AA24-245DE70251EC}_is1'", installer)
+            for name in ("khanhthanhdev.fframesStudio.yaml", "khanhthanhdev.fframesStudio.locale.en-US.yaml"):
+                self.assertIn("ManifestVersion: 1.12.0\n", (dist / name).read_text())
+
+            scoop = json.loads((dist / github_release.SCOOP_MANIFEST).read_text())
+            self.assertEqual(scoop["version"], version)
+            self.assertEqual(scoop["architecture"]["64bit"]["hash"], zip_sha)
+            self.assertEqual(scoop["architecture"]["64bit"]["extract_dir"], "fframes-studio-x86_64-pc-windows-msvc")
+            self.assertEqual(scoop["shortcuts"], [["bin\\fframes-studio.exe", "fframes Studio"]])
+
+            script = (dist / "install.ps1").read_bytes()
+            self.assertIn(b'[string]$Repository = "someone/fork"', script)
+            self.assertNotIn(github_release.DEFAULT_REPOSITORY.encode(), script)
+            script.decode("ascii")
+
+            sums = dict(reversed(line.split("  ", 1)) for line in (dist / "SHA256SUMS.txt").read_text().splitlines())
+            published = sorted(path.name for path in dist.iterdir() if path.name not in {"SHA256SUMS.txt", "release-notes.md"})
+            self.assertEqual(sorted(sums), published)
+            for name, digest in sums.items():
+                self.assertEqual(github_release.sha256(dist / name), digest)
+            notes = (dist / "release-notes.md").read_text()
+            self.assertIn("irm https://github.com/someone/fork/releases/latest/download/install.ps1 | iex", notes)
+            self.assertIn("not code-signed", notes)
+            with self.assertRaisesRegex(ValueError, "already contains generated files"):
+                github_release.prepare(tag, dist, "someone/fork")
+
+    def test_install_script_verifies_the_download_before_running_setup(self):
+        script = github_release.INSTALL_SCRIPT.read_text()
+        self.assertIn(f'$setupName = "{github_release.SETUP}"', script)
+        self.assertLess(script.index("Get-FileHash"), script.index("Start-Process -FilePath $setupPath"))
+        self.assertIn("{A4FDB3DF-A64F-4AD1-AA24-245DE70251EC}_is1", script)
+        # Piped through Invoke-Expression, `exit` would close the user's shell.
+        self.assertNotRegex(script, r"(?m)^\s*exit\b")
+
+    def test_preview_publication_is_separate_from_the_gated_consumer_release(self):
+        workflow = (assembly.ROOT / ".github/workflows/desktop-release.yml").read_text()
+        preview = workflow.split("\n  publish-preview:\n", 1)[1].split("\n  publish:\n", 1)[0]
+        consumer = workflow.split("\n  publish:\n", 1)[1]
+        self.assertIn("prepare-github-release.py", preview)
+        self.assertIn("(unsigned preview)", preview)
+        self.assertIn("published bytes are immutable", preview)
+        self.assertNotIn("consumer_release_enabled", preview)
+        self.assertIn("consumer_release_enabled", consumer)
+        self.assertIn("--eligible-targets", consumer)
+        self.assertLess(
+            workflow.index("Check the release tag matches the app version"),
+            workflow.index("Focused tests and lint"),
+        )
+
     def test_bundled_ffmpeg_links_supplied_install_without_download_feature(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
@@ -179,6 +311,7 @@ class ArtifactTests(unittest.TestCase):
             record = json.loads((assembly.ROOT / "desktop/qualification/m0-results.json").read_text())
             # The repository ledger can acquire real evidence; this fixture
             # starts unqualified independently of its current native results.
+            record.pop("additional_platforms", None)
             for name, gate in record["gates"].items():
                 if name == "acp_task":
                     gate["status"] = "NOT_RUN"
@@ -192,6 +325,51 @@ class ArtifactTests(unittest.TestCase):
             path.write_text(json.dumps(record))
             with self.assertRaisesRegex(ValueError, "without evidence"):
                 qualification.validate(path)
+
+    def test_m0_additional_platform_checks_need_evidence_and_cannot_overclaim(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "evidence/win").mkdir(parents=True)
+            path = root / "results.json"
+            record = json.loads((assembly.ROOT / "desktop/qualification/m0-results.json").read_text())
+            for name, gate in record["gates"].items():
+                if name == "acp_task":
+                    gate["status"] = "NOT_RUN"
+                else:
+                    gate["passed"] = False
+                gate.pop("evidence", None)
+            checks = {name: {"status": "NOT_RUN", "notes": "not run", "prerequisite": "a host"} for name in qualification.M0_PLATFORM_CHECKS}
+            record["additional_platforms"] = [{"triple": "x86_64-pc-windows-msvc", "status": "PENDING", "checks": checks}]
+
+            def write(text):
+                (root / "evidence/win/run.log").write_text(text)
+                return {"path": "evidence/win/run.log", "sha256": hashlib.sha256(text.encode()).hexdigest()}
+
+            def expect(message):
+                path.write_text(json.dumps(record))
+                with self.assertRaisesRegex(ValueError, message):
+                    qualification.validate(path)
+
+            path.write_text(json.dumps(record))
+            qualification.validate(path)
+            checks["workspace_tests"]["status"] = "PASSED"
+            expect("without evidence")
+            checks["workspace_tests"]["evidence"] = [write("built at C:\\Users\\someone\\work")]
+            expect("private|path")
+            checks["workspace_tests"]["evidence"] = [write("all tests passed under <work>")]
+            path.write_text(json.dumps(record))
+            qualification.validate(path)
+            record["additional_platforms"][0]["status"] = "QUALIFIED"
+            expect("unmet checks")
+            record["additional_platforms"][0]["status"] = "PENDING"
+            checks["guided_setup"]["prerequisite"] = ""
+            expect("requires a prerequisite")
+            checks["guided_setup"]["prerequisite"] = "a host"
+            checks["guided_setup"]["evidence"] = checks["workspace_tests"]["evidence"]
+            expect("only a passed check")
+            checks["guided_setup"].pop("evidence")
+            del checks["guided_setup"]
+            expect("checks must be exactly")
 
     def test_legacy_m0_record_without_discriminator_remains_valid(self):
         record = qualification.validate(assembly.ROOT / "desktop/qualification/m0-results.json")
@@ -415,6 +593,25 @@ class ArtifactTests(unittest.TestCase):
             workflow.index("Sign Windows executables and FFmpeg DLLs"),
             workflow.index("Attest native app package provenance"),
         )
+        # The installer is built from the signed package, with the same certificate still imported.
+        self.assertIn("-InstallerPath", workflow)
+        self.assertIn("--sign-command", windows_signing)
+        self.assertLess(
+            windows_signing.index("finalize-native-package.py"),
+            windows_signing.index("package-windows-installer.py"),
+        )
+        self.assertLess(
+            workflow.index("Install pinned Inno Setup"),
+            workflow.index("Sign Windows executables and FFmpeg DLLs"),
+        )
+        self.assertLess(
+            workflow.index("Sign Windows executables and FFmpeg DLLs"),
+            workflow.index("Package unsigned Windows installer candidate"),
+        )
+        self.assertLess(
+            workflow.index("Package unsigned Windows installer candidate"),
+            workflow.index("Attest Windows installer candidate provenance"),
+        )
         self.assertLess(
             workflow.index("Check macOS signing credentials before building"),
             workflow.index("Focused tests and lint"),
@@ -435,7 +632,9 @@ class ArtifactTests(unittest.TestCase):
         self.assertNotIn("APPLE_DEVELOPER_ID_P12_BASE64", windows_preflight)
         mac_packager = (assembly.ROOT / "desktop/scripts/package-phase-zero.py").read_text()
         self.assertIn('"CFBundleInfoDictionaryVersion": "6.0"', mac_packager)
-        self.assertIn('"CFBundleVersion": "0.1.0"', mac_packager)
+        # The bundle version follows the app crate, so a release bump needs no second edit.
+        self.assertIn('"CFBundleVersion": app_version', mac_packager)
+        self.assertIn('(ROOT / "desktop/app/Cargo.toml")', mac_packager)
 
 
 def extract_preserving_modes(archive, destination):
@@ -500,6 +699,18 @@ class InstalledHelperTests(unittest.TestCase):
             package = self.installed_package(Path(temp), helpers=("fframes-studio", "studio_setup", "studio-tools"))
             with self.assertRaisesRegex(ValueError, "studio-mcp"):
                 packaging.verify_helpers(package / "bin" / f"fframes-studio{EXE_SUFFIX}", EXE_SUFFIX)
+
+    @unittest.skipUnless(os.name == "nt", "reads Windows PE import tables")
+    def test_windows_package_refuses_visual_cpp_redistributable_imports(self):
+        # CPython links the C runtime dynamically, so its executable imports VCRUNTIME140.dll.
+        self.assertTrue(any(name.lower().startswith("vcruntime") for name in packaging.pe_imports(sys.executable)))
+        with tempfile.TemporaryDirectory() as temp:
+            shutil.copy2(sys.executable, Path(temp) / "python.exe")
+            with self.assertRaisesRegex(ValueError, r"python\.exe needs the Visual C\+\+ Redistributable"):
+                packaging.windows_dependencies(temp)
+        with tempfile.TemporaryDirectory() as temp:
+            shutil.copy2(Path(os.environ["SystemRoot"]) / "System32" / "kernel32.dll", temp)
+            self.assertTrue(packaging.windows_dependencies(temp).startswith("# kernel32.dll\n"))
 
     def test_python_lookup_mirrors_the_rust_sibling_lookup(self):
         source = (assembly.ROOT / "desktop/app/src/agent_tools.rs").read_text()
