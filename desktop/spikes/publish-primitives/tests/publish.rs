@@ -42,8 +42,7 @@ fn junction(target: &Path, link: &Path) {
 }
 
 /// An editor saving by writing a temporary file and renaming it over the name
-/// (`std::fs::rename` is `MoveFileExW(MOVEFILE_REPLACE_EXISTING)` on Windows and
-/// `rename(2)` on macOS).
+/// (`std::fs::rename`; the Windows-only test below also uses `MoveFileExW` directly).
 fn editor_save(dir: &Path, name: &str, content: &str) -> std::io::Result<()> {
     let temp = dir.join(".editor.tmp");
     fs::write(&temp, content)?;
@@ -129,42 +128,65 @@ fn the_rename_moves_the_original_and_an_editor_save_after_it_survives() {
     assert_eq!(fs::read(temp.path().join("old.txt")).unwrap(), b"editor B");
 }
 
+/// The editor's rename-over through the Win32 call most editors use.
+#[cfg(windows)]
+fn move_file_ex_replace(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{MOVEFILE_REPLACE_EXISTING, MoveFileExW};
+    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain([0]).collect() };
+    let (from, to) = (wide(from), wide(to));
+    // SAFETY: NUL-terminated paths.
+    if unsafe { MoveFileExW(from.as_ptr(), to.as_ptr(), MOVEFILE_REPLACE_EXISTING) } == 0 {
+        Err(std::io::Error::last_os_error())
+    } else {
+        Ok(())
+    }
+}
+
 /// Windows renames the *opened file*, so its window lies between the open and the
 /// rename. The source handle excludes `FILE_SHARE_DELETE`, so an editor's rename-over in
 /// that window fails (its bytes stay in its temporary file) instead of being moved or
-/// unlinked; once the move is done, the editor's retry lands.
+/// unlinked; once the move is done, the editor's retry lands. Checked with both
+/// `std::fs::rename` and a direct `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`.
 #[cfg(windows)]
 #[test]
 fn an_editor_save_inside_the_open_rename_window_fails_without_losing_bytes() {
-    let temp = tempfile::tempdir().unwrap();
-    let dir = Dir::open_root(temp.path()).unwrap();
-    fs::write(temp.path().join("old.txt"), "original A").unwrap();
-    let in_window = Cell::new(None);
-    dir.rename_noreplace_observed("old.txt", &dir, "orig.slot", || {
-        in_window.set(Some(editor_save(temp.path(), "old.txt", "editor B")));
-    })
-    .unwrap();
-    let error = in_window.take().expect("window opened").unwrap_err();
-    eprintln!(
-        "editor rename-over inside the window: {error} ({:?})",
-        error.raw_os_error()
-    );
-    assert_eq!(
-        error.raw_os_error(),
-        Some(5),
-        "ERROR_ACCESS_DENIED expected: {error}"
-    );
-    assert_eq!(
-        fs::read(temp.path().join(".editor.tmp")).unwrap(),
-        b"editor B"
-    );
-    assert_eq!(
-        fs::read(temp.path().join("orig.slot")).unwrap(),
-        b"original A"
-    );
-    // The editor retries after the move: nothing was lost or overwritten.
-    fs::rename(temp.path().join(".editor.tmp"), temp.path().join("old.txt")).unwrap();
-    assert_eq!(fs::read(temp.path().join("old.txt")).unwrap(), b"editor B");
+    type Rename = fn(&Path, &Path) -> std::io::Result<()>;
+    let methods: [(&str, Rename); 2] = [
+        ("std::fs::rename", |a, b| fs::rename(a, b)),
+        (
+            "MoveFileExW(MOVEFILE_REPLACE_EXISTING)",
+            move_file_ex_replace,
+        ),
+    ];
+    for (label, rename) in methods {
+        let temp = tempfile::tempdir().unwrap();
+        let dir = Dir::open_root(temp.path()).unwrap();
+        let (source, editor_temp) = (temp.path().join("old.txt"), temp.path().join(".editor.tmp"));
+        fs::write(&source, "original A").unwrap();
+        let in_window = Cell::new(None);
+        dir.rename_noreplace_observed("old.txt", &dir, "orig.slot", || {
+            fs::write(&editor_temp, "editor B").unwrap();
+            in_window.set(Some(rename(&editor_temp, &source)));
+        })
+        .unwrap();
+        let error = in_window.take().expect("window opened").unwrap_err();
+        eprintln!("{label} inside the window: {error}");
+        assert_eq!(
+            error.raw_os_error(),
+            Some(5),
+            "{label}: ERROR_ACCESS_DENIED expected: {error}"
+        );
+        assert_eq!(fs::read(&editor_temp).unwrap(), b"editor B", "{label}");
+        assert_eq!(
+            fs::read(temp.path().join("orig.slot")).unwrap(),
+            b"original A",
+            "{label}"
+        );
+        // The editor retries after the move: nothing was lost or overwritten.
+        rename(&editor_temp, &source).unwrap();
+        assert_eq!(fs::read(&source).unwrap(), b"editor B", "{label}");
+    }
 }
 
 #[test]
