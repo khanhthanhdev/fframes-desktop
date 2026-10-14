@@ -83,6 +83,18 @@ impl Frame {
         }
     }
 
+    /// The scene frame of a clip placed at global frame `clip_start` after
+    /// `trim_start` scene frames were cut.
+    pub(crate) fn clone_with_clip_offset(
+        frame: &Frame,
+        clip_start: usize,
+        trim_start: usize,
+    ) -> Self {
+        let mut scene_frame = Self::clone_with_scene_offset(frame, clip_start);
+        scene_frame.index += trim_start;
+        scene_frame
+    }
+
     /// Borrows the frame into the same one, but removes relative index in favor of global one.
     /// Can be useful for using global-videos API from the scene.
     pub fn into_global(self) -> Self {

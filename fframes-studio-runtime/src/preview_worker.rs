@@ -272,9 +272,32 @@ fn preview_scene_infos(
                 end_frame: scene.end_frame,
                 start_seconds: scene.start_seconds,
                 end_seconds: scene.end_seconds,
+                clip: Some(PreviewClipTiming {
+                    timing_key: scene.timing_key,
+                    clip_index: scene.clip_index,
+                    trim_start_frames: scene.trim_start_frames,
+                    trim_end_frames: scene.trim_end_frames,
+                }),
             }
         })
         .collect()
+}
+
+/// Parses and applies a timing document; on any error the previous timing stays.
+fn apply_timing<'a, 'media: 'a, V: Video>(
+    previewer: &mut Previewer<'a, 'media, V>,
+    timing_json: Option<&str>,
+) -> Result<fframes::TimingReport, String> {
+    let doc = timing_json
+        .map(serde_json::from_str::<fframes::TimingDoc>)
+        .transpose()
+        .map_err(|e| format!("timing document: {e}"))?;
+    if let Some(doc) = &doc {
+        doc.validate().map_err(|e| e.to_string())?;
+    }
+    previewer
+        .set_timing(doc.as_ref())
+        .map_err(|e| e.to_string())
 }
 
 pub fn serve_preview_worker<V: Video>(
@@ -665,6 +688,32 @@ pub fn serve_preview_worker<V: Video>(
                     released,
                 }))?
             }
+            PreviewRequest::SetTiming(req) => {
+                if let Err(e) = req.envelope.validate(&config.identity) {
+                    transport.write_control_message(&error(
+                        Some(req.envelope),
+                        "INVALID_ENVELOPE",
+                        e,
+                    ))?;
+                    continue;
+                }
+                // Prepared audio describes the previous layout; clients prepare it again.
+                match apply_timing(&mut previewer, req.timing_json.as_deref()) {
+                    Ok(report) => transport.write_control_message(
+                        &PreviewResponse::TimingApplied(TimingAppliedResponse {
+                            envelope: req.envelope,
+                            total_frames: previewer.timeline().duration_in_frames,
+                            orphan_clips: report.orphan_clips,
+                            appended_scenes: report.appended_scenes,
+                        }),
+                    )?,
+                    Err(e) => transport.write_control_message(&error(
+                        Some(req.envelope),
+                        "INVALID_TIMING",
+                        e,
+                    ))?,
+                }
+            }
             PreviewRequest::Shutdown(env) => {
                 if let Err(e) = env.validate(&config.identity) {
                     transport.write_control_message(&error(Some(env), "INVALID_ENVELOPE", e))?;
@@ -769,6 +818,10 @@ mod editor_metadata_tests {
             end_frame: (index + 1) * 10,
             start_seconds: index as f32,
             end_seconds: (index + 1) as f32,
+            timing_key: format!("video::scene_{index}"),
+            clip_index: 0,
+            trim_start_frames: 0,
+            trim_end_frames: 0,
         };
         let preview = identity();
         let scenes = preview_scene_infos(vec![scene(0), scene(1)], &preview);
@@ -798,6 +851,7 @@ fn request_identity(request: &PreviewRequest) -> (u64, Option<&PreviewEnvelope>)
         PreviewRequest::PrepareAudio(r) => &r.envelope,
         PreviewRequest::ReadAudio(r) => &r.envelope,
         PreviewRequest::CancelAudio(r) | PreviewRequest::ReleaseAudio(r) => &r.envelope,
+        PreviewRequest::SetTiming(r) => &r.envelope,
     };
     (envelope.request_id, Some(envelope))
 }

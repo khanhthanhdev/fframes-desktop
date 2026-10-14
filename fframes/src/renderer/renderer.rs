@@ -55,6 +55,9 @@ pub struct RenderOptions<'a, 'media> {
     pub frame_range: Option<std::ops::Range<usize>>,
     /// Master bus of the audio mix: limiter, master gain and de-click fades.
     pub audio_mix: crate::AudioMixOptions,
+    /// Play order, trims and splits applied on top of `Video::define_scenes`.
+    /// `None` plays the scenes as the code defines them.
+    pub timing: Option<&'a crate::TimingDoc>,
 }
 
 impl RenderOptions<'_, '_> {
@@ -82,6 +85,7 @@ impl Default for RenderOptions<'_, '_> {
             tmp_files_directory: None,
             frame_range: None,
             audio_mix: crate::AudioMixOptions::default(),
+            timing: None,
         }
     }
 }
@@ -105,11 +109,48 @@ impl<'a, 'media: 'a> FFramesRendererRuntime<'a> {
         scenes: &Scenes<'a>,
         media: Option<&'media dyn MediaProvider<'media>>,
     ) -> FFramesRendererResult<Self> {
-        let timeline = crate::resolve_timeline(
+        Self::new_with_timing(time_base, video, scenes, media, None)
+    }
+
+    /// `new` with the scenes laid out by a timing document.
+    pub fn new_with_timing<TVideo: Video>(
+        time_base: TimeBase,
+        video: &'a TVideo,
+        scenes: &Scenes<'a>,
+        media: Option<&'media dyn MediaProvider<'media>>,
+        timing: Option<&crate::TimingDoc>,
+    ) -> FFramesRendererResult<Self> {
+        let timeline = Self::resolve_timeline(time_base, video, scenes, media, timing)?;
+
+        let mut font_source = RendererFontSource {
+            fontdb: fontdb::Database::new(),
+        };
+
+        if let Some(media) = media {
+            media.populate_font_source(&mut font_source);
+        }
+
+        Ok(Self {
+            time_base,
+            timeline,
+            font_source,
+        })
+    }
+
+    /// Resolves only the timeline, for re-applying timing without reloading fonts.
+    pub fn resolve_timeline<TVideo: Video>(
+        time_base: TimeBase,
+        video: &'a TVideo,
+        scenes: &Scenes<'a>,
+        media: Option<&'media dyn MediaProvider<'media>>,
+        timing: Option<&crate::TimingDoc>,
+    ) -> FFramesRendererResult<ResolvedRenderingTimeline<'a, AudioTimelineSamples>> {
+        Ok(crate::resolve_timeline_with_timing(
             &video.duration(),
             &ScenesWithAudio::new(scenes),
             &time_base,
             &video.audio(),
+            timing,
             |name| {
                 let media = media.ok_or_else(|| {
                     crate::error::FFramesError::RequiredAudioNotFound(name.to_owned())
@@ -137,21 +178,7 @@ impl<'a, 'media: 'a> FFramesRendererRuntime<'a> {
                         crate::error::FFramesError::CanNotProcessAudioDuration(name.to_owned())
                     })
             },
-        )?;
-
-        let mut font_source = RendererFontSource {
-            fontdb: fontdb::Database::new(),
-        };
-
-        if let Some(media) = media {
-            media.populate_font_source(&mut font_source);
-        }
-
-        Ok(Self {
-            time_base,
-            timeline,
-            font_source,
-        })
+        )?)
     }
 }
 
@@ -180,7 +207,7 @@ pub fn render<
         timeline,
         time_base,
         mut font_source,
-    } = FFramesRendererRuntime::new(
+    } = FFramesRendererRuntime::new_with_timing(
         TimeBase {
             fps: TVideo::FPS,
             sample_rate: options.audio_encoder_options.sample_rate,
@@ -188,6 +215,7 @@ pub fn render<
         video,
         &scenes,
         options.media,
+        options.timing,
     )?;
 
     let mut image_source = HashMap::new();
@@ -280,7 +308,7 @@ pub fn render_frame<
         timeline,
         time_base,
         mut font_source,
-    } = FFramesRendererRuntime::new(
+    } = FFramesRendererRuntime::new_with_timing(
         TimeBase {
             fps: TVideo::FPS,
             sample_rate: options.audio_encoder_options.sample_rate,
@@ -288,6 +316,7 @@ pub fn render_frame<
         video,
         &scenes,
         options.media,
+        options.timing,
     )?;
 
     let mut image_source = HashMap::new();

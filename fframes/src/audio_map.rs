@@ -526,12 +526,55 @@ impl<'a> AudioMap<'a> {
             .map(|scenes| -> crate::error::Result<_> {
                 Ok(scenes
                     .iter()
-                    .map(|(range, _, scene)| {
-                        scene.audio().resolve(
-                            TUnit::from_frames(range.start, tb),
+                    .map(|clip| {
+                        if clip.trim_start == 0 && clip.trim_end == 0 {
+                            return clip.scene.audio().resolve(
+                                TUnit::from_frames(clip.range.start, tb),
+                                tb,
+                                &resolve_audio_duration,
+                            );
+                        }
+                        // Scene audio follows its clip and is cut at the trimmed edges.
+                        let fps = tb.fps as f64;
+                        let window_start = clip.trim_start as f64 / fps;
+                        let window_end = window_start + clip.range.len() as f64 / fps;
+                        let clip_start = clip.range.start as f64 / fps;
+                        let tracks = clip.scene.audio().resolve::<TUnit>(
+                            TUnit::from_usize(0),
                             tb,
                             &resolve_audio_duration,
-                        )
+                        )?;
+                        Ok(tracks.map(|tracks| {
+                            tracks
+                                .into_iter()
+                                .filter_map(|mut track| {
+                                    let start = track.range.start.to_seconds(tb);
+                                    let end = track.range.end.to_seconds(tb);
+                                    let cut_start = if clip.trim_start > 0 {
+                                        start.max(window_start)
+                                    } else {
+                                        start
+                                    };
+                                    let cut_end = if clip.trim_end > 0 {
+                                        end.min(window_end)
+                                    } else {
+                                        end
+                                    };
+                                    (cut_end > cut_start).then(|| {
+                                        track.mix.offset += (cut_start - start) as f32;
+                                        track.range = TUnit::from_seconds(
+                                            clip_start + cut_start - window_start,
+                                            tb,
+                                        )
+                                            ..TUnit::from_seconds(
+                                                clip_start + cut_end - window_start,
+                                                tb,
+                                            );
+                                        track
+                                    })
+                                })
+                                .collect()
+                        }))
                     })
                     .collect::<error::Result<Vec<_>>>()?
                     .into_iter()

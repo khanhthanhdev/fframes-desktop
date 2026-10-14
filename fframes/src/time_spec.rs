@@ -76,6 +76,12 @@ pub struct TimelineScene {
     /// Name as returned by `Scene::name`.
     pub full_name: String,
     pub frames: Range<usize>,
+    /// The scene's key in timing documents.
+    pub timing_key: String,
+    /// Occurrence of the scene among the clips (0 unless split).
+    pub clip_index: usize,
+    pub trim_start: usize,
+    pub trim_end: usize,
 }
 
 /// Everything needed to resolve time specs of one video.
@@ -109,12 +115,16 @@ impl TimelineIndex {
                     scenes
                         .timeline
                         .iter()
-                        .map(|(range, info, scene)| TimelineScene {
-                            index: info.index,
-                            editor_instance_key: scene.editor_instance_key().map(str::to_owned),
-                            name: short_scene_name(scene.name()).to_owned(),
-                            full_name: scene.name().to_owned(),
-                            frames: range.clone(),
+                        .map(|clip| TimelineScene {
+                            index: clip.info.index,
+                            editor_instance_key: clip.editor_key(),
+                            name: short_scene_name(clip.scene.name()).to_owned(),
+                            full_name: clip.scene.name().to_owned(),
+                            frames: clip.range.clone(),
+                            timing_key: clip.timing_key.clone(),
+                            clip_index: clip.clip_index,
+                            trim_start: clip.trim_start,
+                            trim_end: clip.trim_end,
                         })
                         .collect()
                 })
@@ -345,8 +355,8 @@ impl<'a> crate::FFramesContext<'a, '_> {
         self.scenes
             .into_iter()
             .flat_map(|scenes| scenes.timeline.iter())
-            .filter(move |(range, _, _)| range.contains(&global_frame))
-            .map(|(_, info, scene)| (info, scene.name()))
+            .filter(move |clip| clip.range.contains(&global_frame))
+            .map(|clip| (&clip.info, clip.scene.name()))
     }
 }
 
@@ -365,6 +375,10 @@ mod tests {
                     name: "Intro".into(),
                     full_name: "video::Intro".into(),
                     frames: 0..100,
+                    timing_key: String::new(),
+                    clip_index: 0,
+                    trim_start: 0,
+                    trim_end: 0,
                 },
                 TimelineScene {
                     index: 1,
@@ -372,6 +386,10 @@ mod tests {
                     name: "Speaker".into(),
                     full_name: "video::Speaker".into(),
                     frames: 90..200,
+                    timing_key: String::new(),
+                    clip_index: 0,
+                    trim_start: 0,
+                    trim_end: 0,
                 },
                 TimelineScene {
                     index: 2,
@@ -379,6 +397,10 @@ mod tests {
                     name: "Speaker".into(),
                     full_name: "video::Speaker".into(),
                     frames: 200..300,
+                    timing_key: String::new(),
+                    clip_index: 0,
+                    trim_start: 0,
+                    trim_end: 0,
                 },
             ],
         }

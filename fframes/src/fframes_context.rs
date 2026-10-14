@@ -111,13 +111,17 @@ impl<'a, 'media: 'a> FFramesContext<'a, 'media> {
         if let Some(scenes) = self.scenes.as_ref() {
             scenes
                 .iter()
-                .filter(|&(range, _, _scene)| range.contains(&global_frame.index))
-                .map(|(range, _, scene)| {
-                    let rendered = scene.render_frame(
-                        Frame::clone_with_scene_offset(global_frame, range.start),
+                .filter(|clip| clip.range.contains(&global_frame.index))
+                .map(|clip| {
+                    let rendered = clip.scene.render_frame(
+                        Frame::clone_with_clip_offset(
+                            global_frame,
+                            clip.range.start,
+                            clip.trim_start,
+                        ),
                         self,
                     );
-                    match scene.editor_instance_key().and_then(|instance_key| {
+                    match clip.editor_key().and_then(|instance_key| {
                         crate::EditorObjectKey::new(instance_key, "scene", "root", "root").ok()
                     }) {
                         Some(key) => rendered.with_editor_object(&key),
@@ -131,14 +135,17 @@ impl<'a, 'media: 'a> FFramesContext<'a, 'media> {
     }
 
     /// Finds the scene layout and duration information based on the layout of defined in `define_scenes` of the `Video`.
+    ///
+    /// With a timing document applied, a split scene answers with its first clip and
+    /// `duration_in_frames` stays the scene's own length.
     pub fn get_scene_info<T: crate::Scene>(&self, scene: &T) -> Option<&crate::SceneInfo> {
         let scenes = self.scenes.as_ref()?;
-        scenes.iter().find_map(|(_, info, boxed_scene)| {
+        scenes.timeline.iter().find_map(|clip| {
             #[allow(clippy::ptr_eq)]
-            let pointers_equal = std::ptr::from_ref::<dyn crate::Scene>(*boxed_scene).cast::<T>()
+            let pointers_equal = std::ptr::from_ref::<dyn crate::Scene>(clip.scene).cast::<T>()
                 == std::ptr::from_ref::<T>(scene);
 
-            pointers_equal.then_some(info)
+            pointers_equal.then_some(&clip.info)
         })
     }
 }
