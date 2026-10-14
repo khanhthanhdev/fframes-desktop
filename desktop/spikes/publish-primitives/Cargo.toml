@@ -1,0 +1,28 @@
+[package]
+name = "publish-primitives"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "Spike: no-clobber, handle-relative publication primitives for Windows and macOS"
+
+# Standalone: not a member of the desktop or repository workspace.
+[workspace]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.190"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_CloudFilters"] }
+
+[dev-dependencies]
+tempfile = "3"
