@@ -159,6 +159,7 @@ impl PreviewWorkerClient {
                 PreviewResponse::PreparedAudio(r) => Some(&r.envelope),
                 PreviewResponse::AudioRead(r) => Some(&r.envelope),
                 PreviewResponse::Ack(r) => Some(&r.envelope),
+                PreviewResponse::TimingApplied(r) => Some(&r.envelope),
                 PreviewResponse::Error(r) => r.envelope.as_ref(),
                 PreviewResponse::Hello(_) => None,
             };

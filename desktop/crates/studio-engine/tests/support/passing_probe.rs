@@ -56,6 +56,7 @@ impl CandidateProbe for PassingProbe {
             end_frame: e,
             start_seconds: s as f32 / 30.,
             end_seconds: e as f32 / 30.,
+            clip: None,
         };
         Ok(PreviewTimelineResponse {
             envelope: envelope(&self.revision),

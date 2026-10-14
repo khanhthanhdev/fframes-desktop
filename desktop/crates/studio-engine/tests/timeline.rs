@@ -35,6 +35,7 @@ fn scene(id: &str, index: usize, start: usize, end: usize) -> PreviewSceneInfo {
         end_frame: end,
         start_seconds: start as f32 / 10.0,
         end_seconds: end as f32 / 10.0,
+        clip: None,
     }
 }
 

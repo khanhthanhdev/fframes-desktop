@@ -13,6 +13,7 @@ fn scene(id: &str, index: usize, start_frame: usize, end_frame: usize) -> Previe
         end_frame,
         start_seconds: start_frame as f32 / 30.0,
         end_seconds: end_frame as f32 / 30.0,
+        clip: None,
     }
 }
 
