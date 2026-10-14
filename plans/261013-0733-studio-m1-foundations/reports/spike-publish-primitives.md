@@ -22,11 +22,11 @@ The prototype also turned up four Windows differences that M3 phase 1 has to car
 | Cloud placeholder decision | Refuse mutation; tested against a real Cloud Files placeholder (below) |
 | Report with an M3 phase 1 re-estimate | This report |
 
-- Branch: `spike/m1-publish` (throwaway). The prototype was tested at commit `a68c4c5`.
+- Branch: `spike/m1-publish` (throwaway). The prototype was last tested at commit `d55ccc4`.
 - Crate: `desktop/spikes/publish-primitives/`, its own `[workspace]`.
-- CI run (macOS and Windows both green): https://github.com/khanhthanhdev/fframes-desktop/actions/runs/38489050512
+- CI run (macOS and Windows both green): https://github.com/khanhthanhdev/fframes-desktop/actions/runs/38489728612
 - The workflow is the temporary `.github/workflows/spike-publish.yml`, present only on the spike branch.
-- The same push also started `desktop-self-hosted.yml`, which has no branch filter. I cancelled that run because it is not part of the spike.
+- Each push also started `desktop-self-hosted.yml`, which has no branch filter. I cancelled those runs because they are not part of the spike.
 
 ## Guarantees of the Linux module (`studio-project/src/publish.rs`)
 
@@ -113,7 +113,7 @@ The prototype also turned up four Windows differences that M3 phase 1 has to car
 1. **Windows renames the opened file; Linux and macOS rename the name.** The NT sequence is
    open-then-rename, so it has a window. The source handle excludes `FILE_SHARE_DELETE`, so
    while the window is open nobody can rename, replace or delete the source name.
-   - **Test result:** an editor's rename-over inside the window failed with `ERROR_ACCESS_DENIED`
+   - **Test result:** an editor's rename-over inside the window, through both `std::fs::rename` and a direct `MoveFileExW(MOVEFILE_REPLACE_EXISTING)`, failed with `ERROR_ACCESS_DENIED`
      (5), here and on CI. The editor's bytes stayed in its temporary file, our move took exactly
      the verified file, and the editor's retry afterwards landed.
    - **Replaced source:** the identity check runs on the very handle that is renamed. A source
@@ -198,6 +198,7 @@ transaction, and an open of a placeholder can block on a network hydration.
   - `open_root` and `open_child` refuse the sync root. Inside it, `stat` reports
     `CloudPlaceholder`, `open_regular` refuses the file, and a rename from or onto it is refused.
   - The file is neither hydrated nor moved.
+  - The test unregisters the sync root with `CfUnregisterSyncRoot` when it finishes. After the runs here, `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Explorer\SyncRootManager` had no entries left.
 - **The opt-in is required.** Before the process opts in, `std::fs::symlink_metadata` returned
   attributes `0x30` for the sync root and `0x400020` for the placeholder, with no
   `FILE_ATTRIBUTE_REPARSE_POINT`. Without `PHCM_EXPOSE_PLACEHOLDERS`, a cloud-synced project
@@ -230,7 +231,7 @@ stays blocked.
   closed if `FileIdInformation` is unsupported.
 - **ReFS (untested).** Expected to work, since it supports both information classes; the probe
   decides.
-- **macOS:** APFS passes on CI. HFS+ supports `RENAME_EXCL` (`VOL_CAP_INT_RENAME_EXCL`). SMB, NFS
+- **macOS:** APFS passes on CI. HFS+ is untested (whether a volume supports it shows in `VOL_CAP_INT_RENAME_EXCL`). SMB, NFS
   and FAT volumes may not, and the probe decides there too.
 
 ## Re-estimate of M3 phase 1 (Windows publication and executor)
