@@ -212,6 +212,78 @@ figcaption .hint { display: none; }
 .muted { opacity: .38; }
 .see-through { fill-opacity: .72; }
 
+/* ---------- scroll animation ----------
+   The generator wraps animated parts of a figure in .a groups: a kind (.a-*) that animates
+   FROM a start state to the drawing as it stands, and a window --s..--e on the figure's 0..100
+   clock. studio.js picks the clock by setting a class on <html>:
+   - motion-scrub (wide screens with scroll timelines): the scroll is the clock. A 1px
+     .fig-clock at the figure's centre runs it from 85% down the viewport to the middle, so a
+     figure is complete once centred; the hero, on screen at load, uses the first 500px instead.
+   - motion-play (anything else): each figure plays once over 1.4 s when a third of it shows.
+   Without a class, with reduced motion, or in print, nothing animates and nothing is hidden.
+   Fill mode is backwards so a finished animation leaves no trace on the drawing. */
+.fig { position: relative; }
+.fig-clock { position: absolute; top: 50%; left: 0; width: 1px; height: 1px; pointer-events: none; }
+.playhead { display: none; stroke: var(--accent); stroke-width: 1.5; }
+.a-pop, .a-grow-x, .a-grow-y { transform-box: fill-box; }
+.a-pop { transform-origin: 50% 50%; }
+.a-grow-x { transform-origin: 0 50%; }
+.a-grow-y { transform-origin: 50% 100%; }
+
+@keyframes a-fade { from { opacity: 0; } }
+@keyframes a-dim { from { opacity: .25; } }
+@keyframes a-ghost { from { opacity: .12; translate: 0 calc(var(--dy, 0) * 1px); } }
+@keyframes a-move { from { translate: calc(var(--dx, 0) * 1px) calc(var(--dy, 0) * 1px); } }
+@keyframes a-move-fade { from { opacity: 0; translate: calc(var(--dx, 0) * 1px) calc(var(--dy, 0) * 1px); } }
+@keyframes a-draw { from { stroke-dashoffset: 1; } }
+@keyframes a-pop { from { opacity: 0; scale: 0; } }
+@keyframes a-grow-x { from { scale: 0 1; } }
+@keyframes a-grow-y { from { scale: 1 0; } }
+@keyframes a-out { to { opacity: 0; } }
+
+@media screen and (prefers-reduced-motion: no-preference) {
+  :is(.motion-scrub, .motion-play) .a { animation-fill-mode: backwards; animation-timing-function: cubic-bezier(.2, .7, .2, 1); }
+  /* progress (a line drawing, a bar filling, a playhead) moves linearly so it tracks the clock */
+  :is(.motion-scrub, .motion-play) :is(.a-draw, .a-grow-x, .a-grow-y, .a-move:has(> .playhead)) { animation-timing-function: linear; }
+  :is(.motion-scrub, .motion-play) .a-draw { stroke-dasharray: 1 1; }
+  :is(.motion-scrub, .motion-play) .playhead { display: inline; }
+  :is(.motion-scrub, .motion-play) .a-fade { animation-name: a-fade; }
+  :is(.motion-scrub, .motion-play) .a-dim { animation-name: a-dim; }
+  :is(.motion-scrub, .motion-play) .a-ghost { animation-name: a-ghost; }
+  :is(.motion-scrub, .motion-play) .a-move { animation-name: a-move; }
+  :is(.motion-scrub, .motion-play) .a-move-fade { animation-name: a-move-fade; }
+  :is(.motion-scrub, .motion-play) .a-draw { animation-name: a-draw; }
+  :is(.motion-scrub, .motion-play) .a-pop { animation-name: a-pop; }
+  :is(.motion-scrub, .motion-play) .a-grow-x { animation-name: a-grow-x; }
+  :is(.motion-scrub, .motion-play) .a-grow-y { animation-name: a-grow-y; }
+  /* the one exit, for the playheads that are not part of the drawing */
+  :is(.motion-scrub, .motion-play) .a-out { animation-name: a-out; animation-fill-mode: both; }
+
+  .motion-play .a {
+    animation-duration: calc((var(--e) - var(--s)) * 14ms);
+    animation-delay: calc(var(--s) * 14ms);
+    animation-play-state: paused;
+  }
+  .motion-play .fig.is-visible .a { animation-play-state: running; }
+  /* a figure scrolled sideways would animate out of sight, so it stays still */
+  .motion-play .fig.overflows .a { animation: none; }
+  .motion-play .fig.overflows .playhead { display: none; }
+
+  @supports (animation-timeline: view()) and (timeline-scope: --a) {
+    .motion-scrub .fig { timeline-scope: --fig; }
+    .motion-scrub .fig-clock { view-timeline: --fig block; }
+    .motion-scrub .a {
+      animation-duration: auto;
+      animation-timeline: --fig;
+      animation-range: cover calc(15% + var(--s) * .35%) cover calc(15% + var(--e) * .35%);
+    }
+    .motion-scrub .fig[data-clock="page"] .a {
+      animation-timeline: scroll(root);
+      animation-range: calc(var(--s) * 5px) calc(var(--e) * 5px);
+    }
+  }
+}
+
 /* ---------- small pieces ---------- */
 .note {
   margin: 16px 0 0;
