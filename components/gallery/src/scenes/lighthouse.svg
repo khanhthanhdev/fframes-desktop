@@ -1,13 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240">
-  <path id="sea" d="M0 210 Q25 200 50 210 T100 210 T150 210 T200 210 V240 H0 Z" fill="#2b6cb0"/>
-  <path id="tower" d="M70 210 L80 80 L120 80 L130 210 Z" fill="#f5f5f5"/>
-  <g id="stripes" fill="#e53e3e">
-    <path d="M74.6 150 L76.9 120 L123.1 120 L125.4 150 Z"/>
-    <path d="M71.5 190 L73.1 170 L126.9 170 L128.5 190 Z"/>
-  </g>
-  <rect id="door" x="92" y="185" width="16" height="25" rx="8" fill="#4a5568"/>
-  <rect id="lamp-room" x="78" y="55" width="44" height="25" fill="#4a5568"/>
-  <circle id="light" cx="100" cy="67" r="8" fill="#ecc94b"/>
-  <path id="roof" d="M74 55 L100 30 L126 55 Z" fill="#e53e3e"/>
-  <path id="beam" d="M108 62 L200 40 L200 95 L108 72 Z" fill="#ecc94b" fill-opacity="0.35"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 240"><path id="sea" fill="#2b6cb0" d="M0 210 Q25 200 50 210 T100 210 T150 210 T200 210 V240 H0 Z"/><path id="tower" fill="#f5f5f5" d="M70 210 L80 80 L120 80 L130 210 Z"/><g id="stripes" fill="#e53e3e"><path d="M74.6 150 L76.9 120 L123.1 120 L125.4 150 Z"/><path d="M71.5 190 L73.1 170 L126.9 170 L128.5 190 Z"/></g><rect id="door" width="16" height="25" x="92" y="185" fill="#4a5568" rx="8"/><rect id="lamp-room" width="44" height="25" x="78" y="55" fill="#4a5568"/><circle id="light" cx="100" cy="67" r="8" fill="#ecc94b"/><path id="roof" fill="#e53e3e" d="M74 55 L100 30 L126 55 Z"/><path id="beam" fill="#ecc94b" fill-opacity=".35" d="M108 62 L200 40 L200 95 L108 72 Z"/></svg>
