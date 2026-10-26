@@ -453,12 +453,19 @@ fn run_install(
     std::fs::write(staging.join("package-lock.json"), package.lockfile).map_err(io)?;
 
     let mut env = ChildEnvironment::default_allowlist();
-    // Only the folders of the two runtimes: no ambient tools, no secrets.
+    // Runtime folders first, without inheriting the ambient PATH. Linux npm wrappers
+    // also need system tools such as bash, dirname and basename.
     let mut dirs: Vec<PathBuf> = [&tools.node, &tools.npm]
         .iter()
         .filter_map(|tool| tool.parent().map(Path::to_owned))
         .collect();
     dirs.dedup();
+    #[cfg(target_os = "linux")]
+    for dir in [PathBuf::from("/usr/bin"), PathBuf::from("/bin")] {
+        if !dirs.contains(&dir) {
+            dirs.push(dir);
+        }
+    }
     let path = std::env::join_paths(dirs)
         .map_err(|_| InstallError::Invalid("a runtime folder is not a valid path".into()))?;
     env.remove("PATH");
@@ -570,18 +577,24 @@ mod tests {
                  {body}\r\n"
             ),
         );
-        // Install gives npm a PATH of only the runtime folders. Real npm is a Node script and
-        // needs nothing more; this shell stand-in needs the system tools.
+        // Linux version managers can wrap npm in a shell script that needs system tools.
         #[cfg(not(windows))]
-        let (path, script) = (
-            dir.join("npm"),
-            format!(
-                "#!/bin/sh\nPATH=\"$PATH:/usr/bin:/bin\"\n\
+        let (path, script) = {
+            let header = if cfg!(target_os = "linux") {
+                "#!/usr/bin/env bash\n"
+            } else {
+                "#!/bin/sh\nPATH=\"$PATH:/usr/bin:/bin\"\n"
+            };
+            (
+                dir.join("npm"),
+                format!(
+                    "{header}\
                  [ \"$1\" = ci ] || {{ echo unexpected npm call >&2; exit 9; }}\n\
                  [ -f \"$3/package-lock.json\" ] || {{ echo no lockfile >&2; exit 9; }}\n\
                  {body}\n"
-            ),
-        );
+                ),
+            )
+        };
         std::fs::write(&path, script).unwrap();
         #[cfg(unix)]
         {
@@ -685,6 +698,29 @@ mod tests {
             find_installed(&f.adapters, &FAKE, &f.tools.node),
             Some(installed)
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn npm_wrapper_gets_runtime_and_system_paths_without_ambient_path() {
+        let f = fixture(&format!(
+            "[ \"$(basename \"$(dirname \"$0\")\")\" = bin ] || exit 9; \
+             printf '%s' \"$PATH\" > \"$3/install-path\"; {SUCCESS}"
+        ));
+        let ambient_path = std::env::var_os("PATH");
+        install(&f, &AtomicBool::new(false)).unwrap();
+        let path =
+            std::fs::read_to_string(final_dir(&f.adapters, &FAKE).join("install-path")).unwrap();
+        assert_eq!(
+            std::env::split_paths(&path).collect::<Vec<_>>(),
+            vec![
+                f.tools.node.parent().unwrap().to_owned(),
+                PathBuf::from("/usr/bin"),
+                PathBuf::from("/bin"),
+            ]
+        );
+        assert_eq!(std::env::var_os("PATH"), ambient_path);
+        assert!(leftovers(&f).is_empty());
     }
 
     /// A canonicalized app data folder (`\\?\C:\...`) reaches npm and the installed entry
