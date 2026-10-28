@@ -58,6 +58,7 @@ members = [
     "examples/vinuni-future-rises",
     "examples/lottie-launch",
     "examples/svg-in-3d",
+    "examples/projectile-motion",
 ]
 exclude = ["desktop"]
 

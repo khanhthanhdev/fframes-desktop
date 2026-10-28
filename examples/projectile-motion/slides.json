@@ -1,0 +1,76 @@
+{
+  "version": 1,
+  "stops": [
+    {
+      "scene": "launch",
+      "at": 144,
+      "title": "A throw traces a parabola",
+      "notes": "Why does the ball curve even though it keeps moving forward? We will connect this picture to two equations and a Rust function."
+    },
+    { "scene": "launch", "at": "end" },
+    {
+      "scene": "assumptions",
+      "at": 27,
+      "title": "Ignore air resistance",
+      "notes": "Gravity is the only force in this ideal model. There is no horizontal acceleration."
+    },
+    {
+      "scene": "assumptions",
+      "at": 69,
+      "title": "Gravity stays constant",
+      "notes": "Use g = 9.81 metres per second squared downward."
+    },
+    {
+      "scene": "assumptions",
+      "at": 111,
+      "title": "Return to the launch height",
+      "notes": "The 45-degree optimum depends on equal launch and landing heights, as well as ignoring drag."
+    },
+    { "scene": "assumptions", "at": "end" },
+    {
+      "scene": "components",
+      "at": 102,
+      "title": "At the apex",
+      "notes": "Only the vertical velocity is zero. Horizontal velocity is still about 14.1 metres per second and gravity still acts downward."
+    },
+    {
+      "scene": "components",
+      "at": 174,
+      "title": "Same clock, two equations",
+      "notes": "At 20 metres per second and 45 degrees, the ball returns to the ground after about 2.88 seconds and travels about 40.8 metres. The animation deliberately slows that flight down."
+    },
+    { "scene": "components", "at": "end" },
+    {
+      "scene": "range",
+      "at": 120,
+      "title": "Why 45 degrees?",
+      "notes": "Solve y(T) = 0 for T = 2 v0 sin(theta) / g, then substitute into x(T). Range is v0 squared times sin(2 theta), divided by g. Sine is maximised when 2 theta is 90 degrees. The 30- and 60-degree throws have equal range, but different heights and flight times; these curves draw by fraction of each flight."
+    },
+    { "scene": "range", "at": "end" },
+    {
+      "scene": "code",
+      "at": "end",
+      "title": "Turn the equations into Rust",
+      "notes": "vx and vy are the launch velocity components in metres per second; t is seconds. Screen y increases downward, so draw at ground_y minus scale times y. Stop at the flight time rather than drawing underground."
+    },
+    {
+      "scene": "recap",
+      "at": 27,
+      "title": "One clock",
+      "notes": "Horizontal and vertical motion are independent, but evaluated at the same time."
+    },
+    {
+      "scene": "recap",
+      "at": 69,
+      "title": "A parabola",
+      "notes": "Eliminating time between a linear x(t) and quadratic y(t) produces a parabola."
+    },
+    {
+      "scene": "recap",
+      "at": 111,
+      "title": "Know the assumptions",
+      "notes": "Ask: do 30 and 60 degrees have the same flight time? No. Then ask what happens to the 45-degree result if drag matters or landing height changes."
+    },
+    { "scene": "recap", "at": "end", "title": "Questions" }
+  ]
+}

@@ -3296,6 +3296,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "projectile-motion"
+version = "0.1.0"
+dependencies = [
+ "fframes",
+ "fframes-kit",
+ "fframes-studio-kit",
+ "fframes-studio-protocol",
+ "fframes-studio-runtime",
+ "fframes_native_player",
+ "fframes_skia_renderer",
+]
+
+[[package]]
 name = "qoi"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

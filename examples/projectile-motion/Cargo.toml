@@ -1,0 +1,40 @@
+[package]
+name = "projectile-motion"
+version = "0.1.0"
+edition = "2024"
+publish = false
+default-run = "projectile-motion"
+
+[dependencies]
+fframes = { workspace = true, features = ["compile-time-svgtree", "cli"] }
+fframes-kit = { version = "=0.3.0", features = ["studio"] }
+fframes-studio-kit = { path = "../../fframes-studio-kit" }
+fframes-studio-runtime = { workspace = true }
+fframes-studio-protocol = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+fframes_skia_renderer = { workspace = true, features = ["metal", "cli"] }
+fframes_native_player = { workspace = true, features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+fframes_skia_renderer = { workspace = true, features = ["vulkan", "cli"] }
+fframes_native_player = { workspace = true, features = ["vulkan"] }
+
+[target.'cfg(not(windows))'.dependencies]
+fframes = { workspace = true, features = ["h264", "libav-agree-gpl"] }
+
+[lib]
+name = "projectile_motion"
+path = "src/lib.rs"
+doctest = false
+
+[[bin]]
+name = "projectile-motion"
+path = "src/main.rs"
+
+[[bin]]
+name = "projectile-motion-worker"
+path = "src/bin/studio_worker.rs"
+
+[lints]
+workspace = true

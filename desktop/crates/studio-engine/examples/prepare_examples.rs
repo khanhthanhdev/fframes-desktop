@@ -10,7 +10,7 @@ use studio_sdk::CompatibilityManifest;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-const EXAMPLES: [(&str, &str, &str, &str); 4] = [
+const EXAMPLES: [(&str, &str, &str, &str); 5] = [
     (
         "hello-world",
         "HelloWorldMedia",
@@ -35,6 +35,12 @@ const EXAMPLES: [(&str, &str, &str, &str); 4] = [
         "StudioIntroVideo",
         "example_video::StudioIntroVideo",
     ),
+    (
+        "projectile-motion",
+        "",
+        "ProjectileMotionVideo",
+        "example_video::ProjectileMotionVideo::new(props)",
+    ),
 ];
 
 fn main() -> Result<()> {
@@ -56,7 +62,10 @@ fn main() -> Result<()> {
                     "prepare_examples --out <folder outside checkout> [--example <name>] [--sdk <installed-sdk>] [--check]"
                 );
                 println!(
-                    "Creates Hello World, Motion Graphics, Signal Lab and fframes-studio-intro without changing the originals."
+                    "Creates Hello World, Motion Graphics, Signal Lab, fframes-studio-intro and projectile-motion without changing the originals."
+                );
+                println!(
+                    "Projectile Motion requires --example projectile-motion and an SDK with kit 0.3.0."
                 );
                 println!("--check builds and exercises each project's real Studio preview worker.");
                 return Ok(());
@@ -66,11 +75,15 @@ fn main() -> Result<()> {
     }
     let examples: Vec<_> = EXAMPLES
         .into_iter()
-        .filter(|(name, ..)| selected.as_ref().is_none_or(|selected| selected == *name))
+        .filter(|(name, ..)| {
+            selected
+                .as_ref()
+                .map_or(*name != "projectile-motion", |selected| selected == *name)
+        })
         .collect();
     if examples.is_empty() {
         return Err(
-            "Unknown example; use hello-world, motion-graphics, signal-lab or fframes-studio-intro"
+            "Unknown example; use hello-world, motion-graphics, signal-lab, fframes-studio-intro or projectile-motion"
                 .into(),
         );
     }
@@ -80,6 +93,13 @@ fn main() -> Result<()> {
         &fs::read_to_string(sdk.join("compatibility.json"))
             .map_err(|e| format!("Install the managed SDK in Studio Setup first: {e}"))?,
     )?;
+    if examples
+        .iter()
+        .any(|(name, ..)| *name == "projectile-motion")
+        && compatibility.kit_version.as_deref() != Some("0.3.0")
+    {
+        return Err("Projectile Motion needs an SDK containing fframes-kit 0.3.0; select that SDK with --sdk".into());
+    }
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     fs::create_dir_all(&out)?;
     let out = fs::canonicalize(out)?;
@@ -150,28 +170,44 @@ fn prepare(
     fs::create_dir_all(root.join("src/bin"))?;
     let setup = if name == "fframes-studio-intro" {
         prepare_studio_intro(repository, root, compatibility)?
+    } else if name == "projectile-motion" {
+        fs::copy(
+            repository.join(&relative).join("slides.json"),
+            root.join("slides.json"),
+        )?;
+        format!(
+            "let directory = fframes::MediaDirectory::read_folder(\"{relative}/media\")?;\n    let media = directory.process_media_source()?;\n    let props = std::sync::Arc::new(fframes_studio_kit::PropsStore::load(\"props.json\")?);\n    props.listen();\n    let hooks = props.hooks();\n    let video = {constructor};\n    let options = fframes::RenderOptions {{ media: Some(&media), ..Default::default() }};\n    "
+        )
     } else {
         format!(
             "let media = <example_video::{media_type} as fframes::StaticMediaProvider>::prepare()?;\n    let video = {constructor};\n    let options = fframes::RenderOptions {{ media: Some(&media), ..Default::default() }};\n    "
         )
     };
     // Reuse the product's worker, including timing, export, protocol and audio support.
-    let template = include_str!("../../studio-project/templates/src/bin/studio_worker.rs");
+    let template = if name == "projectile-motion" {
+        include_str!("../../studio-project/templates-slides/src/bin/studio_worker.rs")
+    } else {
+        include_str!("../../studio-project/templates/src/bin/studio_worker.rs")
+    };
     let start = template
         .find("let directory =")
         .ok_or("Worker template media setup changed")?;
     let end = template
         .find("// One-shot export:")
         .ok_or("Worker template export setup changed")?;
-    let worker = format!("{}{}{}", &template[..start], setup, &template[end..]).replace(
-        "studio_video::StudioVideo",
-        &format!("example_video::{video_type}"),
-    );
+    let worker = format!("{}{}{}", &template[..start], setup, &template[end..])
+        .replace(
+            "studio_video::StudioVideo",
+            &format!("example_video::{video_type}"),
+        )
+        .replace("use fframes_studio_kit::PropsStore;\n", "")
+        .replace("use std::sync::Arc;\n", "");
     fs::write(root.join("src/bin/studio_worker.rs"), worker)?;
     fs::write(
         root.join("src/main.rs"),
         format!(
-            "fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {{\n    {setup}Ok(fframes::cli::new(&video, options).timing_file(\"timeline.json\").run())\n}}\n"
+            "fn main() -> Result<std::process::ExitCode, Box<dyn std::error::Error>> {{\n    {}Ok(fframes::cli::new(&video, options).timing_file(\"timeline.json\").run())\n}}\n",
+            setup.replace("    let hooks = props.hooks();\n", ""),
         ),
     )?;
     fs::write(
@@ -183,6 +219,16 @@ fn prepare(
             compatibility.runtime_version,
         ),
     )?;
+    if name == "projectile-motion" {
+        use std::io::Write;
+        write!(
+            fs::OpenOptions::new()
+                .append(true)
+                .open(root.join("Cargo.toml"))?,
+            "fframes-kit = {{ version = \"=0.3.0\", features = [\"studio\"] }}\nfframes-studio-kit = \"={}\"\n",
+            compatibility.runtime_version
+        )?;
+    }
     if name == "fframes-studio-intro" {
         use std::io::Write;
         fs::OpenOptions::new().append(true).open(root.join("Cargo.toml"))?.write_all(
