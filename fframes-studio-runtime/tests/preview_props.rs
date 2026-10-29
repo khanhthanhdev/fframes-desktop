@@ -278,3 +278,98 @@ fn workers_without_hooks_neither_offer_nor_accept_props() {
     );
     assert_eq!(drawn, vec![10.0]);
 }
+
+#[test]
+fn stop_scans_bound_project_reports_and_reject_bad_batches_without_losing_preview() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    let mut requests = Vec::new();
+    message(&mut requests, &hello(&[SUGGESTED_STOPS_CAPABILITY]));
+    let scan = |id, frames, generation, reset| {
+        PreviewRequest::SuggestStops(SuggestStopsRequest {
+            envelope: env(id),
+            frames,
+            timing_generation: generation,
+            reset,
+        })
+    };
+    message(&mut requests, &scan(2, vec![1, 3], 0, true));
+    message(
+        &mut requests,
+        &scan(3, vec![0; MAX_SUGGEST_FRAMES + 1], 0, false),
+    );
+    message(&mut requests, &scan(4, vec![0], 7, false));
+    message(&mut requests, &scan(5, vec![10], 0, false));
+    message(&mut requests, &scan(6, vec![5], 0, false));
+    message(&mut requests, &frame(7));
+    message(&mut requests, &scan(8, vec![6], 0, true));
+    message(&mut requests, &PreviewRequest::Shutdown(env(9)));
+
+    let cleared = Arc::new(AtomicUsize::new(0));
+    let clear = cleared.clone();
+    let reads = AtomicUsize::new(0);
+    let stop = |seconds| SuggestedSlideStop {
+        scene: "intro".into(),
+        origin: "bullets".into(),
+        seconds,
+        label: Some("Next bullet".into()),
+        notes: None,
+    };
+    let (responses, drawn) = serve(requests, false, |config| {
+        config.with_props(PropsHooks::new(|_| {}, |_| None).with_suggestions(
+            move || {
+                let stops = match reads.fetch_add(1, Ordering::Relaxed) {
+                    0 => vec![
+                        stop(0.5),
+                        stop(f32::NAN),
+                        stop(-1.0),
+                        SuggestedSlideStop {
+                            notes: Some("x".repeat(10 * 1024)),
+                            ..stop(1.0)
+                        },
+                    ],
+                    // All fields fit individually, but JSON escaping exceeds the wire cap.
+                    1 => (0..300)
+                        .map(|i| SuggestedSlideStop {
+                            origin: format!("item-{i}"),
+                            notes: Some("\0".repeat(8192)),
+                            ..stop(0.7)
+                        })
+                        .collect(),
+                    _ => vec![stop(0.8)],
+                };
+                StopSuggestions {
+                    stops,
+                    truncated: false,
+                }
+            },
+            move || {
+                clear.fetch_add(1, Ordering::Relaxed);
+            },
+        ))
+    });
+    assert!(
+        matches!(&responses[0], PreviewResponse::Hello(h) if h.capabilities.iter().any(|c| c == SUGGESTED_STOPS_CAPABILITY))
+    );
+    let PreviewResponse::SuggestedStops(first) = &responses[1] else {
+        panic!("{:?}", responses[1]);
+    };
+    assert_eq!(first.suggestions.stops.len(), 1);
+    assert_eq!(first.suggestions.stops[0].seconds, 0.5);
+    assert!(first.suggestions.truncated);
+    for response in &responses[2..5] {
+        assert!(
+            matches!(response, PreviewResponse::Error(e) if e.code == "INVALID_SUGGEST_REQUEST"),
+            "{response:?}"
+        );
+    }
+    assert!(
+        matches!(&responses[5], PreviewResponse::Error(e) if e.code == "SUGGESTIONS_TOO_LARGE")
+    );
+    assert!(matches!(&responses[6], PreviewResponse::ScaledFrame(_)));
+    assert!(
+        matches!(&responses[7], PreviewResponse::SuggestedStops(r) if r.suggestions.stops[0].seconds == 0.8)
+    );
+    assert_eq!(cleared.load(Ordering::Relaxed), 2);
+    assert_eq!(drawn.len(), 5, "only valid scan frames and the seek render");
+}

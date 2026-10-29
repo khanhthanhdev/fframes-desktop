@@ -12,7 +12,9 @@ use studio_engine::app_settings::AppSettings;
 use super::StudioShell;
 use crate::export::panel::{ExportPanel, ExportPanelModel};
 use crate::export::progress::ExportPhase;
-use crate::export::settings::ExportSupport;
+use crate::export::settings::{
+    DeckSummary, ExportSupport, ExportTarget, deck_blocker, deck_settings,
+};
 
 /// The export panel's state in the shell.
 #[derive(Default)]
@@ -22,6 +24,8 @@ pub(super) struct ExportPanelState {
     pub saved: Option<ExportSettings>,
     /// This export's choice: the defaults each time the panel opens.
     pub choice: Option<ExportSettings>,
+    /// A video file or a slide deck folder; kept while the window is open.
+    pub target: ExportTarget,
     pub support: ExportSupport,
     /// The session and accepted revision `support` answers for.
     probe_key: Option<(u64, String)>,
@@ -55,15 +59,23 @@ impl StudioShell {
         cx.notify();
     }
 
-    /// What an export would run with now.
+    /// What an export would run with now: a deck is always H.264 in MP4 at the video's
+    /// frame rate, in the chosen size.
     pub(super) fn export_settings(&self) -> ExportSettings {
-        self.export_panel
-            .support
-            .settings_for(self.export_panel.choice.unwrap_or_default())
+        let choice = self.export_panel.choice.unwrap_or_default();
+        match self.export_panel.target {
+            ExportTarget::Video => self.export_panel.support.export_settings(choice),
+            ExportTarget::Deck => deck_settings(choice),
+        }
     }
 
-    /// Asks for the destination of an export with the panel's settings, once the options
-    /// are known and no export runs.
+    /// The slides a deck export of the open project would have.
+    pub(super) fn deck_summary(&self) -> DeckSummary {
+        DeckSummary::of(self.presentation.slides.as_ref())
+    }
+
+    /// Asks for the destination of an export with the panel's settings (a file for a
+    /// video, a new folder for a deck), once the options are known and no export runs.
     pub(super) fn request_export(&mut self, cx: &mut Context<Self>) {
         if !self.can_export()
             || self.export_cancelled.is_some()
@@ -71,7 +83,19 @@ impl StudioShell {
         {
             return;
         }
+        if self.export_panel.target == ExportTarget::Deck
+            && deck_blocker(&self.export_panel.support, &self.deck_summary()).is_some()
+        {
+            return;
+        }
         self.pick(super::Picker::Export, cx);
+    }
+
+    fn choose_export_target(&mut self, target: ExportTarget, cx: &mut Context<Self>) {
+        if self.export_cancelled.is_none() {
+            self.export_panel.target = target;
+            cx.notify();
+        }
     }
 
     /// Brings the answer of the worker up to date with the accepted revision: the worker is
@@ -150,8 +174,16 @@ impl StudioShell {
         })
     }
 
-    /// Keeps `settings` for this export only.
+    /// Keeps `settings` for this export only. A deck changes only the size: its format
+    /// and frame rate are fixed and stay out of the video's choice.
     fn choose_export_settings(&mut self, settings: ExportSettings, cx: &mut Context<Self>) {
+        let settings = match self.export_panel.target {
+            ExportTarget::Video => settings,
+            ExportTarget::Deck => ExportSettings {
+                scale: settings.scale,
+                ..self.export_panel.choice.unwrap_or_default()
+            },
+        };
         self.export_panel.choice = Some(settings);
         cx.notify();
     }
@@ -196,12 +228,20 @@ impl StudioShell {
             settings: self.export_settings(),
             phase: ExportPhase::of(self.export_status.as_ref()),
             seconds: self.timeline.read(cx).duration_seconds(),
+            target: self.export_panel.target,
+            deck: self.deck_summary(),
         };
         ExportPanel::new(&self.theme, model)
             .on_change({
                 let entity = entity.clone();
                 move |settings, _, cx| {
                     entity.update(cx, |shell, cx| shell.choose_export_settings(settings, cx));
+                }
+            })
+            .on_target({
+                let entity = entity.clone();
+                move |target, _, cx| {
+                    entity.update(cx, |shell, cx| shell.choose_export_target(target, cx));
                 }
             })
             .on_start({

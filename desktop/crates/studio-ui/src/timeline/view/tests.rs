@@ -390,3 +390,476 @@ fn edits_are_refused_with_the_engines_reason(cx: &mut gpui::TestAppContext) {
     assert!(!view.read_with(cx, |view, _| view.edit_dragging()));
     assert!(edits.borrow().is_empty());
 }
+
+/// The resolved stops of `doc` on the view's timeline, editable.
+fn slides_on(view: &TimelineView, doc: studio_engine::slides::SlidesDoc) -> SlidesSnapshot {
+    let (stops, problems) =
+        studio_engine::slides::resolve::resolve(&doc, view.model.as_ref().unwrap().report());
+    SlidesSnapshot {
+        generation: 1,
+        doc: Some(doc),
+        stops,
+        problems,
+        unavailable: None,
+        editing: SlidesEditing::Enabled,
+        notice: None,
+    }
+}
+
+/// [`editable`] with one stop at scene frame 10 of `b` (video frame 40), and every slide
+/// stop edit the view asks of the engine collected.
+fn with_a_stop(
+    cx: &mut gpui::TestAppContext,
+) -> (
+    gpui::Entity<TimelineView>,
+    &mut gpui::VisualTestContext,
+    std::rc::Rc<std::cell::RefCell<Vec<SlidesCommand>>>,
+) {
+    use studio_engine::slides::{SlideStop, SlidesDoc, StopAt};
+    let (view, cx, _) = editable(cx);
+    let stops = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = stops.clone();
+    cx.update(|_, app| {
+        app.subscribe(&view, move |_, event: &TimelineEvent, _| {
+            if let TimelineEvent::Stop(command) = event {
+                log.borrow_mut().push(command.clone());
+            }
+        })
+        .detach();
+    });
+    view.update(cx, |view, cx| {
+        let doc = SlidesDoc {
+            version: 1,
+            stops: vec![SlideStop {
+                scene: "b".into(),
+                at: StopAt::Frame(10),
+                title: None,
+                notes: None,
+            }],
+        };
+        let slides = slides_on(view, doc);
+        view.set_slides(Some(slides), cx);
+    });
+    cx.run_until_parked();
+    (view, cx, stops)
+}
+
+/// The window x of the marker drawn at video frame `frame`, and the y of the ruler.
+fn marker_at(
+    view: &gpui::Entity<TimelineView>,
+    cx: &mut gpui::VisualTestContext,
+    frame: usize,
+) -> (f32, f32) {
+    let metrics = view.read_with(cx, |view, _| view.qualification_metrics());
+    let marker = metrics["stops"]["markers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|marker| marker["frame"] == frame)
+        .unwrap_or_else(|| panic!("a marker at {frame} in {metrics:#}"));
+    let ruler = &metrics["ruler_bounds"];
+    let y = ruler[1].as_f64().unwrap() as f32 + METRICS.ruler_h / 2.;
+    (marker["x"].as_f64().unwrap() as f32, y)
+}
+
+/// Pixels per second of the editable fixture's track.
+fn per_second(view: &gpui::Entity<TimelineView>, cx: &mut gpui::VisualTestContext) -> f32 {
+    view.read_with(cx, |view, _| view.viewport.pixels_per_second()) as f32
+}
+
+#[gpui::test]
+fn dragging_a_marker_moves_its_stop_to_the_snapped_frame(cx: &mut gpui::TestAppContext) {
+    use studio_engine::slides::StopAt;
+    let (view, cx, stops) = with_a_stop(cx);
+    let (x, y) = marker_at(&view, cx, 40);
+    let pps = per_second(&view, cx);
+    // A press 4 px beside the marker still grabs it, and seeks nowhere.
+    press(cx, x + 4., y);
+    assert!(view.read_with(cx, |view, _| view.edit_dragging()));
+    // To 4 px before 5.9 s, the end of `b` (frame 59): it snaps there and is written as
+    // "end".
+    view.update(cx, |view, cx| view.edit_drag_move(x + 1.9 * pps, false, cx));
+    let snapped =
+        view.read_with(cx, |view, _| view.qualification_metrics())["stops"]["snapped"].clone();
+    assert_eq!(snapped, 5.9);
+    // With the snap held off it goes where the pointer is: 5.5 s, scene frame 25.
+    view.update(cx, |view, cx| {
+        view.edit_drag_move(x + 4. + 1.5 * pps, true, cx)
+    });
+    view.update(cx, |view, cx| view.end_edit_drag(cx));
+    let moved = |at| SlidesCommand::MoveStop {
+        stop: 0,
+        scene: "b".into(),
+        at,
+    };
+    assert_eq!(
+        *stops.borrow(),
+        [
+            SlidesCommand::BeginGesture,
+            moved(StopAt::End),
+            moved(StopAt::Frame(25)),
+            SlidesCommand::EndGesture,
+        ]
+    );
+    assert!(!view.read_with(cx, |view, _| view.edit_dragging()));
+}
+
+#[gpui::test]
+fn a_dragged_marker_clamps_to_its_clip(cx: &mut gpui::TestAppContext) {
+    use studio_engine::slides::StopAt;
+    let (view, cx, stops) = with_a_stop(cx);
+    let (x, y) = marker_at(&view, cx, 40);
+    let pps = per_second(&view, cx);
+    press(cx, x, y);
+    // Far past the end of `b` into `c`: the stop stays on b's last frame.
+    view.update(cx, |view, cx| view.edit_drag_move(x + 4. * pps, true, cx));
+    let drawn =
+        view.read_with(cx, |view, _| view.qualification_metrics())["stops"]["markers"][0]["frame"]
+            .clone();
+    assert_eq!(drawn, 59);
+    // Back before its start into `a`: b's first frame, scene frame 0.
+    view.update(cx, |view, cx| view.edit_drag_move(x - 2. * pps, true, cx));
+    view.update(cx, |view, cx| view.end_edit_drag(cx));
+    let moved = |at| SlidesCommand::MoveStop {
+        stop: 0,
+        scene: "b".into(),
+        at,
+    };
+    assert_eq!(
+        *stops.borrow(),
+        [
+            SlidesCommand::BeginGesture,
+            moved(StopAt::End),
+            moved(StopAt::Frame(0)),
+            SlidesCommand::EndGesture,
+        ]
+    );
+}
+
+#[test]
+fn ruler_labels_skip_stop_flags_and_stay_inside_the_ruler() {
+    use crate::timeline::ruler::{LabelAnchor, flag_left, label_box, label_hits_flag};
+    let (label_w, flag_w) = (METRICS.layout.ruler_label_w, METRICS.layout.stop_flag_w);
+    let width = 1000.;
+    // Centred on its mark, anchored to it at either end: the last label is not cut.
+    assert_eq!(
+        label_box(500., width),
+        (500. - label_w / 2., LabelAnchor::Centre)
+    );
+    assert_eq!(label_box(0., width), (0., LabelAnchor::Start));
+    assert_eq!(label_box(width, width), (width - label_w, LabelAnchor::End));
+    // The last flag points back, inside the ruler.
+    assert_eq!(flag_left(500., width), 500.);
+    assert_eq!(flag_left(width - 2., width), width - 2. - flag_w);
+    assert!(flag_left(width, width) + flag_w <= width);
+    // A stop just before a mark hides the mark's label; one between marks hides none.
+    let (left, _) = label_box(300., width);
+    assert!(label_hits_flag(left, &[298.], width));
+    assert!(label_hits_flag(left, &[200., 320.], width));
+    assert!(!label_hits_flag(left, &[340.], width));
+    assert!(!label_hits_flag(left, &[], width));
+    // The video's end stop hides the last label, whose flag points back over it.
+    let (end, _) = label_box(width, width);
+    assert!(label_hits_flag(end, &[width - 2.], width));
+}
+
+#[gpui::test]
+fn a_press_near_a_default_stop_flag_seeks_to_the_stop(cx: &mut gpui::TestAppContext) {
+    let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+    let seeks = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = seeks.clone();
+    cx.update(|_, app| {
+        app.subscribe(&view, move |_, event: &TimelineEvent, _| {
+            if let TimelineEvent::Seek(frame) = event {
+                log.borrow_mut().push(*frame);
+            }
+        })
+        .detach();
+    });
+    // Two three-second clips at 100 fps: without stops of its own, each clip end is a
+    // default stop (frames 299 and 599).
+    view.update(cx, |view, cx| {
+        let model = TimelineModel::new(report(100, &[("a", 0, 300), ("b", 300, 600)])).unwrap();
+        view.install(model, Arc::from([]), 0, cx);
+    });
+    cx.run_until_parked();
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    view.update(cx, |view, cx| {
+        let slides = slides_on(view, studio_engine::slides::SlidesDoc::default());
+        view.set_slides(Some(slides), cx);
+    });
+    cx.run_until_parked();
+    let (x, y) = marker_at(&view, cx, 299);
+    // 5 px is more than a frame here, so a press there without the hit area seeks
+    // elsewhere.
+    assert!(5. * 100. / per_second(&view, cx) >= 1.);
+    for offset in [-5., 5., 12.] {
+        cx.simulate_click(gpui::point(px(x + offset), px(y)), gpui::Modifiers::none());
+        cx.run_until_parked();
+    }
+    let seeks = seeks.borrow();
+    // Within 6 px either side of the pole (a 12 px hit area) it lands on the stop.
+    assert_eq!(seeks[..2], [299, 299]);
+    // Further out the ruler scrubs to the pointer as before.
+    assert!(seeks[2] > 299, "{seeks:?}");
+    // Nothing was added or moved.
+    let markers = view.read_with(cx, |view, _| view.qualification_metrics())["stops"]["markers"]
+        .as_array()
+        .unwrap()
+        .len();
+    assert_eq!(markers, 2);
+}
+
+#[gpui::test]
+fn a_dragged_stop_shows_its_time(cx: &mut gpui::TestAppContext) {
+    let (view, cx, _) = with_a_stop(cx);
+    let (x, y) = marker_at(&view, cx, 40);
+    let pps = per_second(&view, cx);
+    press(cx, x, y);
+    assert!(
+        cx.debug_bounds("stop-readout").is_none(),
+        "not before it moves"
+    );
+    // One second right: frame 50.
+    view.update(cx, |view, cx| view.edit_drag_move(x + pps, true, cx));
+    cx.run_until_parked();
+    let pill = cx
+        .debug_bounds("stop-readout")
+        .expect("the readout follows the dragged stop");
+    assert!(f32::from(pill.top()) >= y, "under the ruler: {pill:?}");
+    view.update(cx, |view, cx| view.end_edit_drag(cx));
+    cx.run_until_parked();
+    assert!(cx.debug_bounds("stop-readout").is_none());
+}
+
+#[gpui::test]
+fn a_double_click_on_the_ruler_adds_a_stop(cx: &mut gpui::TestAppContext) {
+    use studio_engine::slides::{SlideStop, StopAt};
+    let (view, cx, stops) = with_a_stop(cx);
+    let (x, y) = marker_at(&view, cx, 40);
+    let pps = per_second(&view, cx);
+    // One second right of the marker, frame 50: scene frame 20 of `b`.
+    let at = gpui::point(px(x + pps), px(y));
+    for click_count in [1, 2] {
+        cx.simulate_event(gpui::MouseDownEvent {
+            button: MouseButton::Left,
+            position: at,
+            modifiers: gpui::Modifiers::none(),
+            click_count,
+            ..Default::default()
+        });
+        cx.simulate_event(gpui::MouseUpEvent {
+            button: MouseButton::Left,
+            position: at,
+            modifiers: gpui::Modifiers::none(),
+            click_count,
+        });
+    }
+    assert_eq!(
+        *stops.borrow(),
+        [SlidesCommand::AddStop(SlideStop {
+            scene: "b".into(),
+            at: StopAt::Frame(20),
+            title: None,
+            notes: None,
+        })]
+    );
+    // Delete removes the marker pressed last.
+    press(cx, x, y);
+    view.update(cx, |view, cx| {
+        view.end_edit_drag(cx);
+        view.remove_selected_stop(cx);
+    });
+    assert_eq!(
+        stops.borrow().last(),
+        Some(&SlidesCommand::RemoveStop { stop: 0 })
+    );
+}
+
+#[gpui::test]
+fn ctrl_z_undoes_a_marker_drag_before_the_trim_made_before_it(cx: &mut gpui::TestAppContext) {
+    use std::{cell::RefCell, rc::Rc};
+    use studio_engine::slides::{SlideStop, StopAt};
+    use studio_engine::{Controller, JobKind, JobResult, app_paths::AppPaths};
+
+    // An open project whose preview laid out `a`, `b` and `c`, 30 frames each at 10 fps,
+    // with a stop at scene frame 10 of `b`.
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("video");
+    let paths = AppPaths::new(temp.path().join("history")).unwrap();
+    let compatibility = studio_sdk::CompatibilityManifest::default_linux_x64();
+    studio_project::create(
+        &root,
+        "Video",
+        studio_engine::build_materialization::sdk_pin(&compatibility),
+        &compatibility.fframes_version,
+        &compatibility.runtime_version,
+    )
+    .unwrap();
+    let mut controller = Controller::open(&root, &paths).unwrap();
+    let tag = controller.begin_job(JobKind::Build).unwrap();
+    controller
+        .complete(&tag, JobResult::Built(tag.base_source.clone()))
+        .unwrap();
+    // What the worker lays out for the engine's clips: end to end, trims applied.
+    let laid_out = move |controller: &mut Controller| {
+        let snapshot = controller.timeline_snapshot();
+        let clips: Vec<_> = if snapshot.clips.is_empty() {
+            vec![("a", 30, 0, 0), ("b", 30, 0, 0), ("c", 30, 0, 0)]
+                .into_iter()
+                .map(|(key, frames, start, end)| (key.to_owned(), frames, start, end))
+                .collect()
+        } else {
+            snapshot
+                .clips
+                .iter()
+                .map(|c| {
+                    (
+                        c.key.clone(),
+                        c.scene_frames,
+                        c.trim_start_frames,
+                        c.trim_end_frames,
+                    )
+                })
+                .collect()
+        };
+        let mut start = 0;
+        let mut report = report(10, &[]);
+        report.envelope.identity = studio_engine::preview_identity(&tag);
+        report.timing_generation = snapshot.generation;
+        for (index, (key, frames, trim_start, trim_end)) in clips.into_iter().enumerate() {
+            let played = frames - trim_start - trim_end;
+            let mut scene = crate::timeline::model::tests::report(10, &[(key.as_str(), 0, played)])
+                .scenes
+                .remove(0);
+            scene.instance_id = format!("scene-{index}");
+            scene.index = index;
+            scene.start_frame = start;
+            scene.end_frame = start + played;
+            let clip = scene.clip.as_mut().unwrap();
+            clip.trim_start_frames = trim_start;
+            clip.trim_end_frames = trim_end;
+            clip.scene_frames = Some(frames);
+            clip.scene_index = Some(index);
+            start += played;
+            report.scenes.push(scene);
+        }
+        report.total_frames = start;
+        report.duration_seconds = start as f32 / 10.;
+        controller.learn_timeline(&tag, &report);
+        report
+    };
+    laid_out(&mut controller);
+    controller
+        .slides_command(SlidesCommand::AddStop(SlideStop {
+            scene: "b".into(),
+            at: StopAt::Frame(10),
+            title: None,
+            notes: None,
+        }))
+        .unwrap();
+    let controller = Rc::new(RefCell::new(controller));
+
+    // The view shows what the engine says after every edit, as the shell has it shown.
+    let (view, cx) = cx.add_window_view(|_, cx| TimelineView::new(cx));
+    let show = {
+        let (controller, view) = (controller.clone(), view.clone());
+        let laid_out = laid_out.clone();
+        Rc::new(move |cx: &mut gpui::App| {
+            let mut controller = controller.borrow_mut();
+            let report = laid_out(&mut controller);
+            let (timeline, slides) = (controller.timeline_snapshot(), controller.slides_snapshot());
+            view.update(cx, |view, cx| {
+                view.install(TimelineModel::new(report).unwrap(), Arc::from([]), 0, cx);
+                view.set_snapshot(Some(timeline), cx);
+                view.set_slides(Some(slides), cx);
+            });
+        })
+    };
+    cx.update(|_, app| {
+        crate::shell::bind_keys(app);
+        let (engine, refresh) = (controller.clone(), show.clone());
+        app.subscribe(&view, move |_, event: &TimelineEvent, cx| {
+            let done = match event {
+                TimelineEvent::Edit(command) => engine
+                    .borrow_mut()
+                    .timeline_command(command.clone())
+                    .map(drop),
+                TimelineEvent::Stop(command) => engine
+                    .borrow_mut()
+                    .slides_command(command.clone())
+                    .map(drop),
+                _ => return,
+            };
+            done.unwrap();
+            refresh(cx);
+        })
+        .detach();
+        // The shell's handler: Ctrl+Z in the Timeline context undoes the latest step of
+        // the history the timing and the slides share.
+        let (engine, refresh) = (controller.clone(), show.clone());
+        app.on_action(move |_: &crate::actions::UndoTimelineEdit, cx| {
+            engine
+                .borrow_mut()
+                .timeline_command(TimelineCommand::Undo)
+                .unwrap();
+            refresh(cx);
+        });
+        show(app);
+    });
+    cx.run_until_parked();
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    let trim_end = |controller: &Rc<RefCell<Controller>>| {
+        controller.borrow_mut().timeline_snapshot().clips[0].trim_end_frames
+    };
+    let stop_of = |controller: &Rc<RefCell<Controller>>| {
+        let snapshot = controller.borrow_mut().slides_snapshot();
+        (
+            snapshot.doc.unwrap().stops[0].at,
+            snapshot.stops[0].video_frame,
+        )
+    };
+    assert_eq!(stop_of(&controller), (StopAt::Frame(10), 40));
+
+    // Trim a second off the end of `a`: `b` and its stop move 10 frames earlier.
+    let [left, top, width, height] = clip_bounds(&view, cx, 0);
+    let pps = width / 3.;
+    press(cx, left + width - 2., top + height / 2.);
+    view.update(cx, |view, cx| {
+        view.edit_drag_move(left + width - 2. - pps, true, cx);
+        view.end_edit_drag(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(trim_end(&controller), 10);
+    assert_eq!(stop_of(&controller), (StopAt::Frame(10), 30));
+
+    // Drag the marker a second right.
+    view.update(cx, |_, cx| cx.notify());
+    cx.run_until_parked();
+    let (x, y) = marker_at(&view, cx, 30);
+    let pps = per_second(&view, cx);
+    press(cx, x, y);
+    view.update(cx, |view, cx| {
+        view.edit_drag_move(x + pps, true, cx);
+        view.end_edit_drag(cx);
+    });
+    cx.run_until_parked();
+    assert_eq!(stop_of(&controller), (StopAt::Frame(20), 40));
+
+    // Ctrl+Z in the timeline: the marker returns, the trim stays.
+    view.update_in(cx, |view, window, cx| view.focus(window, cx));
+    cx.simulate_keystrokes("ctrl-z");
+    cx.run_until_parked();
+    assert_eq!(stop_of(&controller), (StopAt::Frame(10), 30));
+    assert_eq!(trim_end(&controller), 10);
+    // Again: the trim goes.
+    cx.simulate_keystrokes("ctrl-z");
+    cx.run_until_parked();
+    assert_eq!(trim_end(&controller), 0);
+    assert_eq!(stop_of(&controller), (StopAt::Frame(10), 40));
+    // The live files agree.
+    let live = std::fs::read_to_string(root.join(studio_project::revision::SLIDES_FILE)).unwrap();
+    assert!(live.contains("\"at\": 10"), "{live}");
+}

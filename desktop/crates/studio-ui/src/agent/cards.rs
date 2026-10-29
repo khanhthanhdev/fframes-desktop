@@ -1,134 +1,311 @@
-//! Transcript rows and their cards: tool calls, permissions, errors, validation, changes, banners and conflicts.
+//! Transcript rows: the two voices, runs of activity, permissions, errors, validation,
+//! changes and outcomes, built from the chat components in [`super::ui`].
 
 use super::markdown::{MarkdownRow, Voice};
+use super::ui::{
+    ActionCard, ActivityCounts, ActivityHeader, ActivityRow, ActivityState, AssistantMessage,
+    ChangeMark, ChangedFile, ChangesCard, ROW_H, UserMessage, outcome_style, summary_parts,
+};
 use super::*;
+
+/// A run of consecutive tool calls, reasoning and permission notes in the shown rows: one
+/// summary line that opens into a row per step.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct ActivitySpan {
+    /// Index of the first row in `view_rows`, and one past the last.
+    pub start: usize,
+    pub end: usize,
+    /// The first row's id: the run's identity while rows are added to it.
+    pub key: u64,
+    pub open: bool,
+}
+
+/// Whether a row belongs to a run of activity.
+fn is_activity(kind: &RowKind) -> bool {
+    matches!(
+        kind,
+        RowKind::Tool(_) | RowKind::Thought { .. } | RowKind::Permission(_)
+    )
+}
+
+/// Whether a step of a run is still going: then the run opens and its summary spins.
+fn is_live(kind: &RowKind) -> bool {
+    match kind {
+        RowKind::Tool(card) => matches!(
+            card.status,
+            Some(ToolStatus::Pending | ToolStatus::InProgress)
+        ),
+        RowKind::Thought { streaming, .. } => *streaming,
+        RowKind::Permission(card) => card.state == PermissionState::Open,
+        _ => false,
+    }
+}
+
+/// The runs of activity in `rows`. A run is open while a step in it is live, unless the
+/// reader opened or closed it.
+pub(super) fn activity_spans(
+    rows: &[Arc<Row>],
+    overrides: &HashMap<u64, bool>,
+) -> Vec<ActivitySpan> {
+    let mut spans = Vec::new();
+    let mut ix = 0;
+    while ix < rows.len() {
+        if !is_activity(&rows[ix].kind) {
+            ix += 1;
+            continue;
+        }
+        let start = ix;
+        while ix < rows.len() && is_activity(&rows[ix].kind) {
+            ix += 1;
+        }
+        let key = rows[start].id.0;
+        let live = rows[start..ix].iter().any(|row| is_live(&row.kind));
+        spans.push(ActivitySpan {
+            start,
+            end: ix,
+            key,
+            open: overrides.get(&key).copied().unwrap_or(live),
+        });
+    }
+    spans
+}
 
 impl ConversationPanel {
     pub(super) fn row_id(row: &Row) -> ElementId {
         ElementId::from(("agent-row", row.id.0))
     }
 
-    pub(super) fn row_element(&mut self, row: &Arc<Row>, cx: &mut Context<Self>) -> AnyElement {
-        let theme = self.theme;
-        let palette = theme.editor;
-        match &row.kind {
-            // The user's messages are bubbles on the right; the agent answers on the left
-            // without a frame, and its tool calls run as a log between them.
-            RowKind::User { text, source } => Self::row_shell()
-                .pt(px(4.))
-                .flex()
-                .flex_col()
-                .items_end()
-                .gap(px(2.))
-                .children(match source {
-                    UserSource::Brief => None,
-                    UserSource::Clarification => Some(self.caption("Your answer")),
-                    UserSource::Followup => Some(self.caption("Follow-up")),
-                    UserSource::Repair => {
-                        Some(self.caption("Automatic repair context (sent by Studio)"))
-                    }
-                })
-                .child(
-                    div()
-                        .max_w(gpui::relative(0.88))
-                        .rounded(px(12.))
-                        .bg(palette.ctl)
-                        .px(px(12.))
-                        .py(px(8.))
-                        .child(
-                            text_style(div(), TextStyle::Body)
-                                .text_color(palette.text_1)
-                                .child(selectable(text.clone()).id(("agent-row-text", row.id.0))),
-                        ),
-                )
-                .into_any_element(),
-            RowKind::Agent { .. } => Self::row_shell()
-                .child(div().px(px(2.)).child(
-                    MarkdownRow::new(row, Voice::Answer).project_root(self.project_root.clone()),
-                ))
-                .into_any_element(),
-            RowKind::Thought { streaming, .. } => {
-                let id = row.id.0;
-                let open = self.thoughts_open.contains(&id);
-                let entity = cx.entity();
-                Self::row_shell()
-                    .child(
-                        CollapsibleSection::new(("agent-thought", id), open)
-                            // A fixed header height: the badge appears and goes without
-                            // changing the row's measured height.
-                            .header(
-                                div()
-                                    .flex()
-                                    .items_center()
-                                    .gap(px(6.))
-                                    .h(px(THOUGHT_HEADER_H))
-                                    .child(
-                                        text_style(div(), TextStyle::Small)
-                                            .italic()
-                                            .text_color(palette.text_2)
-                                            .child("Reasoning"),
-                                    )
-                                    .children(
-                                        streaming
-                                            .then(|| Badge::new("Thinking…").tone(UiTone::Info)),
-                                    ),
-                            )
-                            .content(
-                                div().pt(px(4.)).child(
-                                    MarkdownRow::new(row, Voice::Reasoning)
-                                        .project_root(self.project_root.clone()),
-                                ),
-                            )
-                            .on_toggle(move |next, _, cx| {
-                                entity.update(cx, |this, cx| {
-                                    this.toggle_thought(id, *next);
-                                    cx.notify();
-                                });
-                            }),
-                    )
-                    .into_any_element()
+    /// The run of activity row `ix` belongs to.
+    fn span_of(&self, ix: usize) -> Option<ActivitySpan> {
+        self.activity
+            .iter()
+            .find(|span| span.start <= ix && ix < span.end)
+            .copied()
+    }
+
+    /// Recomputes the runs of activity after the rows or an open state changed and
+    /// re-measures every run whose rows or state are not what the list measured.
+    pub(super) fn sync_activity(&mut self) {
+        let spans = activity_spans(&self.view_rows, &self.activity_open);
+        for span in &spans {
+            if !self.activity.contains(span) {
+                self.list.remeasure_items(span.start..span.end);
             }
-            RowKind::Tool(card) => self.tool_card(row, card),
-            RowKind::Permission(card) => self.permission_card(card),
-            RowKind::Notice { level, text } => Self::row_shell()
-                .child(Notice::new(
-                    Self::row_id(row),
-                    match level {
-                        NoticeLevel::Info => UiTone::Info,
-                        NoticeLevel::Warning => UiTone::Warning,
+        }
+        self.activity = spans;
+    }
+
+    pub(super) fn toggle_activity(&mut self, key: u64, open: bool, cx: &mut Context<Self>) {
+        self.activity_open.insert(key, open);
+        self.sync_activity();
+        cx.notify();
+    }
+
+    /// When the row was written, for the hover lane.
+    fn row_time(&self, row: &Row) -> Option<SharedString> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let time = history::relative_time(now, row.at_unix);
+        (!time.is_empty()).then(|| time.into())
+    }
+
+    pub(super) fn row_element(
+        &mut self,
+        ix: usize,
+        row: &Arc<Row>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme;
+        if let Some(span) = self.span_of(ix) {
+            return self.activity_element(ix, row, span, cx);
+        }
+        let entity = cx.entity();
+        let element = match &row.kind {
+            // The user's messages are bubbles on the right; the agent answers on the left
+            // without a frame, and its tool calls run as quiet lines between them.
+            RowKind::User { text, source } => {
+                let id = row.id.0;
+                let mut message = UserMessage::new(&theme, id, text.clone()).expanded(
+                    self.messages_open.contains(&id),
+                    move |_, cx| {
+                        entity.update(cx, |this, cx| this.toggle_message(id, cx));
                     },
-                    text.clone(),
-                ))
-                .into_any_element(),
+                );
+                if let Some(time) = self.row_time(row) {
+                    message = message.meta(time);
+                }
+                match source {
+                    UserSource::Brief => message,
+                    UserSource::Clarification => message.caption("Your answer"),
+                    UserSource::Followup => message.caption("Follow-up"),
+                    UserSource::Repair => {
+                        message.caption("Automatic repair context (sent by Studio)")
+                    }
+                }
+                .into_any_element()
+            }
+            RowKind::Agent {
+                text, streaming, ..
+            } => {
+                let mut message = AssistantMessage::new(
+                    &theme,
+                    row.id.0,
+                    MarkdownRow::new(row, Voice::Answer).project_root(self.project_root.clone()),
+                );
+                if !streaming {
+                    message = message.copy(text.clone());
+                    if let Some(time) = self.row_time(row) {
+                        message = message.meta(time);
+                    }
+                }
+                message.into_any_element()
+            }
+            RowKind::Notice { level, text } => Notice::new(
+                Self::row_id(row),
+                match level {
+                    NoticeLevel::Info => UiTone::Info,
+                    NoticeLevel::Warning => UiTone::Warning,
+                },
+                text.clone(),
+            )
+            .into_any_element(),
             RowKind::Error(error) => self.error_card(row, error),
             RowKind::Validation(card) => self.validation_card(row, card),
             RowKind::Changes(card) => self.changes_card(card, cx),
-            RowKind::Outcome(card) => {
-                let (tone, title) = outcome_style(card.kind);
-                let mut lines = vec![card.summary.clone()];
-                if let Some(p) = &card.published {
-                    lines.push(format!("Revision {}", &p[..p.len().min(12)]));
-                }
-                if card.draft_retained {
-                    lines.push("The agent's working copy was kept.".to_owned());
-                }
-                // The end of a task is one line of the log; the status strip and the error
-                // card above it carry the detail.
-                let glyph = match tone {
-                    UiTone::Success => (Icon::CircleCheck, theme.green_11.into()),
-                    UiTone::Danger => (Icon::AlertTriangle, theme.red_11.into()),
-                    UiTone::Warning => (Icon::AlertTriangle, theme.amber_11.into()),
-                    _ => (Icon::Info, palette.text_3.into()),
-                };
-                self.activity_row(
-                    Self::row_id(row),
-                    glyph,
-                    title,
-                    lines.join(" "),
-                    div().into_any_element(),
-                )
+            RowKind::Outcome(card) => self.outcome_line(row, card),
+            // Activity rows are drawn by their run above.
+            RowKind::Tool(_) | RowKind::Thought { .. } | RowKind::Permission(_) => {
+                div().into_any_element()
             }
+        };
+        Self::row_shell().child(element).into_any_element()
+    }
+
+    /// Shows all or the first lines of a long user message, re-measuring that row only.
+    fn toggle_message(&mut self, id: u64, cx: &mut Context<Self>) {
+        if !self.messages_open.remove(&id) {
+            self.messages_open.insert(id);
         }
+        if let Some(ix) = self.view_rows.iter().position(|row| row.id.0 == id) {
+            self.list.remeasure_items(ix..ix + 1);
+        }
+        cx.notify();
+    }
+
+    /// One row of a run of activity. The run's first row carries the summary line; a
+    /// closed run's other rows take no space.
+    fn activity_element(
+        &mut self,
+        ix: usize,
+        row: &Arc<Row>,
+        span: ActivitySpan,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let theme = self.theme;
+        let first = ix == span.start;
+        let last = ix + 1 == span.end;
+        let mut element = div().w_full().flex().flex_col();
+        if first {
+            let mut counts = ActivityCounts::default();
+            let mut running = false;
+            for member in &self.view_rows[span.start..span.end] {
+                match &member.kind {
+                    RowKind::Tool(card) => counts.add_tool(
+                        card.kind.as_deref(),
+                        card.status == Some(ToolStatus::Failed),
+                    ),
+                    RowKind::Thought { .. } => counts.thoughts += 1,
+                    RowKind::Permission(_) => counts.permissions += 1,
+                    _ => (),
+                }
+                running |= is_live(&member.kind);
+            }
+            let entity = cx.entity();
+            let (key, open) = (span.key, span.open);
+            element = element.child(
+                ActivityHeader::new(&theme, ("agent-activity", key), summary_parts(&counts))
+                    .open(open)
+                    .running(running)
+                    .on_toggle(move |_, cx| {
+                        entity.update(cx, |this, cx| this.toggle_activity(key, !open, cx));
+                    }),
+            );
+        }
+        if span.open {
+            element = element.child(self.activity_row(row, cx));
+        }
+        if last || (first && !span.open) {
+            element = element.pb(px(METRICS.space_2));
+        }
+        element.into_any_element()
+    }
+
+    /// The row of one step in an open run.
+    fn activity_row(&mut self, row: &Arc<Row>, cx: &mut Context<Self>) -> AnyElement {
+        match &row.kind {
+            RowKind::Tool(card) => self.tool_card(row, card).into_any_element(),
+            RowKind::Permission(card) => self.permission_card(card).into_any_element(),
+            RowKind::Thought {
+                text, streaming, ..
+            } => self.thought_row(row, text, *streaming, cx),
+            _ => div().into_any_element(),
+        }
+    }
+
+    /// Reasoning as a step: "Thought" and its first line; the text shows while it streams or
+    /// while the reader keeps it open.
+    fn thought_row(
+        &self,
+        row: &Arc<Row>,
+        text: &str,
+        streaming: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let id = row.id.0;
+        let open = streaming || self.thoughts_open.contains(&id);
+        let entity = cx.entity();
+        let first_line = text
+            .lines()
+            .map(str::trim)
+            .find(|line| !line.is_empty())
+            .unwrap_or("")
+            .to_owned();
+        div()
+            .w_full()
+            .flex()
+            .flex_col()
+            .child(
+                ActivityRow::new(
+                    &self.theme,
+                    ("agent-thought", id),
+                    Icon::Bot,
+                    "Thought",
+                    first_line,
+                )
+                .state(if streaming {
+                    ActivityState::Running
+                } else {
+                    ActivityState::Done
+                })
+                .on_toggle(open, move |_, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.toggle_thought(id, !open);
+                        cx.notify();
+                    });
+                }),
+            )
+            .children(open.then(|| {
+                div()
+                    .pl(px(METRICS.space_4 + METRICS.space_2))
+                    .pr(px(METRICS.space_2))
+                    .pb(px(METRICS.space_1))
+                    .child(
+                        MarkdownRow::new(row, Voice::Reasoning)
+                            .project_root(self.project_root.clone()),
+                    )
+            }))
+            .into_any_element()
     }
 
     /// Records the expansion of a reasoning row and re-measures that row only.
@@ -143,10 +320,9 @@ impl ConversationPanel {
         }
     }
 
-    /// A tool call as one line of the activity log: what kind of step, on what, and how
-    /// it went. The full title is in the tooltip when the line truncates it.
-    pub(super) fn tool_card(&self, row: &Row, card: &ToolCard) -> AnyElement {
-        let theme = self.theme;
+    /// A tool call as one step: what kind, on what, and how it went. The full title is in
+    /// the tooltip when the line truncates it.
+    pub(super) fn tool_card(&self, row: &Row, card: &ToolCard) -> ActivityRow {
         let (verb, glyph) = tool_verb(card.kind.as_deref());
         let title = card.title.clone().unwrap_or_else(|| card.call_id.clone());
         // Agents usually start the title with the verb ("Read src/main.rs"): then the
@@ -157,71 +333,8 @@ impl ConversationPanel {
             }
             _ => (verb.to_owned(), title),
         };
-        let status = match card.status {
-            Some(ToolStatus::Completed) => {
-                icon(Icon::Check, 12., theme.green_11).into_any_element()
-            }
-            Some(ToolStatus::Failed) => {
-                Badge::new("failed").tone(UiTone::Danger).into_any_element()
-            }
-            other => text_style(div(), TextStyle::Small)
-                .text_color(theme.editor.text_3)
-                .child(tool_badge(other).0)
-                .into_any_element(),
-        };
-        self.activity_row(
-            ("agent-tool", row.id.0),
-            (glyph, theme.editor.text_3.into()),
-            verb,
-            title,
-            status,
-        )
-    }
-
-    /// One line of the activity log: a glyph, a verb, a truncated subject with its full
-    /// text in a tooltip, and a status at the end. Consecutive lines sit close together.
-    fn activity_row(
-        &self,
-        id: impl Into<ElementId>,
-        (glyph, tint): (Icon, gpui::Hsla),
-        verb: impl Into<SharedString>,
-        subject: impl Into<SharedString>,
-        status: AnyElement,
-    ) -> AnyElement {
-        let theme = self.theme;
-        let palette = theme.editor;
-        let verb: SharedString = verb.into();
-        let subject: SharedString = subject.into();
-        let tip: SharedString = format!("{verb} {subject}").into();
-        div()
-            .w_full()
-            .pb(px(2.))
-            .child(
-                div()
-                    .id(id)
-                    .h(px(ACTIVITY_ROW_H))
-                    .flex()
-                    .items_center()
-                    .gap(px(8.))
-                    .px(px(6.))
-                    .rounded(px(METRICS.radius_control))
-                    .hover(|style| style.bg(palette.ctl))
-                    .tooltip_show_delay(crate::kit::TOOLTIP_SHOW_DELAY)
-                    .tooltip(move |_, cx| crate::kit::Tooltip::new(&theme, tip.clone()).view(cx))
-                    .child(icon(glyph, 13., tint))
-                    .child(
-                        text_style(div().flex_none(), TextStyle::Small)
-                            .text_color(palette.text_1)
-                            .child(verb),
-                    )
-                    .child(
-                        text_style(div().flex_1().min_w_0().truncate(), TextStyle::Small)
-                            .text_color(palette.text_2)
-                            .child(subject),
-                    )
-                    .child(div().flex_none().child(status)),
-            )
-            .into_any_element()
+        ActivityRow::new(&self.theme, ("agent-tool", row.id.0), glyph, verb, title)
+            .state(tool_state(card.status))
     }
 
     /// Whether `card` is an agent question, which has its own card above the composer.
@@ -244,9 +357,10 @@ impl ConversationPanel {
         )
     }
 
-    /// The transcript row of a permission request. An open request is answered in its
-    /// card above the composer ([`Self::permission_request`]); the row only records it.
-    pub(super) fn permission_card(&self, card: &PermissionCard) -> AnyElement {
+    /// The step a permission request leaves in the transcript. An open request is answered
+    /// in its card above the composer ([`Self::permission_request`]); the row only records it.
+    pub(super) fn permission_card(&self, card: &PermissionCard) -> ActivityRow {
+        let theme = self.theme;
         let key = Self::permission_key(card);
         if let Some(policy) = card.answered_by {
             let state = if card.state == PermissionState::Cancelled {
@@ -254,47 +368,55 @@ impl ConversationPanel {
             } else {
                 policy.label()
             };
-            return self.activity_row(
-                format!("perm-auto-{key}"),
-                (Icon::CircleCheck, self.theme.green_11.into()),
-                "Allowed",
+            return ActivityRow::new(
+                &theme,
+                SharedString::from(format!("perm-auto-{key}")),
+                Icon::CircleCheck,
+                "Allowed:",
                 card.title.clone(),
-                self.caption(state).into_any_element(),
-            );
+            )
+            .trailing(self.caption(state));
         }
-        let (glyph, state) = match &card.state {
-            PermissionState::Open if self.is_question(card) => {
-                (Icon::Info, "answer in the question card".to_owned())
-            }
+        match &card.state {
+            PermissionState::Open if self.is_question(card) => ActivityRow::new(
+                &theme,
+                SharedString::from(format!("perm-notice-{key}")),
+                Icon::Info,
+                "Question:",
+                card.title.clone(),
+            )
+            .state(ActivityState::Waiting)
+            .trailing(self.caption("answer below")),
             // The pinned request shows the command; the row stays one line until answered.
-            PermissionState::Open => {
-                return self.activity_row(
-                    format!("perm-open-{key}"),
-                    (Icon::AlertTriangle, self.theme.amber_11.into()),
-                    "Permission",
-                    card.title.clone(),
-                    self.caption("answer below").into_any_element(),
-                );
-            }
-            PermissionState::Selected { option_id } => (
+            PermissionState::Open => ActivityRow::new(
+                &theme,
+                SharedString::from(format!("perm-open-{key}")),
+                Icon::AlertTriangle,
+                "Waiting for you:",
+                card.title.clone(),
+            )
+            .state(ActivityState::Waiting),
+            PermissionState::Selected { option_id } => ActivityRow::new(
+                &theme,
+                SharedString::from(format!("perm-notice-{key}")),
                 Icon::CircleCheck,
                 format!(
-                    "you chose {}",
+                    "You chose {}:",
                     card.options
                         .iter()
                         .find(|o| &o.option_id == option_id)
                         .map_or(option_id.as_str(), |o| o.name.as_str())
                 ),
+                card.title.clone(),
             ),
-            PermissionState::Cancelled => (Icon::X, "closed without an answer".to_owned()),
-        };
-        self.activity_row(
-            format!("perm-notice-{key}"),
-            (glyph, self.theme.editor.text_3.into()),
-            "Permission",
-            card.title.clone(),
-            self.caption(&state).into_any_element(),
-        )
+            PermissionState::Cancelled => ActivityRow::new(
+                &theme,
+                SharedString::from(format!("perm-notice-{key}")),
+                Icon::X,
+                "Closed without an answer:",
+                card.title.clone(),
+            ),
+        }
     }
 
     /// The open permission request pinned above the composer, with the agent's options.
@@ -304,21 +426,38 @@ impl ConversationPanel {
         &mut self,
         card: &PermissionCard,
         cx: &mut Context<Self>,
-    ) -> gpui::Div {
+    ) -> ActionCard {
         let pending = self.replies.is_pending(&card.reference);
         let key = Self::permission_key(card);
-        let mut notice = Notice::new(
-            format!("perm-request-{key}"),
+        let mut notice = ActionCard::new(
+            &self.theme,
+            SharedString::from(format!("perm-request-{key}")),
             UiTone::Warning,
-            "Permission requested",
+            card.title.clone(),
         )
         .body(if pending {
-            format!("{}\nAnswer sent…", card.title)
+            "Answer sent…"
         } else {
-            card.title.clone()
+            "The agent asks for permission to go on."
         });
         if !pending {
-            for option in &card.options {
+            // Refusals first, the allowing choice last (the primary action sits rightmost).
+            let mut options: Vec<_> = card.options.iter().collect();
+            options.sort_by_key(|option| option.kind.starts_with("allow"));
+            if !card.options.iter().any(|o| o.kind.starts_with("reject")) {
+                let reference = card.reference.clone();
+                notice = notice.action(self.action_button(
+                    format!("perm-{key}-decline"),
+                    "Decline",
+                    true,
+                    Emphasis::Neutral,
+                    cx,
+                    move |this, _, cx| {
+                        this.answer_permission(reference.clone(), PermissionAnswer::Cancel, cx)
+                    },
+                ));
+            }
+            for option in options {
                 let reference = card.reference.clone();
                 let id = option.option_id.clone();
                 notice = notice.action(self.action_button(
@@ -326,9 +465,9 @@ impl ConversationPanel {
                     option.name.clone(),
                     true,
                     if option.kind.starts_with("allow") {
-                        Tone::Primary
+                        Emphasis::Primary
                     } else {
-                        Tone::Normal
+                        Emphasis::Neutral
                     },
                     cx,
                     move |this, _, cx| {
@@ -340,21 +479,8 @@ impl ConversationPanel {
                     },
                 ));
             }
-            if !card.options.iter().any(|o| o.kind.starts_with("reject")) {
-                let reference = card.reference.clone();
-                notice = notice.action(self.action_button(
-                    format!("perm-{key}-decline"),
-                    "Decline",
-                    true,
-                    Tone::Normal,
-                    cx,
-                    move |this, _, cx| {
-                        this.answer_permission(reference.clone(), PermissionAnswer::Cancel, cx)
-                    },
-                ));
-            }
         }
-        div().child(notice)
+        notice
     }
 
     pub(super) fn error_card(&self, row: &Row, error: &StructuredError) -> AnyElement {
@@ -368,12 +494,16 @@ impl ConversationPanel {
         if error.retained {
             lines.push("The working copy and candidate were kept.".to_owned());
         }
-        Self::row_shell()
-            .child(
-                Notice::new(Self::row_id(row), UiTone::Danger, error.title.clone())
-                    .body(lines.join("\n")),
-            )
-            .into_any_element()
+        let body = lines.join("\n");
+        ActionCard::new(
+            &self.theme,
+            Self::row_id(row),
+            UiTone::Danger,
+            error.title.clone(),
+        )
+        .copy(format!("{}\n{body}", error.title))
+        .body(body)
+        .into_any_element()
     }
 
     pub(super) fn validation_card(&self, row: &Row, card: &ValidationCard) -> AnyElement {
@@ -456,88 +586,94 @@ impl ConversationPanel {
         } else {
             (UiTone::Danger, "Validation failed")
         };
-        Self::row_shell()
-            .child(
-                Notice::new(
-                    Self::row_id(row),
-                    tone,
-                    format!("{head} · {}", card.summary),
-                )
-                .body(lines.join("\n")),
-            )
+        let title = format!("{head} · {}", card.summary);
+        let body = lines.join("\n");
+        ActionCard::new(&self.theme, Self::row_id(row), tone, title.clone())
+            .copy(format!("{title}\n{body}"))
+            .body(body)
             .into_any_element()
     }
 
     pub(super) fn changes_card(&mut self, card: &ChangeCard, cx: &mut Context<Self>) -> AnyElement {
         use studio_engine::candidate_validation::ChangeKind;
-        let theme = self.theme;
-        let palette = theme.editor;
-        let mut body = Card::editor_nested(&self.theme)
-            .flex()
-            .flex_col()
-            .gap(px(4.))
-            .p(px(10.))
-            .child(label(
-                &self.theme,
-                format!(
-                    "{} changed file{}",
-                    card.total,
-                    if card.total == 1 { "" } else { "s" }
-                ),
-            ));
-        for entry in &card.entries {
-            let (mark, color) = match entry.change {
-                ChangeKind::Added => ("A", theme.green_11),
-                ChangeKind::Modified => ("M", palette.text_2),
-                ChangeKind::Deleted => ("D", theme.red_11),
-                ChangeKind::Mode => ("X", palette.text_3),
-            };
-            body = body.child(
-                text_style(div(), TextStyle::Small)
-                    .flex()
-                    .gap(px(8.))
-                    .text_color(palette.text_1)
-                    .child(div().w(px(10.)).flex_none().text_color(color).child(mark))
-                    .child(div().min_w_0().child(entry.path.clone())),
-            );
-        }
-        if card.truncated || card.total > card.entries.len() {
-            body = body.child(self.line(format!(
-                "…and {} more",
-                card.total.saturating_sub(card.entries.len())
-            )));
-        }
+        let files = card
+            .entries
+            .iter()
+            .map(|entry| ChangedFile {
+                mark: match entry.change {
+                    ChangeKind::Added => ChangeMark::Added,
+                    ChangeKind::Modified => ChangeMark::Modified,
+                    ChangeKind::Deleted => ChangeMark::Deleted,
+                    ChangeKind::Mode => ChangeMark::Mode,
+                },
+                path: entry.path.clone().into(),
+            })
+            .collect();
+        let total = card.total.max(card.entries.len());
+        let mut changes = ChangesCard::new(&self.theme, total, files);
         if let Some(button) = self.candidate_review_button(card, cx) {
-            body = body.child(button);
+            changes = changes.action(button);
         }
-        Self::row_shell().child(body).into_any_element()
+        changes.into_any_element()
     }
 
-    // ---- tabs ----------------------------------------------------------------------------------------
+    /// The end of a task as one line: its outcome in the shared vocabulary and the summary.
+    /// The status line and the error card above it carry the detail.
+    fn outcome_line(&self, row: &Row, card: &studio_engine::agent::OutcomeCard) -> AnyElement {
+        let theme = self.theme;
+        let (title, tone) = outcome_style(card.kind);
+        let mut lines = vec![card.summary.clone()];
+        if let Some(p) = &card.published {
+            lines.push(format!("Revision {}", &p[..p.len().min(12)]));
+        }
+        if card.draft_retained {
+            lines.push("The agent's working copy was kept.".to_owned());
+        }
+        let summary: SharedString = lines.join(" ").into();
+        let tip: SharedString = format!("{title} · {summary}").into();
+        div()
+            .id(Self::row_id(row))
+            .h(px(ROW_H))
+            .flex()
+            .items_center()
+            .gap(px(METRICS.space_2))
+            .tooltip_show_delay(crate::kit::TOOLTIP_SHOW_DELAY)
+            .tooltip(move |_, cx| crate::kit::Tooltip::new(&theme, tip.clone()).view(cx))
+            .child(StatusDot::new(tone))
+            .child(
+                text_style(div().flex_none(), TextStyle::Label)
+                    .text_color(theme.colors.text_1)
+                    .child(title),
+            )
+            .child(
+                text_style(div().flex_1().min_w_0().truncate(), TextStyle::Small)
+                    .text_color(theme.colors.text_2)
+                    .child(summary),
+            )
+            .into_any_element()
+    }
+
+    // ---- review --------------------------------------------------------------------------------
 
     pub(super) fn review_buttons(
         &mut self,
         review: &ReviewControls,
         cx: &mut Context<Self>,
-    ) -> Vec<EditorButton> {
+    ) -> Vec<Button> {
         vec![
             self.action_button(
-                "agent-apply",
-                if review.apply_note.is_some() {
-                    "Retry Apply"
-                } else {
-                    "Apply"
-                },
+                "agent-export-candidate",
+                "Export candidate…",
                 true,
-                Tone::Primary,
+                Emphasis::Neutral,
                 cx,
-                |this, _, cx| this.apply(cx),
+                |this, _, cx| this.export(Export::Candidate, cx),
             ),
             self.action_button(
                 "agent-discard",
                 "Discard",
                 true,
-                Tone::Danger,
+                Emphasis::Danger,
                 cx,
                 |this, _, cx| {
                     if let Some(w) = this.workflow().cloned() {
@@ -547,12 +683,16 @@ impl ConversationPanel {
                 },
             ),
             self.action_button(
-                "agent-export-candidate",
-                "Export candidate…",
+                "agent-apply",
+                if review.apply_note.is_some() {
+                    "Retry Apply"
+                } else {
+                    "Apply"
+                },
                 true,
-                Tone::Normal,
+                Emphasis::Primary,
                 cx,
-                |this, _, cx| this.export(Export::Candidate, cx),
+                |this, _, cx| this.apply(cx),
             ),
         ]
     }
@@ -571,11 +711,10 @@ impl ConversationPanel {
             }
             block
         };
-        Card::editor_nested(&self.theme)
+        div()
             .flex()
             .flex_col()
-            .gap(px(4.))
-            .p(px(10.))
+            .gap(px(METRICS.space_1))
             .child(label(&self.theme, format!("Conflict: {}", conflict.reason)))
             .child(list(
                 "Changed in the project meanwhile:",
@@ -592,5 +731,101 @@ impl ConversationPanel {
                 }
                 block
             }))
+    }
+}
+
+/// How a tool call's status reads as a step.
+fn tool_state(status: Option<ToolStatus>) -> ActivityState {
+    match status {
+        Some(ToolStatus::Pending) => ActivityState::Pending,
+        Some(ToolStatus::InProgress) => ActivityState::Running,
+        Some(ToolStatus::Completed) => ActivityState::Done,
+        Some(ToolStatus::Failed) => ActivityState::Failed,
+        None => ActivityState::Pending,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use studio_engine::agent::RowId;
+
+    fn row(id: u64, kind: RowKind) -> Arc<Row> {
+        Arc::new(Row {
+            id: RowId(id),
+            task: None,
+            at_unix: 0,
+            kind,
+        })
+    }
+
+    fn tool(id: u64, status: ToolStatus) -> Arc<Row> {
+        row(
+            id,
+            RowKind::Tool(ToolCard {
+                call_id: format!("call-{id}"),
+                title: Some("Read a.rs".into()),
+                kind: Some("read".into()),
+                status: Some(status),
+                updates: 0,
+            }),
+        )
+    }
+
+    fn user(id: u64) -> Arc<Row> {
+        row(
+            id,
+            RowKind::User {
+                text: "hi".into(),
+                source: UserSource::Brief,
+            },
+        )
+    }
+
+    #[test]
+    fn consecutive_steps_form_one_run_that_is_open_while_live() {
+        let rows = vec![
+            user(1),
+            tool(2, ToolStatus::Completed),
+            tool(3, ToolStatus::Completed),
+            user(4),
+            tool(5, ToolStatus::InProgress),
+        ];
+        let spans = activity_spans(&rows, &HashMap::new());
+        assert_eq!(
+            spans,
+            [
+                ActivitySpan {
+                    start: 1,
+                    end: 3,
+                    key: 2,
+                    open: false
+                },
+                ActivitySpan {
+                    start: 4,
+                    end: 5,
+                    key: 5,
+                    open: true
+                },
+            ]
+        );
+        // The reader's choice wins over the default.
+        let overrides = HashMap::from([(2, true), (5, false)]);
+        let open: Vec<bool> = activity_spans(&rows, &overrides)
+            .iter()
+            .map(|span| span.open)
+            .collect();
+        assert_eq!(open, [true, false]);
+    }
+
+    #[test]
+    fn tool_statuses_read_as_step_states() {
+        assert_eq!(
+            tool_state(Some(ToolStatus::InProgress)),
+            ActivityState::Running
+        );
+        assert_eq!(tool_state(Some(ToolStatus::Failed)), ActivityState::Failed);
+        assert_eq!(tool_state(Some(ToolStatus::Completed)), ActivityState::Done);
+        assert_eq!(tool_state(None), ActivityState::Pending);
     }
 }

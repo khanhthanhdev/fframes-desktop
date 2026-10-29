@@ -32,7 +32,10 @@ use crate::{
 use fframes_studio_protocol::{InspectResponse, PreparedAudioDescriptor, PreviewTimelineResponse};
 use std::{any::Any, fs::File, io::Read, path::PathBuf, sync::Arc};
 use studio_bootstrap::ProcessTreeManager;
-use studio_project::{checkpoint::Checkpoints, revision::TIMING_FILE};
+use studio_project::{
+    checkpoint::Checkpoints,
+    revision::{SLIDES_FILE, TIMING_FILE},
+};
 use studio_sdk::CompatibilityManifest;
 
 /// The timing generation a candidate's worker plays its own `timeline.json` under; no
@@ -302,6 +305,28 @@ pub fn run_candidate_validation(
             );
         }
     };
+    // The candidate's slides document is refused whole, like the session refuses it,
+    // before anything is compiled.
+    let candidate_slides = match std::fs::read_to_string(restored.project.root.join(SLIDES_FILE))
+        .map_err(|error| error.to_string())
+        .and_then(|json| crate::slides::SlidesDoc::parse(&json))
+    {
+        Ok(doc) => Some(doc),
+        Err(_) if !restored.project.root.join(SLIDES_FILE).exists() => None,
+        Err(reason) => {
+            return fail(
+                FailureKind::Source,
+                ValidationStage::Capture,
+                format!("{SLIDES_FILE} is invalid: {reason}"),
+                None,
+            );
+        }
+    };
+    let slides_changed = captured
+        .changes()
+        .entries
+        .iter()
+        .any(|change| change.path.as_str() == SLIDES_FILE);
     let environment =
         match CompileEnvironment::resolve(&config.sdk, &config.compatibility, &config.builds) {
             Ok(environment) => environment,
@@ -430,6 +455,29 @@ pub fn run_candidate_validation(
             report,
             staged: None,
         };
+    }
+    // Stops the agent wrote must land on frames the candidate plays. A code edit that
+    // leaves the person's own stops unresolved is not refused: the Slides tab shows them.
+    if slides_changed && let (Some(doc), Some(timeline)) = (&candidate_slides, &timeline) {
+        let (_, problems) = crate::slides::resolve::resolve(doc, timeline);
+        let unresolved: Vec<String> = problems
+            .iter()
+            // An old worker is the SDK's problem, not the edit's.
+            .filter(|problem| matches!(problem, crate::slides::SlidesProblem::Unresolved { .. }))
+            .map(ToString::to_string)
+            .collect();
+        if !unresolved.is_empty() {
+            drop(worker);
+            return fail(
+                FailureKind::Source,
+                ValidationStage::Timeline,
+                format!(
+                    "{SLIDES_FILE} has stops the video does not play: {}",
+                    unresolved.join("; ")
+                ),
+                Some(identity),
+            );
+        }
     }
     let staged = timeline
         .ok_or_else(|| "compiled timeline was not probed".to_owned())

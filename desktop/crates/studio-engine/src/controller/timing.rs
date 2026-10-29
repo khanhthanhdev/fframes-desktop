@@ -14,6 +14,7 @@ use crate::{
         doc::code_scenes,
         edits::{self, ResolvedClip},
         file::{self, WriteError},
+        history::RunTimeDoc,
     },
 };
 use fframes_studio_protocol::PreviewTimelineResponse;
@@ -77,6 +78,8 @@ impl Controller {
         if state.is_current_build(tag) || promoted {
             let generation = self.state().generation();
             self.timing.learn_scenes(generation, code_scenes(timeline));
+            // The layout the person sees, which the slide stops resolve against.
+            self.slides.learn_layout(generation, timeline);
         }
     }
 
@@ -98,8 +101,9 @@ impl Controller {
             generation: self.timing.generation(),
             timing_json: self.timing.timing_json(),
             clips: self.timeline_clips(),
-            can_undo: self.timing.history.can_undo() && !self.timing.history.in_gesture(),
-            can_redo: self.timing.history.can_redo() && !self.timing.history.in_gesture(),
+            // One history for the timing and slides documents.
+            can_undo: self.run_time_history.can_undo() && !self.run_time_history.in_gesture(),
+            can_redo: self.run_time_history.can_redo() && !self.run_time_history.in_gesture(),
             editing: self.timing_mutation(),
             notice: self.timing.notice().map(str::to_owned),
         }
@@ -136,39 +140,83 @@ impl Controller {
             }
             TimelineCommand::BeginGesture => {
                 self.require_timing_mutation()?;
+                self.refuse_other_gesture(true)?;
                 let doc = self.timing.doc().map_err(EngineError::Diagnostic)?.clone();
-                self.timing.history.begin_gesture(&doc);
+                self.run_time_history
+                    .begin_gesture(&RunTimeDoc::Timing(doc));
                 Ok(())
             }
             TimelineCommand::EndGesture => self.end_timeline_gesture(),
             TimelineCommand::Undo | TimelineCommand::Redo => {
-                self.require_timing_mutation()?;
-                if self.timing.history.in_gesture() {
-                    return Err(EngineError::Diagnostic(
-                        "Finish the drag before undoing a timeline edit".into(),
-                    ));
-                }
-                let current = self.timing.doc().map_err(EngineError::Diagnostic)?.clone();
-                let next = if command == TimelineCommand::Undo {
-                    self.timing.history.undo(&current)
-                } else {
-                    self.timing.history.redo(&current)
-                };
-                let Some(next) = next else {
-                    return Err(EngineError::Diagnostic(
-                        match (command, self.timing.notice()) {
-                            (_, Some(notice)) => notice.to_owned(),
-                            (TimelineCommand::Undo, None) => {
-                                "There is no timeline edit to undo".into()
-                            }
-                            _ => "There is no timeline edit to redo".into(),
-                        },
-                    ));
-                };
-                self.timing.set_doc(next);
-                self.write_timing()
+                self.undo_run_time(command == TimelineCommand::Redo)
             }
         }
+    }
+
+    /// Undoes (or redoes) the latest step of the shared history, a timing or a slides
+    /// gesture, and writes the document it changes.
+    fn undo_run_time(&mut self, redo: bool) -> Result<(), EngineError> {
+        let next = if redo {
+            self.run_time_history.peek_redo()
+        } else {
+            self.run_time_history.peek_undo()
+        };
+        let slides = next.is_some_and(RunTimeDoc::is_slides);
+        if slides {
+            self.require_slides_mutation()?;
+        } else {
+            self.require_timing_mutation()?;
+        }
+        if self.run_time_history.in_gesture() {
+            return Err(EngineError::Diagnostic(
+                "Finish the drag before undoing a timeline edit".into(),
+            ));
+        }
+        let current = if slides {
+            RunTimeDoc::Slides(self.slides.doc().map_err(EngineError::Diagnostic)?.clone())
+        } else {
+            RunTimeDoc::Timing(self.timing.doc().map_err(EngineError::Diagnostic)?.clone())
+        };
+        let next = if redo {
+            self.run_time_history.redo(&current)
+        } else {
+            self.run_time_history.undo(&current)
+        };
+        match next {
+            None => Err(EngineError::Diagnostic(
+                match (redo, self.timing.notice().or(self.slides.notice())) {
+                    (_, Some(notice)) => notice.to_owned(),
+                    (false, None) => "There is no timeline edit to undo".into(),
+                    (true, None) => "There is no timeline edit to redo".into(),
+                },
+            )),
+            Some(RunTimeDoc::Timing(doc)) => {
+                self.timing.set_doc(doc);
+                self.write_timing()
+            }
+            Some(RunTimeDoc::Slides(doc)) => {
+                self.slides.set_doc(doc);
+                self.write_slides()
+            }
+        }
+    }
+
+    /// Refuses an edit of the timing (`timing`) or the slides document while a drag of
+    /// the other one runs: its steps would fall into that drag's undo step.
+    pub(super) fn refuse_other_gesture(&self, timing: bool) -> Result<(), EngineError> {
+        match self.run_time_history.gesture() {
+            Some(start) if start.is_timing() != timing => Err(EngineError::Diagnostic(
+                "Finish the drag before making another edit".into(),
+            )),
+            _ => Ok(()),
+        }
+    }
+
+    /// Reloads the timing document after an outside change and forgets its undo steps.
+    fn reload_timing(&mut self, reason: String) {
+        let root = self.project.root.clone();
+        self.timing.reload(&root, reason);
+        self.run_time_history.clear_where(RunTimeDoc::is_timing);
     }
 
     fn edit_timeline(
@@ -176,7 +224,8 @@ impl Controller {
         edit: impl FnOnce(&mut Vec<ResolvedClip>) -> Result<(), String>,
     ) -> Result<(), EngineError> {
         self.require_timing_mutation()?;
-        if self.timing.history.gesture_aborted() {
+        self.refuse_other_gesture(true)?;
+        if self.run_time_history.gesture_aborted() {
             return Err(EngineError::Diagnostic(CHANGED_OUTSIDE.into()));
         }
         let generation = self.state().generation();
@@ -190,9 +239,9 @@ impl Controller {
         if next == doc {
             return Ok(());
         }
-        self.timing.history.record(&doc);
+        self.run_time_history.record(&RunTimeDoc::Timing(doc));
         self.timing.set_doc(next);
-        if self.timing.history.in_gesture() {
+        if self.run_time_history.in_gesture() {
             Ok(())
         } else {
             self.write_timing()
@@ -200,19 +249,23 @@ impl Controller {
     }
 
     fn end_timeline_gesture(&mut self) -> Result<(), EngineError> {
-        if !self.timing.history.in_gesture() {
+        if !self
+            .run_time_history
+            .gesture()
+            .is_some_and(RunTimeDoc::is_timing)
+        {
             return Ok(());
         }
         if let TimingEditing::Disabled(reason) = self.timing_mutation() {
             // Nothing of the gesture is written: the file stands, and the session
             // goes back to it.
-            let root = self.project.root.clone();
-            self.timing.history.end_gesture(&TimingDoc::default());
-            self.timing.reload(&root, reason.clone());
+            self.run_time_history
+                .end_gesture(&RunTimeDoc::Timing(TimingDoc::default()));
+            self.reload_timing(reason.clone());
             return Err(EngineError::Diagnostic(reason));
         }
         let doc = self.timing.doc().map_err(EngineError::Diagnostic)?.clone();
-        if self.timing.history.end_gesture(&doc) {
+        if self.run_time_history.end_gesture(&RunTimeDoc::Timing(doc)) {
             self.write_timing()
         } else {
             Ok(())
@@ -256,7 +309,7 @@ impl Controller {
                     let _ = file::recover(&root);
                 }
                 let reason = error.to_string();
-                self.timing.reload(&root, reason.clone());
+                self.reload_timing(reason.clone());
                 let _ = self.reconcile();
                 Err(EngineError::Diagnostic(reason))
             }
@@ -282,8 +335,7 @@ impl Controller {
             } else {
                 CHANGED_OUTSIDE
             };
-            let root = self.project.root.clone();
-            self.timing.reload(&root, reason.into());
+            self.reload_timing(reason.into());
         }
     }
 }

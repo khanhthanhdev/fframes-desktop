@@ -210,6 +210,9 @@ def make_pcm(path):
 while True:
     request = receive()
     kind = request["type"]
+    if CONFIG.get("request_log"):
+        with open(CONFIG["request_log"], "a") as handle:
+            handle.write(json.dumps(request) + "\n")
     if CONFIG.get("delay_ms"):
         time.sleep(CONFIG["delay_ms"] / 1000)
     if kind == "Hello":
@@ -219,7 +222,8 @@ while True:
             sdk_version=arg("--sdk-version", "test"),
             backend=CONFIG.get("backend") or {"skia-cpu": "skia-cpu", "gpu": "skia-gpu"}.get(arg("--renderer"), "cpu"),
             capabilities=["preview_identity_v1", "scaled_frame_v1", "inspect_v1", "prepared_audio_v1"]
-            + (["set_timing_v1"] if TIMING else []) + (["set_props_v1"] if PROPS is not None else []),
+            + (["set_timing_v1"] if TIMING else []) + (["set_props_v1"] if PROPS is not None else [])
+            + (["suggested_stops_v1"] if "suggestions" in CONFIG else []),
             capability_gaps=CONFIG.get("capability_gaps", []), max_frame_bytes=64 * 1024 * 1024, max_control_bytes=1024 * 1024,
             max_preview_width=MAX_WIDTH, max_preview_height=MAX_HEIGHT, audio_sample_rates=[48000],
             audio_sample_format="f32le_stereo_interleaved"))
@@ -311,6 +315,11 @@ while True:
         env = request["envelope"]
         found = [d for d in CONFIG.get("inspect", []) if d["frame"] in request["frames"]]
         send(dict(type="Inspect", envelope=env, diagnostics=found, truncated=bool(CONFIG.get("truncated"))))
+    elif kind == "SuggestStops":
+        time.sleep(CONFIG.get("suggest_delay_ms", 0) / 1000)
+        send(dict(type="SuggestedStops", envelope=request["envelope"],
+                  timing_generation=request["timing_generation"],
+                  suggestions=dict(stops=CONFIG.get("suggestions", []), truncated=False)))
     elif kind == "PrepareAudio":
         env = request["envelope"]
         nonce = "%x" % (int(time.time() * 1e6) & 0xFFFFFFFFFFFF)

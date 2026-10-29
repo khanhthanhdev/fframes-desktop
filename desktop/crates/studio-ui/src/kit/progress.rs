@@ -13,6 +13,7 @@ use gpui::{
     App, Hsla, IntoElement, ParentElement, Pixels, RenderOnce, Styled, Window, div,
     prelude::FluentBuilder, px,
 };
+use studio_theme::{TextStyle, Theme};
 
 #[derive(IntoElement)]
 pub struct CircularProgress {
@@ -28,16 +29,18 @@ pub struct CircularProgress {
 }
 
 impl CircularProgress {
-    pub fn new(size: Pixels, stroke: Pixels, track: Hsla, fill: Hsla) -> Self {
+    /// A `ctl_active` track with the `accent` arc, `size` across and `stroke` thick.
+    pub fn new(theme: &Theme, size: Pixels, stroke: Pixels) -> Self {
+        let colors = theme.colors;
         Self {
             progress: Some(0.),
             size,
             stroke,
-            track,
-            fill,
+            track: colors.ctl_active.into(),
+            fill: colors.accent.into(),
             label: false,
-            text_color: fill,
-            text_size: px(12.),
+            text_color: colors.text_1.into(),
+            text_size: px(TextStyle::Label.size()),
         }
     }
 
@@ -54,10 +57,9 @@ impl CircularProgress {
         self
     }
 
-    /// The centred `%` readout `ProgressRing` draws inside the ring.
-    pub fn label(mut self, color: Hsla, size: Pixels) -> Self {
+    /// The centred `%` readout `ProgressRing` draws inside the ring, `size` high.
+    pub fn label(mut self, size: Pixels) -> Self {
         self.label = true;
-        self.text_color = color;
         self.text_size = size;
         self
     }
@@ -155,8 +157,8 @@ mod tests {
 
     #[test]
     fn indeterminate_progress_has_no_percentage_label() {
-        let ring = CircularProgress::new(px(80.), px(6.), gpui::black(), gpui::white())
-            .label(gpui::white(), px(14.))
+        let ring = CircularProgress::new(&Theme::dark(), px(80.), px(6.))
+            .label(px(14.))
             .indeterminate();
         assert_eq!(ring.percentage_label(), None);
     }
@@ -164,8 +166,8 @@ mod tests {
     #[test]
     fn determinate_progress_labels_only_measured_progress() {
         for (fraction, expected) in [(0., "0%"), (0.25, "25%"), (1., "100%")] {
-            let ring = CircularProgress::new(px(80.), px(6.), gpui::black(), gpui::white())
-                .label(gpui::white(), px(14.))
+            let ring = CircularProgress::new(&Theme::dark(), px(80.), px(6.))
+                .label(px(14.))
                 .progress(fraction);
             assert_eq!(ring.percentage_label().as_deref(), Some(expected));
         }

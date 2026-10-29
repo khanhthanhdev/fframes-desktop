@@ -34,3 +34,13 @@ pub fn ratio(foreground: Rgba, background: Rgba) -> f32 {
     let (hi, lo) = if a > b { (a, b) } else { (b, a) };
     (hi + 0.05) / (lo + 0.05)
 }
+
+/// CIELAB lightness L* (0 to 100) of `foreground` painted over `background`.
+pub fn lightness(foreground: Rgba, background: Rgba) -> f32 {
+    let y = luminance(composite(foreground, background));
+    if y > 216. / 24389. {
+        116. * y.cbrt() - 16.
+    } else {
+        y * 24389. / 27.
+    }
+}

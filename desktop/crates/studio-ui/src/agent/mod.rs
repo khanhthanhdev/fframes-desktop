@@ -29,6 +29,7 @@ mod setup_page;
 pub mod syntax;
 pub mod todo_panel;
 pub mod transcript;
+pub mod ui;
 mod widgets;
 
 pub use setup_page::AgentSetupPage;
@@ -128,10 +129,9 @@ use std::{
 };
 use studio_engine::agent::LaunchContainment;
 use studio_engine::agent::{
-    AdapterReadiness, AgentWorkflow, ChangeCard, ConflictView, HandoffState, HistoryEntry,
-    NoticeLevel, OutcomeKind, PermissionAnswer, PermissionCard, PermissionRef, PermissionState,
-    Row, RowKind, StructuredError, TaskPhase, ToolCard, UndoView, UserSource, ValidationCard,
-    WorkflowSnapshot,
+    AdapterReadiness, AgentWorkflow, ChangeCard, ConflictView, HandoffState, NoticeLevel,
+    PermissionAnswer, PermissionCard, PermissionRef, PermissionState, Row, RowKind,
+    StructuredError, TaskPhase, ToolCard, UndoView, UserSource, ValidationCard, WorkflowSnapshot,
 };
 use studio_engine::containment::OwnershipPolicy;
 use studio_engine::providers::host::{self, AdapterFields, AdapterFile, McpChoice};
@@ -143,23 +143,19 @@ use studio_theme::{METRICS, TextStyle, Theme, text_style};
 use transcript::scroll::{self, OVERDRAW_PX};
 
 use crate::kit::{
-    Badge, Card, CollapsibleSection, EditorButton, Icon, IconButton, IconButtonSize, Menu,
-    MenuItem, MenuState, Notice, SegmentOption, SegmentedControl, Select, TextInput,
-    TextInputEvent, TextInputState, Toggle, Tone as UiTone, field_row, heading, icon, label,
-    selectable,
+    Badge, Button, Card, Chip, Emphasis, EmptyState, FormField, Icon, IconButton, IconButtonSize,
+    Menu, MenuItem, MenuState, Notice, SegmentOption, SegmentedControl, Select, StatusDot,
+    TextInput, TextInputEvent, TextInputState, Toggle, Tone as UiTone, label, selectable,
 };
 use crate::probe::BoundsProbe;
 
-/// Height of a reasoning row's header, with or without the "Thinking…" badge.
-const THOUGHT_HEADER_H: f32 = 20.;
 /// The least the transcript is given, however many cards wait above the composer.
 const TRANSCRIPT_MIN_H: f32 = 140.;
 /// The least while a question or permission card waits: the card needs the room more.
 const TRANSCRIPT_MIN_ANSWERING_H: f32 = 72.;
-/// Height of a one-line activity row (tool call, automatic answer) in the transcript.
-const ACTIVITY_ROW_H: f32 = 24.;
-/// Height of the header bar holding the tabs.
-const HEADER_H: f32 = 46.;
+/// The before and after evidence thumbnails in the task details.
+const EVIDENCE_THUMB_W: f32 = 128.;
+const EVIDENCE_THUMB_H: f32 = 72.;
 
 /// Events the shell reacts to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -204,13 +200,6 @@ enum Tab {
     Chat,
     History,
     Project,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Tone {
-    Normal,
-    Primary,
-    Danger,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -265,7 +254,7 @@ impl ConfigMenu {
             .map(|v| MenuItem::new(v.name.clone(), &v.value == current))
             .collect();
         Some(Self {
-            state: MenuState::new(gpui::point(px(0.), px(0.)), &items),
+            state: MenuState::new(gpui::Point::default(), &items),
             items,
             values: values.iter().map(|v| v.value.clone()).collect(),
         })
@@ -350,6 +339,14 @@ pub struct ConversationPanel {
     retired_evidence_images: Vec<Arc<gpui::RenderImage>>,
     /// Reasoning rows the reader expanded (presentation state only).
     thoughts_open: std::collections::HashSet<u64>,
+    /// Long user messages the reader expanded.
+    messages_open: std::collections::HashSet<u64>,
+    /// The runs of activity among the shown rows, and the runs the reader opened or closed
+    /// by hand (by the run's first row id).
+    activity: Vec<cards::ActivitySpan>,
+    activity_open: HashMap<u64, bool>,
+    /// The reader is far enough from the newest rows for the jump pill.
+    far_from_end: Rc<Cell<bool>>,
     /// The workflow's chat generation the shown rows belong to.
     chat: u64,
     /// One menu per select-type agent option, kept across frames so each trigger
@@ -390,13 +387,21 @@ impl ConversationPanel {
         list.set_follow_mode(FollowMode::Tail);
         let viewport = Rc::new(Cell::new(None));
         let seen = viewport.clone();
+        let far_from_end = Rc::new(Cell::new(false));
         let panel = cx.entity().downgrade();
         list.set_scroll_handler(move |event, _, cx| {
             seen.set(Some(event.visible_range.start));
-            // Scrolled towards the top: page in earlier history.
+            // Scrolled towards the top: page in earlier history. The jump pill shows or
+            // hides when the reader crosses its distance from the newest rows.
             let panel = panel.clone();
             cx.defer(move |cx| {
-                let _ = panel.update(cx, |panel, _| panel.maybe_request_page());
+                let _ = panel.update(cx, |panel, cx| {
+                    panel.maybe_request_page();
+                    let far = scroll::distance_from_bottom(&panel.list) > scroll::JUMP_DISTANCE_PX;
+                    if far != panel.far_from_end.get() {
+                        cx.notify();
+                    }
+                });
             });
         });
         // The composer and the session list report their parts' bounds into the same map
@@ -450,6 +455,10 @@ impl ConversationPanel {
             evidence_images: HashMap::new(),
             retired_evidence_images: Vec::new(),
             thoughts_open: std::collections::HashSet::new(),
+            messages_open: std::collections::HashSet::new(),
+            activity: Vec::new(),
+            activity_open: HashMap::new(),
+            far_from_end,
             chat: 0,
             config_menus: HashMap::new(),
             open_config: None,
@@ -528,6 +537,9 @@ impl ConversationPanel {
         self.page.done.lock().take();
         self.replies = ReplyTracker::default();
         self.thoughts_open.clear();
+        self.messages_open.clear();
+        self.activity.clear();
+        self.activity_open.clear();
     }
 
     pub fn workflow(&self) -> Option<&Arc<AgentWorkflow>> {
@@ -857,29 +869,6 @@ fn banner_tone(phase: TaskPhase) -> UiTone {
     }
 }
 
-fn outcome_style(kind: OutcomeKind) -> (UiTone, &'static str) {
-    match kind {
-        OutcomeKind::Accepted => (UiTone::Success, "Accepted"),
-        OutcomeKind::Undone => (UiTone::Success, "Undone"),
-        OutcomeKind::AwaitingReview => (UiTone::Warning, "Waiting for your review"),
-        OutcomeKind::Conflict => (UiTone::Danger, "Conflict"),
-        OutcomeKind::Failed => (UiTone::Danger, "Failed"),
-        OutcomeKind::Cancelled => (UiTone::Neutral, "Stopped"),
-        OutcomeKind::Interrupted => (UiTone::Warning, "Interrupted"),
-        OutcomeKind::Discarded => (UiTone::Neutral, "Discarded"),
-    }
-}
-
-fn tool_badge(status: Option<ToolStatus>) -> (&'static str, UiTone) {
-    match status {
-        Some(ToolStatus::Pending) => ("pending", UiTone::Neutral),
-        Some(ToolStatus::InProgress) => ("running", UiTone::Info),
-        Some(ToolStatus::Completed) => ("done", UiTone::Success),
-        Some(ToolStatus::Failed) => ("failed", UiTone::Danger),
-        None => ("…", UiTone::Neutral),
-    }
-}
-
 /// The verb and glyph of a tool call in the activity log, from the ACP tool kind the
 /// drivers report (`read`, `edit`, `search`, `execute`, ...).
 fn tool_verb(kind: Option<&str>) -> (&'static str, Icon) {
@@ -908,32 +897,13 @@ fn draft_needs_attention(draft: &studio_engine::agent::DraftNotice) -> bool {
 
 fn line(theme: &Theme, text: impl Into<SharedString>) -> gpui::Div {
     text_style(div(), TextStyle::Small)
-        .text_color(theme.editor.text_2)
+        .text_color(theme.colors.text_2)
         .child(selectable(text))
 }
 
 /// `Label` style text the reader can select and copy.
 fn label_text(text: impl Into<SharedString>) -> gpui::Div {
     text_style(div(), TextStyle::Label).child(selectable(text))
-}
-
-fn history_line(theme: &Theme, entry: &HistoryEntry) -> gpui::Div {
-    div()
-        .flex()
-        .flex_col()
-        .child(label_text(format!(
-            "{} · {} file{} · {}{}",
-            entry.kind,
-            entry.files,
-            if entry.files == 1 { "" } else { "s" },
-            &entry.published[..entry.published.len().min(12)],
-            entry
-                .undoes
-                .as_ref()
-                .map(|u| format!(" · undoes {}", &u[..u.len().min(8)]))
-                .unwrap_or_default()
-        )))
-        .child(line(theme, entry.summary.clone()))
 }
 
 impl Render for ConversationPanel {
@@ -950,35 +920,34 @@ impl Render for ConversationPanel {
             let _ = window.drop_image(image);
         }
         let theme = self.theme;
-        let mut root = div()
+        let root = div()
             .id("agent-panel")
             .role(gpui::Role::Group)
             .aria_label("Agent")
             .size_full()
             .flex()
             .flex_col()
-            .text_color(theme.editor.text_1);
+            .text_color(theme.colors.text_1);
         let Some(snapshot) = self.snapshot.clone() else {
             return root
+                .items_center()
+                .justify_center()
                 .p(px(METRICS.space_4))
-                .gap(px(METRICS.space_2))
-                .child(heading(&self.theme, "Agent"))
-                .child(self.line("Open or create a project to work with an agent."))
-                .child(self.line(controls::NO_AGENT_LAUNCHED))
+                .child(ui::panel_empty(
+                    &theme,
+                    TextStyle::Heading,
+                    "Agent",
+                    "Open or create a project to work with an agent.",
+                ))
                 .into_any_element();
         };
         let controls = derive_controls(&snapshot, self.prompt_is_empty(cx), self.sdk_ready);
         self.sync_config_menu();
-        let rail = self
-            .segment_rail()
-            .child(self.tab_item(Tab::Chat, "Chat", cx))
-            .child(self.tab_item(Tab::History, "History", cx))
-            .child(self.tab_item(Tab::Project, "Changes", cx));
         let open_setup = self.icon_button(
             "agent-open-setup",
             Icon::Settings,
             "Agent settings",
-            Tone::Normal,
+            Emphasis::Ghost,
             cx,
             |_, _, cx| cx.emit(PanelEvent::OpenSetup),
         );
@@ -987,7 +956,7 @@ impl Render for ConversationPanel {
                 "agent-new-chat",
                 Icon::Plus,
                 "New chat",
-                Tone::Normal,
+                Emphasis::Ghost,
                 cx,
                 |this, _, cx| {
                     if let Some(w) = this.workflow().cloned() {
@@ -999,65 +968,36 @@ impl Render for ConversationPanel {
                 },
             )
             .disabled(!controls.new_chat);
-        let mut header = div()
-            .flex()
-            .flex_col()
-            .flex_none()
-            .border_b_1()
-            .border_color(theme.editor.line)
-            .child(
-                div()
-                    .h(px(HEADER_H))
-                    .flex()
-                    .items_center()
-                    .justify_between()
-                    .gap(px(4.))
-                    .px(px(12.))
-                    // The sidebar's Agent tab names the panel, so the row holds the
-                    // sub-tabs and the panel's own buttons.
-                    .child(rail)
-                    .child(
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap(px(4.))
-                            .child(new_chat)
-                            .child(open_setup),
-                    ),
-            );
-        if let Some(notice) = self.notice.clone() {
-            header = header.child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(4.))
-                    .px(px(8.))
-                    .pb(px(8.))
-                    .child(div().flex_1().min_w_0().child(Notice::new(
-                        "agent-notice",
-                        UiTone::Warning,
-                        notice,
-                    )))
-                    .child(self.icon_button(
-                        "agent-dismiss-notice",
-                        Icon::X,
-                        "×",
-                        Tone::Normal,
-                        cx,
-                        |this, _, cx| {
-                            this.notice = None;
-                            cx.notify();
+        // The sidebar's Agent tab names the panel, so the header holds the sub-tabs and the
+        // panel's own buttons.
+        let header = ui::PanelHeader::new(&theme, self.tabs(cx))
+            .action(new_chat)
+            .action(open_setup);
+        let notice = self.notice.clone().map(|notice| {
+            let entity = cx.entity();
+            div()
+                .flex_none()
+                .px(px(METRICS.space_3))
+                .pt(px(METRICS.space_2))
+                .child(
+                    Notice::new("agent-notice", UiTone::Warning, notice).on_dismiss(
+                        move |_, cx| {
+                            entity.update(cx, |this, cx| {
+                                this.notice = None;
+                                cx.notify();
+                            });
                         },
-                    )),
-            );
-        }
-        root = root.child(header);
+                    ),
+                )
+        });
         let body = match self.tab {
             Tab::Chat => self.chat_tab(snapshot, &controls, cx),
             Tab::History => self.history_tab(),
             Tab::Project => self.project_tab(snapshot, &controls, cx),
         };
-        root.child(body)
+        root.child(header)
+            .children(notice)
+            .child(body)
             .children(self.render_config_menu(cx))
             .into_any_element()
     }
@@ -1215,38 +1155,23 @@ mod presentation_tests {
 
     #[test]
     fn outcomes_keep_their_titles_and_tones() {
+        use studio_engine::agent::OutcomeKind;
+        use ui::outcome_style;
         assert_eq!(
             outcome_style(OutcomeKind::Accepted),
-            (UiTone::Success, "Accepted")
+            ("Accepted", UiTone::Success)
         );
         assert_eq!(
             outcome_style(OutcomeKind::Conflict),
-            (UiTone::Danger, "Conflict")
+            ("Conflict", UiTone::Danger)
         );
         assert_eq!(
             outcome_style(OutcomeKind::Cancelled),
-            (UiTone::Neutral, "Stopped")
+            ("Stopped", UiTone::Neutral)
         );
         assert_eq!(
             outcome_style(OutcomeKind::AwaitingReview),
-            (UiTone::Warning, "Waiting for your review")
+            ("In review", UiTone::Warning)
         );
-    }
-
-    #[test]
-    fn tool_status_badges_keep_their_words() {
-        assert_eq!(
-            tool_badge(Some(ToolStatus::InProgress)),
-            ("running", UiTone::Info)
-        );
-        assert_eq!(
-            tool_badge(Some(ToolStatus::Completed)),
-            ("done", UiTone::Success)
-        );
-        assert_eq!(
-            tool_badge(Some(ToolStatus::Failed)),
-            ("failed", UiTone::Danger)
-        );
-        assert_eq!(tool_badge(None), ("…", UiTone::Neutral));
     }
 }

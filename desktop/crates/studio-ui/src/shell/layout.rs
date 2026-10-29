@@ -3,8 +3,7 @@
 //! the full-width timeline card and its height grip), then the status bar.
 
 use gpui::{
-    Context, CursorStyle, DispatchPhase, InteractiveElement, IntoElement, MouseButton,
-    MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Render, StyleRefinement, Styled,
+    Axis, Context, InteractiveElement, IntoElement, ParentElement, Render, StyleRefinement, Styled,
     Window, WindowControlArea, canvas, div, prelude::FluentBuilder, px,
 };
 use studio_theme::METRICS;
@@ -13,7 +12,7 @@ use super::StudioShell;
 use super::keymap::WORKSPACE;
 use super::sections::{Sections, box_probe};
 use crate::frame_image::create_render_image;
-use crate::kit::{Card, windows_caption_controls};
+use crate::kit::{Card, ResizeGrip, windows_caption_controls};
 
 impl Render for StudioShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -26,6 +25,9 @@ impl Render for StudioShell {
         if self.overflow_open {
             self.sync_overflow();
         }
+        self.sync_slides(cx);
+        self.sync_deck(cx);
+        self.sync_present_window(window, cx);
         if self.clear_images {
             self.images.clear(window);
             self.clear_images = false;
@@ -184,10 +186,29 @@ impl Render for StudioShell {
         let theme = self.theme;
         let gutter = px(METRICS.gutter);
         let project_open = self.presentation.project.is_some();
+        // A drag ends when its grip goes away: only the grip's tracker hears the release.
+        let workspace_shown =
+            self.create_choice.is_none() && self.onboarding.is_none() && !self.export_panel.open;
+        if !workspace_shown
+            || self.presenting.is_some()
+            || !project_open && matches!(self.resize, Some(Resize::Timeline { .. }))
+        {
+            self.resize = None;
+        }
         let sections = self
             .sections
             .get_or_insert_with(|| Sections::new(cx))
             .clone();
+        if self.presenting.is_some() {
+            // The rest of the shell is hidden while presenting.
+            let player = div()
+                .flex_1()
+                .min_w_0()
+                .flex()
+                .child(sections.player.clone())
+                .into_any_element();
+            return self.render_presenting_root(player, cx);
+        }
         // The cached sections keep their boxes here: a cached view is laid out by this
         // style alone.
         let windows = cfg!(target_os = "windows");
@@ -297,7 +318,7 @@ impl Render for StudioShell {
                         .w_full()
                         .h(px(split.timeline_height))
                         .child(
-                            Card::editor(&self.theme)
+                            Card::raised(&self.theme)
                                 .size_full()
                                 .overflow_hidden()
                                 .child(
@@ -337,10 +358,9 @@ impl Render for StudioShell {
                     cx.stop_propagation();
                 }
             }))
-            .children(self.resize.map(|_| self.render_resize_tracking(cx)))
             .child(self.render_edit_tracking())
-            .bg(theme.editor.window)
-            .text_color(theme.editor.text_1)
+            .bg(theme.colors.window)
+            .text_color(theme.colors.text_1)
             .flex()
             .flex_col()
             .child(header)
@@ -356,7 +376,9 @@ impl Render for StudioShell {
                     .children(notices)
                     // The setup and export replace the whole row: the setup's Agent step
                     // draws the same panel entity, which renders once per frame.
-                    .child(if self.onboarding.is_some() {
+                    .child(if let Some(template) = self.create_choice {
+                        self.render_create(template, cx)
+                    } else if self.onboarding.is_some() {
                         self.render_onboarding(cx)
                     } else if self.export_panel.open {
                         self.render_export(cx)
@@ -365,6 +387,7 @@ impl Render for StudioShell {
                     }),
             )
             .children(status_bar)
+            .into_any_element()
     }
 }
 
@@ -388,104 +411,87 @@ impl StudioShell {
         sidebar_width(self.viewport[0] - 2. * METRICS.gutter, preferred)
     }
 
-    /// While a grip is held, follows the pointer through the whole window, including past
-    /// its edges, where element listeners stop firing.
-    fn render_resize_tracking(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let entity = cx.entity();
-        canvas(
-            |_, _, _| {},
-            move |_, _, window, _| {
-                let moved = entity.clone();
-                window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                    if phase != DispatchPhase::Capture {
-                        return;
-                    }
-                    moved.update(cx, |shell, cx| {
-                        // A release outside the window never arrives; a move without the
-                        // button ends the drag instead.
-                        if event.pressed_button != Some(MouseButton::Left) {
-                            shell.resize = None;
-                            cx.notify();
-                            return;
-                        }
-                        match shell.resize {
-                            Some(Resize::Timeline {
-                                start_y,
-                                start_height,
-                            }) => {
-                                let preferred =
-                                    start_height - (f32::from(event.position.y) - start_y);
-                                let height = shell.split_for(preferred).timeline_height;
-                                if shell.timeline_height != Some(height) {
-                                    shell.timeline_height = Some(height);
-                                    cx.notify();
-                                }
-                            }
-                            // The grip is on the sidebar's left edge: moving left widens it.
-                            Some(Resize::Sidebar {
-                                start_x,
-                                start_width,
-                            }) => {
-                                let preferred =
-                                    start_width - (f32::from(event.position.x) - start_x);
-                                let width = shell.sidebar_width_for(preferred);
-                                if shell.sidebar_width != Some(width) {
-                                    shell.sidebar_width = Some(width);
-                                    cx.notify();
-                                }
-                            }
-                            None => {}
-                        }
-                    });
-                });
-                let released = entity.clone();
-                window.on_mouse_event(move |event: &MouseUpEvent, phase, _, cx| {
-                    if phase == DispatchPhase::Capture && event.button == MouseButton::Left {
-                        released.update(cx, |shell, cx| {
-                            shell.resize = None;
-                            cx.notify();
-                        });
-                    }
-                });
-            },
-        )
-        .absolute()
-        .size_0()
-        .into_any_element()
+    /// Moves the held grip's split to the pointer's `position` along the grip's axis.
+    fn drag_resize(&mut self, position: f32, cx: &mut Context<Self>) {
+        match self.resize {
+            Some(Resize::Timeline {
+                start_y,
+                start_height,
+            }) => {
+                let preferred = start_height - (position - start_y);
+                let height = self.split_for(preferred).timeline_height;
+                if self.timeline_height != Some(height) {
+                    self.timeline_height = Some(height);
+                    cx.notify();
+                }
+            }
+            // The grip is on the sidebar's left edge: moving left widens it.
+            Some(Resize::Sidebar {
+                start_x,
+                start_width,
+            }) => {
+                let preferred = start_width - (position - start_x);
+                let width = self.sidebar_width_for(preferred);
+                if self.sidebar_width != Some(width) {
+                    self.sidebar_width = Some(width);
+                    cx.notify();
+                }
+            }
+            None => {}
+        }
     }
 
-    /// The handle on the sidebar's left edge that drags its width.
+    /// A `ResizeGrip` wired to the shell's split: `start` turns the press position into the
+    /// `Resize` it begins.
+    fn resize_grip(
+        &self,
+        id: &'static str,
+        axis: Axis,
+        dragging: bool,
+        start: impl Fn(f32) -> Resize + 'static,
+        cx: &mut Context<Self>,
+    ) -> ResizeGrip {
+        let (started, moved, ended) = (cx.entity(), cx.entity(), cx.entity());
+        ResizeGrip::new(&self.theme, id, axis)
+            .dragging(dragging)
+            .on_drag_start(move |position, _, cx| {
+                started.update(cx, |shell, cx| {
+                    shell.resize = Some(start(f32::from(position)));
+                    // Paints the grip's tracker that follows the pointer.
+                    cx.notify();
+                });
+            })
+            .on_drag(move |position, _, cx| {
+                moved.update(cx, |shell, cx| shell.drag_resize(f32::from(position), cx));
+            })
+            .on_drag_end(move |_, cx| {
+                ended.update(cx, |shell, cx| {
+                    if shell.resize.take().is_some() {
+                        cx.notify();
+                    }
+                });
+            })
+    }
+
+    /// The handle on the sidebar's left edge that drags its width, centred in the gutter.
     fn render_agent_grip(&self, width: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let dragging = matches!(self.resize, Some(Resize::Sidebar { .. }));
         div()
-            .id("agent-resize-handle")
             .absolute()
             .top_0()
             .bottom_0()
-            .left(px(-11.))
-            .w(px(14.))
-            .cursor(CursorStyle::ResizeColumn)
+            .left(px(GRIP_OFFSET))
             .flex()
-            .items_center()
-            .justify_center()
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
-                    shell.resize = Some(Resize::Sidebar {
-                        start_x: f32::from(event.position.x),
-                        start_width: width,
-                    });
-                    // Paints the tracker that listens for the release.
-                    cx.notify();
-                    cx.stop_propagation();
-                }),
-            )
-            .child(
-                div()
-                    .w(px(4.))
-                    .h(px(36.))
-                    .rounded(px(2.))
-                    .bg(self.theme.editor.line),
-            )
+            .child(self.resize_grip(
+                "agent-resize-handle",
+                Axis::Horizontal,
+                dragging,
+                move |start_x| Resize::Sidebar {
+                    start_x,
+                    start_width: width,
+                },
+                cx,
+            ))
             .child(grip_probe(cx, |shell, measured| {
                 shell.agent_grip_bounds = Some(measured)
             }))
@@ -494,42 +500,33 @@ impl StudioShell {
 
     /// The handle above the timeline that drags its height, as in Cap's editor.
     fn render_resize_grip(&self, timeline_height: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let dragging = matches!(self.resize, Some(Resize::Timeline { .. }));
         div()
-            .id("timeline-resize-handle")
             .absolute()
             .left_0()
             .right_0()
-            .top(px(-11.))
-            .h(px(14.))
-            .cursor(CursorStyle::ResizeRow)
+            .top(px(GRIP_OFFSET))
             .flex()
-            .justify_center()
-            .pt(px(5.))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |shell, event: &MouseDownEvent, _, cx| {
-                    shell.resize = Some(Resize::Timeline {
-                        start_y: f32::from(event.position.y),
-                        start_height: timeline_height,
-                    });
-                    // Paints the tracker that listens for the release.
-                    cx.notify();
-                    cx.stop_propagation();
-                }),
-            )
-            .child(
-                div()
-                    .w(px(36.))
-                    .h(px(4.))
-                    .rounded(px(2.))
-                    .bg(self.theme.editor.line),
-            )
+            .child(self.resize_grip(
+                "timeline-resize-handle",
+                Axis::Vertical,
+                dragging,
+                move |start_y| Resize::Timeline {
+                    start_y,
+                    start_height: timeline_height,
+                },
+                cx,
+            ))
             .child(grip_probe(cx, |shell, measured| {
                 shell.grip_bounds = Some(measured)
             }))
             .into_any_element()
     }
 }
+
+/// Where a grip's hit area starts relative to the edge it drags: centred in the gutter
+/// before that edge.
+const GRIP_OFFSET: f32 = -(METRICS.layout.gutter + METRICS.size.grip_hit) / 2.;
 
 /// Records where a grip was painted, `[left, top, width, height]`, for the telemetry.
 fn grip_probe(
@@ -576,9 +573,6 @@ pub(super) fn sidebar_width(available: f32, preferred: f32) -> f32 {
     preferred.clamp(sidebar_min, sidebar_max)
 }
 
-/// The player's height below which the timeline gives way, as in Cap's editor.
-const PLAYER_MIN_H: f32 = 320.;
-
 /// How the workspace splits between the player and sidebar row and the timeline.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) struct VerticalSplit {
@@ -592,8 +586,9 @@ pub(super) struct VerticalSplit {
 /// they shrink in proportion.
 pub(super) fn vertical_split(available: f32, preferred: f32) -> VerticalSplit {
     let available = available.max(0.);
-    let scale = (available / (PLAYER_MIN_H + METRICS.timeline_min_h)).min(1.);
-    let player_min_height = PLAYER_MIN_H * scale;
+    let player_min_h = METRICS.layout.player_min_h;
+    let scale = (available / (player_min_h + METRICS.timeline_min_h)).min(1.);
+    let player_min_height = player_min_h * scale;
     let timeline_min_height = METRICS.timeline_min_h * scale;
     let timeline_max_height = (available - player_min_height).max(timeline_min_height);
     VerticalSplit {

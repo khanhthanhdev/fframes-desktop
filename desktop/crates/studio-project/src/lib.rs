@@ -8,7 +8,9 @@ pub mod publish;
 pub mod revision;
 pub mod source_index;
 
-pub use lifecycle::{OpenProject, create, import, open, open_for_recovery};
+pub use lifecycle::{
+    OpenProject, ProjectTemplate, create, create_from_template, import, open, open_for_recovery,
+};
 pub use manifest::{Manifest, ProjectError, ProjectId};
 pub use paths::ProjectPath;
 pub use revision::{SourceInventory, SourceRevision};

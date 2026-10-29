@@ -3,14 +3,7 @@
 //! hidden and takes no clicks while the whole video is visible.
 use gpui::{Hsla, ParentElement, Styled, div, prelude::FluentBuilder, px, relative};
 use studio_engine::{TimelineModel, TimelineTransform};
-use studio_theme::{Theme, TrackKind, track_color};
-
-pub(super) const MINIMAP_MAX_WIDTH: f32 = 78.;
-pub(super) const MINIMAP_HEIGHT: f32 = 10.;
-const MINIMAP_BAR_HEIGHT: f32 = 4.;
-const MINIMAP_MIN_CHIP_WIDTH: f32 = 20.;
-/// The grab width of the chip's resize edges.
-const HANDLE_W: f32 = 8.;
+use studio_theme::{METRICS, Theme, TrackKind, track_color};
 
 /// Whether part of the video is outside the view, so the minimap shows.
 pub(super) fn zoomed_in(transform: &TimelineTransform, model: &TimelineModel) -> bool {
@@ -26,7 +19,7 @@ pub(super) fn minimap_chip(
     let total = total.max(0.001);
     let bar_width = bar_width.max(1.);
     let chip_width = ((transform.zoom * bar_width as f64 / total) as f32)
-        .clamp(MINIMAP_MIN_CHIP_WIDTH.min(bar_width), bar_width);
+        .clamp(METRICS.layout.minimap_min_chip_w.min(bar_width), bar_width);
     let max_position = (total - transform.zoom).max(0.001);
     let chip_left = ((transform.position / max_position).clamp(0., 1.) as f32)
         * (bar_width - chip_width).max(0.);
@@ -70,15 +63,17 @@ impl MinimapDrag {
         }
         let (chip_left, chip_width) = minimap_chip(transform, total, bar_width);
         let offset = x - bar_left;
+        // The grab width of the chip's resize edges.
+        let handle = METRICS.layout.minimap_handle_w;
         let kind = if offset < chip_left || offset > chip_left + chip_width {
             transform.set_position(
                 offset as f64 / bar_width as f64 * total - transform.zoom / 2.,
                 model,
             );
             MinimapDragKind::Move
-        } else if offset < chip_left + HANDLE_W {
+        } else if offset < chip_left + handle {
             MinimapDragKind::Left
-        } else if offset > chip_left + chip_width - HANDLE_W {
+        } else if offset > chip_left + chip_width - handle {
             MinimapDragKind::Right
         } else {
             MinimapDragKind::Move
@@ -129,14 +124,16 @@ pub(super) fn render_minimap(
 ) -> gpui::Div {
     let total = model.duration().max(0.001);
     let (chip_left, chip_width) = minimap_chip(transform, total, bar_width);
-    let chip = Hsla::from(theme.editor.text_3);
+    let chip = Hsla::from(theme.colors.text_3);
+    let layout = METRICS.layout;
+    let (radius, muted) = (px(layout.minimap_radius), METRICS.opacity.muted_media);
     let mut bar = div()
         .relative()
         .w_full()
-        .h(px(MINIMAP_BAR_HEIGHT))
+        .h(px(layout.minimap_bar_h))
         .overflow_hidden()
-        .rounded(px(2.))
-        .bg(theme.editor.ctl_active);
+        .rounded(radius)
+        .bg(theme.colors.ctl_active);
     for offset in boundaries {
         if offset <= 0. || offset >= total {
             continue;
@@ -147,16 +144,16 @@ pub(super) fn render_minimap(
                 .top_0()
                 .bottom_0()
                 .left(relative((offset / total) as f32))
-                .w(px(1.))
-                .bg(Hsla::from(track_color(TrackKind::Clip)).opacity(0.5)),
+                .w(px(METRICS.size.divider))
+                .bg(Hsla::from(track_color(TrackKind::Clip)).opacity(muted)),
         );
     }
     div()
         .w(px(bar_width))
-        .h(px(MINIMAP_HEIGHT))
+        .h(px(layout.minimap_h))
         .flex()
         .items_center()
-        .when(!zoomed_in(transform, model), |minimap| minimap.opacity(0.))
+        .when(!zoomed_in(transform, model), |minimap| minimap.invisible())
         .child(
             bar.child(
                 div()
@@ -165,8 +162,8 @@ pub(super) fn render_minimap(
                     .bottom_0()
                     .left(px(chip_left))
                     .w(px(chip_width))
-                    .rounded(px(2.))
-                    .bg(chip.opacity(0.5)),
+                    .rounded(radius)
+                    .bg(chip.opacity(muted)),
             ),
         )
 }
@@ -197,7 +194,7 @@ mod tests {
         let (model, close) = view(0.1, 0.);
         assert_eq!(
             minimap_chip(&close, model.duration(), 78.).1,
-            MINIMAP_MIN_CHIP_WIDTH
+            METRICS.layout.minimap_min_chip_w
         );
     }
 

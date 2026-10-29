@@ -11,6 +11,7 @@ use gpui::{
     prelude::FluentBuilder, px,
 };
 use studio_engine::services::thumbnail_cache::{ThumbnailCache, ThumbnailKey};
+use studio_engine::slides::{SlidesCommand, SlidesDoc, SlidesEditing, SlidesSnapshot, StopSource};
 use studio_engine::timing::{ResolvedClip, TimelineCommand, TimelineSnapshot, TrimEdge};
 use studio_engine::{
     PreviewFrame, TaskScope, TimelineModel, TimelineSelection, TimelineTransform, TimingEditing,
@@ -20,14 +21,15 @@ use studio_theme::{METRICS, TextStyle, Theme, TrackKind, text_style, track_color
 use super::edit::{
     DRAG_THRESHOLD_PX, SnapTargets, drop_marker, drop_position, split_at, trim_for_edge,
 };
-use super::minimap::{MINIMAP_MAX_WIDTH, MinimapDrag, render_minimap, zoomed_in};
+use super::minimap::{MinimapDrag, render_minimap, zoomed_in};
 use super::model::{ClipSegment, clip_segments};
 use super::playhead::PlayheadGeometry;
-use super::ruler::render_ruler;
+use super::ruler::{flag_left, render_ruler};
 use super::segment::{lane_name, row_top, segment, track_row};
+use super::stops::{StopClip, clip_of, ends_before, hit_marker, new_stop, stop_at, stop_clips};
 use super::waveform::waveform_path;
 use crate::frame_image::create_render_image;
-use crate::kit::{Icon, focus_ring, selectable};
+use crate::kit::{EmptyState, Icon, Toast, focus_ring, selectable};
 
 /// The tracks' key context: the shell binds the timeline's keys in it.
 pub const KEY_CONTEXT: &str = "Timeline";
@@ -40,6 +42,10 @@ pub enum TimelineEvent {
     ScopeChanged(Result<Option<Box<TaskScope>>, String>),
     /// An edit of the timing document, for the engine.
     Edit(TimelineCommand),
+    /// An edit of the slide stops (`slides.json`) from a marker: add, move or remove.
+    /// A marker drag is one gesture, so one undo step in the history the timing edits
+    /// share.
+    Stop(SlidesCommand),
     /// The thumbnails the visible track wants changed: scrolled, zoomed, resized, replaced
     /// or one arrived.
     ThumbnailsWanted,
@@ -86,6 +92,13 @@ pub struct TimelineView {
     drag: Option<(usize, bool)>,
     /// A trim or reorder drag of a clip.
     edit: Option<EditDrag>,
+    /// The engine's slide stops, drawn as markers.
+    slides: Option<SlidesSnapshot>,
+    /// A drag of a stop marker.
+    stop_drag: Option<StopDrag>,
+    /// The stop (its position in `slides.json`) whose marker was pressed last; Delete
+    /// removes it.
+    selected_stop: Option<usize>,
     /// Segments built by the last render, after culling.
     painted_segments: usize,
     /// How often the view rendered; playback must not render it.
@@ -117,6 +130,9 @@ impl TimelineView {
             minimap_drag: None,
             drag: None,
             edit: None,
+            slides: None,
+            stop_drag: None,
+            selected_stop: None,
             painted_segments: 0,
             renders: 0,
             cache: ThumbnailCache::default(),
@@ -179,6 +195,26 @@ impl TimelineView {
             cx.notify();
         }
     }
+    /// The engine's slide stops, from the presentation: the markers follow them.
+    pub fn set_slides(&mut self, slides: Option<SlidesSnapshot>, cx: &mut Context<Self>) {
+        if self.slides != slides {
+            let count = slides
+                .as_ref()
+                .and_then(|s| s.doc.as_ref())
+                .map_or(0, |doc| doc.stops.len());
+            self.selected_stop = self.selected_stop.filter(|stop| *stop < count);
+            self.slides = slides;
+            cx.notify();
+        }
+    }
+
+    /// The frames per second and clips the slide stops resolve against, from the
+    /// displayed report; `None` before a preview.
+    pub fn stop_layout(&self) -> Option<(usize, Vec<StopClip>)> {
+        let report = self.model.as_ref()?.report();
+        Some((report.fps, stop_clips(report)))
+    }
+
     fn refresh_clips(&mut self) {
         self.clips = self
             .model
@@ -239,8 +275,11 @@ impl TimelineView {
         let (model, bounds) = (self.model.as_ref()?, self.bounds?);
         let inset = px(axis_inset());
         let axis = Bounds::new(
-            bounds.origin + gpui::point(inset, px(0.)),
-            gpui::size((bounds.size.width - inset).max(px(0.)), bounds.size.height),
+            bounds.origin + gpui::point(inset, Pixels::ZERO),
+            gpui::size(
+                (bounds.size.width - inset).max(Pixels::ZERO),
+                bounds.size.height,
+            ),
         );
         let seconds = self.playhead_frame(model.report().total_frames, model.report().fps as f64)
             / model.report().fps as f64;
@@ -301,6 +340,19 @@ impl TimelineView {
             "ruler_bounds": self.bounds.map(ruler),
             "minimap_bounds": self.minimap_bounds.map(rect),
             "edit": self.edit_metrics(),
+            "stops": {
+                "markers": self.markers().into_iter().map(|(source, frame, x)| serde_json::json!({
+                    "stop": match source {
+                        StopSource::Explicit(stop) => Some(stop),
+                        StopSource::Default => None,
+                    },
+                    "frame": frame,
+                    "x": x,
+                })).collect::<Vec<_>>(),
+                "selected": self.selected_stop,
+                "drag": self.stop_drag.as_ref().map(|d| d.stop),
+                "snapped": self.stop_drag.as_ref().and_then(|d| d.snapped),
+            },
         })
     }
     pub fn thumbnail(&mut self, key: ThumbnailKey, frame: PreviewFrame, cx: &mut Context<Self>) {
@@ -353,10 +405,41 @@ impl TimelineView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let (Some(frame), Some(model)) = (self.pointer_frame(event.position.x), &self.model) else {
+        let Some(frame) = self.pointer_frame(event.position.x) else {
             return;
         };
         window.focus(&self.focus, cx);
+        // On the ruler a press near a marker grabs it, a double click adds a stop.
+        let on_ruler = self.bounds.is_some_and(|b| {
+            hit_zone(f32::from(event.position.y), f32::from(b.top())) == HitZone::Ruler
+        });
+        let mut frame = frame;
+        if on_ruler && !event.modifiers.shift {
+            let x = f32::from(event.position.x);
+            let markers = self.markers();
+            let hit = hit_marker(
+                markers.iter().filter_map(|&(source, _, at)| match source {
+                    StopSource::Explicit(stop) => Some((stop, at)),
+                    StopSource::Default => None,
+                }),
+                x,
+            );
+            if let Some(stop) = hit {
+                self.selected_stop = Some(stop);
+                self.begin_stop_drag(stop, x, cx);
+                cx.notify();
+                return;
+            }
+            if event.click_count == 2 {
+                self.add_stop(frame, cx);
+                return;
+            }
+            // A press on a default stop's flag scrubs from the stop itself.
+            frame = default_stop_hit(&markers, x).unwrap_or(frame);
+        }
+        let Some(model) = &self.model else {
+            return;
+        };
         let range = event.modifiers.shift
             || self.bounds.is_some_and(|b| {
                 hit_zone(f32::from(event.position.y), f32::from(b.top())) == HitZone::Lanes
@@ -537,6 +620,30 @@ struct EditDrag {
     snapped: Option<f64>,
 }
 
+/// A drag of a slide stop's marker along the ruler. Like a clip drag it holds the clip
+/// it started in: the stop stays inside that clip while the engine catches up.
+#[derive(Debug, Clone)]
+struct StopDrag {
+    /// The stop's position in `slides.json`.
+    stop: usize,
+    clip: StopClip,
+    /// `"end"` stops of the same key before this one, which decides whether the clip's
+    /// end frame is written as `"end"`.
+    ends_before: usize,
+    down_x: f32,
+    /// Set once the pointer moved [`DRAG_THRESHOLD_PX`]; a press that never moves seeks.
+    moved: bool,
+    /// The stop's video frame when the drag started.
+    origin: usize,
+    /// Where the marker is drawn now.
+    frame: usize,
+    targets: SnapTargets,
+    /// The time the marker snapped to, in seconds.
+    snapped: Option<f64>,
+    /// The place last sent to the engine.
+    sent: Option<studio_engine::slides::StopAt>,
+}
+
 impl EditDrag {
     /// The layout as drawn: the dragged clip at its trim, the others where they were.
     fn draft(&self) -> Vec<ClipSegment> {
@@ -578,9 +685,10 @@ impl TimelineView {
         }
     }
 
-    /// Whether a clip drag is live; the shell then follows the pointer through the window.
+    /// Whether a clip or stop marker drag is live; the shell then follows the pointer
+    /// through the window.
     pub fn edit_dragging(&self) -> bool {
-        self.edit.is_some()
+        self.edit.is_some() || self.stop_drag.is_some()
     }
 
     /// Starts a drag of `clip` pressed at window x `x`. The timing document changes only
@@ -632,6 +740,10 @@ impl TimelineView {
     /// x, `snap_disabled` while Shift is held. A trim opens its gesture on the first move
     /// and sends each new trim; a reorder only tracks where the clip would land.
     pub fn edit_drag_move(&mut self, x: f32, snap_disabled: bool, cx: &mut Context<Self>) {
+        if self.stop_drag.is_some() {
+            self.stop_drag_move(x, snap_disabled, cx);
+            return;
+        }
         let pixels_per_second = self.viewport.pixels_per_second();
         let axis_x = self
             .bounds
@@ -703,6 +815,7 @@ impl TimelineView {
     }
 
     fn finish_edit_drag(&mut self, commit_reorder: bool, cx: &mut Context<Self>) {
+        self.finish_stop_drag(cx);
         let Some(drag) = self.edit.take() else {
             return;
         };
@@ -725,7 +838,187 @@ impl TimelineView {
 
     /// Drops a drag whose gesture the engine refused, asking nothing more of it.
     pub fn cancel_edit_drag(&mut self, cx: &mut Context<Self>) {
-        if self.edit.take().is_some() {
+        if self.edit.take().is_some() || self.stop_drag.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The slides document when stops can be edited now, else why they cannot.
+    fn slides_state(&self) -> Result<&SlidesDoc, String> {
+        let slides = self
+            .slides
+            .as_ref()
+            .filter(|_| self.model.is_some())
+            .ok_or("Build the preview to place slide stops")?;
+        match (&slides.editing, &slides.doc) {
+            (SlidesEditing::Disabled(reason), _) => Err(reason.clone()),
+            (SlidesEditing::Enabled, Some(doc)) => Ok(doc),
+            (SlidesEditing::Enabled, None) => Err("slides.json cannot be read".into()),
+        }
+    }
+
+    /// Every resolved stop with its frame and window x; a dragged stop is where the
+    /// pointer put it.
+    fn markers(&self) -> Vec<(StopSource, usize, f32)> {
+        let (Some(model), Some(bounds)) = (&self.model, self.bounds) else {
+            return Vec::new();
+        };
+        let axis = f32::from(bounds.left()) + axis_inset();
+        self.marker_frames()
+            .map(|(source, frame)| {
+                let x = axis + self.viewport.x_at_frame(frame, model) as f32;
+                (source, frame, x)
+            })
+            .collect()
+    }
+
+    /// Every resolved stop with the frame its marker is drawn at.
+    fn marker_frames(&self) -> impl Iterator<Item = (StopSource, usize)> + '_ {
+        self.slides
+            .iter()
+            .flat_map(|slides| &slides.stops)
+            .map(|stop| match (&self.stop_drag, stop.source) {
+                (Some(drag), StopSource::Explicit(index)) if index == drag.stop => {
+                    (stop.source, drag.frame)
+                }
+                _ => (stop.source, stop.video_frame),
+            })
+    }
+
+    /// Starts a drag of the marker of stop `stop` pressed at window x `x`. The document
+    /// changes only once the pointer has moved [`DRAG_THRESHOLD_PX`]; a press that never
+    /// moves seeks to the stop. Stops that cannot be edited now are only selected.
+    fn begin_stop_drag(&mut self, stop: usize, x: f32, cx: &mut Context<Self>) {
+        let Some((_, frame, _)) = self
+            .markers()
+            .into_iter()
+            .find(|(source, ..)| *source == StopSource::Explicit(stop))
+        else {
+            return;
+        };
+        let drag = self.slides_state().ok().and_then(|doc| {
+            let model = self.model.as_ref()?;
+            let key = &doc.stops.get(stop)?.scene;
+            let clips = stop_clips(model.report());
+            let clip = clip_of(&clips, key, frame)?.clone();
+            let fps = model.report().fps as f64;
+            Some(StopDrag {
+                stop,
+                ends_before: ends_before(doc, key, stop),
+                clip,
+                down_x: x,
+                moved: false,
+                origin: frame,
+                frame,
+                targets: SnapTargets::for_stop(&clips, self.position as f64 / fps, fps),
+                snapped: None,
+                sent: None,
+            })
+        });
+        match drag {
+            Some(drag) => self.stop_drag = Some(drag),
+            None => self.seek(frame, cx),
+        }
+    }
+
+    /// A pointer move while a marker is dragged: the stop follows inside its clip and
+    /// snaps like a trimmed edge (not while `snap_disabled`). The first move opens the
+    /// gesture; each new place is sent.
+    fn stop_drag_move(&mut self, x: f32, snap_disabled: bool, cx: &mut Context<Self>) {
+        let pixels_per_second = self.viewport.pixels_per_second();
+        let (Some(model), Some(drag)) = (&self.model, &mut self.stop_drag) else {
+            return;
+        };
+        if pixels_per_second <= 0. {
+            return;
+        }
+        if !drag.moved {
+            if (x - drag.down_x).abs() < DRAG_THRESHOLD_PX {
+                return;
+            }
+            drag.moved = true;
+            cx.emit(TimelineEvent::Stop(SlidesCommand::BeginGesture));
+        }
+        let fps = model.report().fps as f64;
+        let raw = drag.origin as f64 / fps + f64::from(x - drag.down_x) / pixels_per_second;
+        let (time, snapped) = drag
+            .targets
+            .snap(raw, 1. / pixels_per_second, snap_disabled);
+        let wanted = (time * fps).round().max(0.) as usize;
+        drag.frame = drag.clip.clamp(wanted).unwrap_or(drag.origin);
+        drag.snapped = snapped.filter(|_| drag.frame == wanted);
+        let at = stop_at(&drag.clip, drag.frame, drag.ends_before);
+        if drag.sent != Some(at) {
+            drag.sent = Some(at);
+            cx.emit(TimelineEvent::Stop(SlidesCommand::MoveStop {
+                stop: drag.stop,
+                scene: drag.clip.key.clone(),
+                at,
+            }));
+        }
+        cx.notify();
+    }
+
+    /// Ends a marker drag: a moved one closes its gesture, a press that never moved
+    /// seeks to the stop.
+    fn finish_stop_drag(&mut self, cx: &mut Context<Self>) {
+        let Some(drag) = self.stop_drag.take() else {
+            return;
+        };
+        if drag.moved {
+            cx.emit(TimelineEvent::Stop(SlidesCommand::EndGesture));
+        } else {
+            self.seek(drag.origin, cx);
+        }
+        cx.notify();
+    }
+
+    /// Adds a stop at video frame `frame`, in the clip that plays it.
+    fn add_stop(&mut self, frame: usize, cx: &mut Context<Self>) {
+        let Ok(doc) = self.slides_state() else {
+            return;
+        };
+        let Some(model) = &self.model else {
+            return;
+        };
+        if let Some(stop) = new_stop(doc, &stop_clips(model.report()), frame) {
+            cx.emit(TimelineEvent::Stop(SlidesCommand::AddStop(stop)));
+        }
+    }
+
+    /// Adds a slide stop at the playhead.
+    pub fn add_stop_at_playhead(&mut self, cx: &mut Context<Self>) {
+        if !self.edit_dragging() {
+            self.add_stop(self.position, cx);
+        }
+    }
+
+    /// Removes the stop whose marker was pressed last.
+    pub fn remove_selected_stop(&mut self, cx: &mut Context<Self>) {
+        if self.edit_dragging() || self.slides_state().is_err() {
+            return;
+        }
+        if let Some(stop) = self.selected_stop.take() {
+            cx.emit(TimelineEvent::Stop(SlidesCommand::RemoveStop { stop }));
+            cx.notify();
+        }
+    }
+
+    /// Shows the marker of stop `stop` dragged to video frame `frame`, as a drag in
+    /// progress draws it, without asking the engine for anything (the UI gallery).
+    pub fn show_stop_drag(&mut self, stop: usize, frame: usize, cx: &mut Context<Self>) {
+        let x = self
+            .markers()
+            .into_iter()
+            .find(|(source, ..)| *source == StopSource::Explicit(stop))
+            .map(|(.., x)| x);
+        if let Some(x) = x {
+            self.selected_stop = Some(stop);
+            self.begin_stop_drag(stop, x, cx);
+        }
+        if let Some(drag) = &mut self.stop_drag {
+            drag.moved = true;
+            drag.frame = drag.clip.clamp(frame).unwrap_or(drag.origin);
             cx.notify();
         }
     }
@@ -797,13 +1090,19 @@ impl TimelineView {
             .absolute()
             .top_0()
             .bottom_0()
-            .w(px(TRIM_HANDLE_W))
+            .w(px(METRICS.layout.trim_handle_w))
             .when(start, |handle| handle.left_0())
             .when(!start, |handle| handle.right_0())
             .flex()
             .items_center()
             .justify_center()
-            .child(div().w(px(2.)).h(px(16.)).rounded(px(1.)).bg(accent))
+            .child(
+                div()
+                    .w(px(TRIM_GRIP_W))
+                    .h(px(TRIM_GRIP_H))
+                    .rounded_full()
+                    .bg(accent),
+            )
             .cursor(gpui::CursorStyle::ResizeLeftRight)
             .hover(move |handle| handle.bg(accent))
             .on_mouse_down(
@@ -826,10 +1125,15 @@ fn thumbnail_scale(model: &TimelineModel) -> f64 {
 
 /// The closest zoom (pixels per second); the transform clamps to it.
 const ZOOM_MAX: f64 = studio_engine::MAX_PIXELS_PER_SECOND;
-/// The mix waveform keeps this much of its row free at the top.
-const WAVEFORM_PAD: f32 = 6.;
-/// Width of a clip's trim handles.
-const TRIM_HANDLE_W: f32 = 6.;
+/// The grip drawn in a clip's trim handle.
+const TRIM_GRIP_W: f32 = 2.;
+const TRIM_GRIP_H: f32 = 16.;
+/// The line of a selected or dragged stop, and of where a dragged clip lands.
+const STRONG_LINE_W: f32 = 2.;
+/// The thumbnail strip under the tracks and one thumbnail in it.
+const THUMB_STRIP_H: f32 = 38.;
+const THUMB_W: f32 = 64.;
+const THUMB_H: f32 = 36.;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum HitZone {
@@ -845,6 +1149,19 @@ fn hit_zone(y: f32, top: f32) -> HitZone {
     } else {
         HitZone::Lanes
     }
+}
+
+/// The frame of the default stop whose flag a press at window `x` lands on. Default flags
+/// are drawn small, but take presses as wide as an explicit marker does
+/// ([`super::stops::STOP_HIT_PX`] either side, 12 px).
+fn default_stop_hit(markers: &[(StopSource, usize, f32)], x: f32) -> Option<usize> {
+    hit_marker(
+        markers
+            .iter()
+            .filter(|(source, ..)| *source == StopSource::Default)
+            .map(|&(_, frame, at)| (frame, at)),
+        x,
+    )
 }
 
 /// Width left of the time axis: the track gutter plus its gap.
@@ -880,7 +1197,7 @@ impl Render for TimelineView {
             cx.emit(TimelineEvent::ThumbnailsWanted);
         }
         let theme = Theme::for_window(window, cx);
-        let colors = theme.editor;
+        let colors = theme.colors;
         let metrics = METRICS;
         let (can_undo, can_redo) = self
             .snapshot
@@ -910,27 +1227,33 @@ impl Render for TimelineView {
             let fps = model.report().fps as f64;
             let boundaries = self.clips.iter().map(|clip| clip.start as f64 / fps);
             let interactive = zoomed_in(&self.viewport, model);
-            render_minimap(&theme, &self.viewport, model, boundaries, MINIMAP_MAX_WIDTH)
-                .id("timeline-minimap")
-                .relative()
-                .flex_none()
-                // It takes presses only while part of the video is hidden.
-                .when(interactive, |minimap| {
-                    minimap.cursor(gpui::CursorStyle::OpenHand).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|v, e, _, cx| v.minimap_down(e, cx)),
-                    )
-                })
-                .child(
-                    canvas(
-                        move |bounds, _, cx| {
-                            let _ = weak.update(cx, |view, _| view.minimap_bounds = Some(bounds));
-                        },
-                        |_, _, _, _| {},
-                    )
-                    .absolute()
-                    .size_full(),
+            render_minimap(
+                &theme,
+                &self.viewport,
+                model,
+                boundaries,
+                metrics.layout.minimap_max_w,
+            )
+            .id("timeline-minimap")
+            .relative()
+            .flex_none()
+            // It takes presses only while part of the video is hidden.
+            .when(interactive, |minimap| {
+                minimap.cursor(gpui::CursorStyle::OpenHand).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, e, _, cx| v.minimap_down(e, cx)),
                 )
+            })
+            .child(
+                canvas(
+                    move |bounds, _, cx| {
+                        let _ = weak.update(cx, |view, _| view.minimap_bounds = Some(bounds));
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .size_full(),
+            )
         });
         let root = div()
             .flex()
@@ -955,15 +1278,20 @@ impl Render for TimelineView {
         let Some(model) = &self.model else {
             self.painted_segments = 0;
             return root.child(
-                text_style(div(), TextStyle::Body)
-                    .text_color(colors.text_2)
-                    .child(selectable("No compiled timeline available.")),
+                EmptyState::new(&theme, "No compiled timeline")
+                    .body("Build the preview to see its scenes, audio and slide stops.")
+                    .centered(),
             );
         };
         let inset = axis_inset();
         let view_width = self.viewport.width as f32;
         let geometry = self.viewport.geometry(model);
+        let stop_xs: Vec<f32> = self
+            .marker_frames()
+            .map(|(_, frame)| self.viewport.x_at_frame(frame, model) as f32)
+            .collect();
         let weak = cx.entity().downgrade();
+        let radius = px(metrics.radius.segment);
         let mut tracks = div()
             .id("compiled-timeline")
             .track_focus(&self.focus)
@@ -973,7 +1301,7 @@ impl Render for TimelineView {
             .flex_1()
             .min_h_0()
             .overflow_hidden()
-            .rounded(px(metrics.radius_segment))
+            .rounded(radius)
             .focus_visible(|s| s.shadow(focus_ring(&theme)))
             .key_context(KEY_CONTEXT)
             .on_mouse_down(
@@ -1032,7 +1360,13 @@ impl Render for TimelineView {
                 .absolute()
                 .size_full(),
             )
-            .child(render_ruler(&theme, geometry.ticks, inset));
+            .child(render_ruler(
+                &theme,
+                geometry.ticks,
+                inset,
+                view_width,
+                &stop_xs,
+            ));
 
         // Rows below the ruler: the clip track, overlay lanes, audio files and the mix.
         // Only segments inside the padded viewport are built (Cap's `isSegmentVisible`).
@@ -1074,7 +1408,7 @@ impl Render for TimelineView {
                 format!("{:.1}s", end - start),
             )
             .when(dragged.is_some() && dragged == clip.clip, |element| {
-                element.opacity(0.7)
+                element.opacity(metrics.opacity.dragging)
             })
             .when_some(
                 clip.clip
@@ -1180,7 +1514,7 @@ impl Render for TimelineView {
                             .top(px(metrics.ruler_h))
                             .bottom_0()
                             .w(px((end - start) as f32))
-                            .bg(theme.selection())
+                            .bg(theme.colors.selection)
                             .border_l_1()
                             .border_r_1()
                             .border_color(colors.accent),
@@ -1214,16 +1548,156 @@ impl Render for TimelineView {
                     .child(
                         div()
                             .absolute()
-                            .left(px(x as f32 - 1.))
+                            .left(px(x as f32 - STRONG_LINE_W / 2.))
                             .top(px(metrics.ruler_h))
                             .bottom_0()
-                            .w(px(2.))
+                            .w(px(STRONG_LINE_W))
                             .bg(colors.accent),
                     ),
             );
         }
 
-        let mut thumbs = div().relative().flex_none().h(px(38.)).overflow_hidden();
+        // Slide stops: a flag on the ruler and a line through the lanes. Default stops
+        // are hollow and dashed; the selected or dragged marker is drawn stronger, and a
+        // dragged one shows its time beside it.
+        if self.slides.is_some() {
+            let layout = metrics.layout;
+            let mut overlay = div()
+                .absolute()
+                .left(px(inset))
+                .right_0()
+                .top_0()
+                .bottom_0()
+                .overflow_hidden();
+            let accent: Hsla = colors.accent.into();
+            let muted: Hsla = colors.text_3.into();
+            let flag_radius = px(layout.stop_flag_radius);
+            let dragged = self.stop_drag.as_ref().filter(|d| d.moved).map(|d| d.stop);
+            let mut dashed = Vec::new();
+            let mut readout = None;
+            for (source, frame) in self.marker_frames() {
+                let x = self.viewport.x_at_frame(frame, model) as f32;
+                if x < -layout.stop_flag_w || x > view_width + layout.stop_flag_w {
+                    continue;
+                }
+                let (explicit, strong) = match source {
+                    StopSource::Explicit(stop) => (
+                        true,
+                        Some(stop) == self.selected_stop || Some(stop) == dragged,
+                    ),
+                    StopSource::Default => (false, false),
+                };
+                if let StopSource::Explicit(stop) = source
+                    && Some(stop) == dragged
+                {
+                    readout = Some((x, frame));
+                }
+                let color = if explicit { accent } else { muted };
+                let pole = if strong {
+                    STRONG_LINE_W
+                } else {
+                    metrics.size.divider
+                };
+                // The pole stays inside the track at its end.
+                let pole_left = (x - pole / 2.).min(view_width - pole);
+                // At the end of the track the flag points back so it is not cut off.
+                let left = flag_left(x, view_width);
+                let flag = div()
+                    .absolute()
+                    .left(px(left))
+                    .top(px(layout.stop_flag_top))
+                    .w(px(layout.stop_flag_w))
+                    .h(px(layout.stop_flag_h));
+                let flag = if left < x {
+                    flag.rounded_tl(flag_radius).rounded_bl(flag_radius)
+                } else {
+                    flag.rounded_tr(flag_radius).rounded_br(flag_radius)
+                };
+                overlay = overlay
+                    .child(
+                        div()
+                            .absolute()
+                            .left(px(pole_left))
+                            .top(px(layout.stop_flag_top))
+                            .h(px(metrics.ruler_h - layout.stop_flag_top))
+                            .w(px(pole))
+                            .bg(color),
+                    )
+                    .child(if explicit {
+                        flag.bg(color)
+                    } else {
+                        flag.border_1().border_color(color)
+                    });
+                if explicit {
+                    overlay = overlay.child(
+                        div()
+                            .absolute()
+                            .left(px(pole_left))
+                            .top(px(metrics.ruler_h))
+                            .bottom_0()
+                            .w(px(pole))
+                            .bg(color.opacity(if strong {
+                                1.
+                            } else {
+                                metrics.opacity.stop_default
+                            })),
+                    );
+                } else {
+                    dashed.push(x);
+                }
+            }
+            if !dashed.is_empty() {
+                let top = metrics.ruler_h;
+                let (dash, line_w) = (layout.stop_dash, metrics.size.divider);
+                overlay = overlay.child(
+                    canvas(
+                        |_, _, _| {},
+                        move |bounds, _, window, _| {
+                            for x in &dashed {
+                                let mut y = bounds.top() + px(top);
+                                while y < bounds.bottom() {
+                                    window.paint_quad(gpui::fill(
+                                        Bounds::new(
+                                            gpui::point(bounds.left() + px(x - line_w / 2.), y),
+                                            gpui::size(px(line_w), px(dash)),
+                                        ),
+                                        muted,
+                                    ));
+                                    y += px(dash * 2.);
+                                }
+                            }
+                        },
+                    )
+                    .absolute()
+                    .size_full(),
+                );
+            }
+            // The dragged stop's time, under the ruler on the side of the flag with room.
+            if let Some((x, frame)) = readout {
+                let gap = metrics.space_1;
+                let pill = div()
+                    .debug_selector(|| "stop-readout".into())
+                    .absolute()
+                    .top(px(metrics.ruler_h + gap));
+                let pill = if x > view_width / 2. {
+                    pill.right(px(view_width - x + gap))
+                } else {
+                    pill.left(px(x + gap))
+                };
+                overlay = overlay.child(pill.child(Toast::new(
+                    &theme,
+                    "stop-readout",
+                    format!("{:.2}s · frame {frame}", frame as f64 / fps),
+                )));
+            }
+            tracks = tracks.child(overlay);
+        }
+
+        let mut thumbs = div()
+            .relative()
+            .flex_none()
+            .h(px(THUMB_STRIP_H))
+            .overflow_hidden();
         for frame in self.viewport.thumbnail_frames(model) {
             let key = ThumbnailKey::new(
                 report.envelope.identity.clone(),
@@ -1236,10 +1710,10 @@ impl Render for TimelineView {
                     div()
                         .absolute()
                         .left(px(self.viewport.x_at_frame(frame, model) as f32 + inset))
-                        .w(px(64.))
-                        .h(px(36.))
+                        .w(px(THUMB_W))
+                        .h(px(THUMB_H))
                         .overflow_hidden()
-                        .child(gpui::img(image).w(px(64.)).h(px(36.))),
+                        .child(gpui::img(image).w(px(THUMB_W)).h(px(THUMB_H))),
                 );
             }
         }
@@ -1272,7 +1746,7 @@ impl Render for TimelineView {
                     (Err(reason), _) => reason,
                     (Ok(_), Some(notice)) => notice.clone(),
                     (Ok(_), None) =>
-                        "drag edges to trim, clips to reorder · C splits · Shift-drag for range"
+                        "drag edges to trim, clips to reorder · C splits · Shift-drag for range · double-click the ruler adds a slide stop"
                             .into(),
                 }
             )));
@@ -1335,13 +1809,14 @@ impl TimelineView {
         let end = (self.viewport.position + self.viewport.zoom).min(model.duration());
         let x = self.viewport.x_at_seconds(start) as f32;
         let width = ((end - start) * self.viewport.pixels_per_second()) as f32;
-        let color = Hsla::from(track_color(TrackKind::Audio)).opacity(0.55);
+        let color = Hsla::from(track_color(TrackKind::Audio)).opacity(METRICS.opacity.muted_media);
+        let pad = METRICS.layout.waveform_pad;
         canvas(
             |_, _, _| {},
             move |bounds, _, window, _| {
                 let area = Bounds::new(
-                    bounds.origin + gpui::point(px(x), px(WAVEFORM_PAD)),
-                    gpui::size(px(width), bounds.size.height - px(WAVEFORM_PAD)),
+                    bounds.origin + gpui::point(px(x), px(pad)),
+                    gpui::size(px(width), bounds.size.height - px(pad)),
                 );
                 if end > start
                     && let Some(path) = waveform_path(&peaks, (start, end), area)

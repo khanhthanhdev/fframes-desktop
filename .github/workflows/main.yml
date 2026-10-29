@@ -369,15 +369,12 @@ jobs:
         run: cargo test -p e2e-tests --test render_smoke -- --nocapture
 
   # Key frames of every example, rendered through its command line by the CPU backend and by
-  # Skia on the CPU and on the GPU (Metal on macOS, lavapipe Vulkan on Linux and Windows), all
-  # compared with the same images in e2e/snapshots.
+  # Skia on the CPU and on the GPU (lavapipe Vulkan), all compared with the same images in
+  # e2e/snapshots. Linux only: the snapshots are the same on every OS and renderer, and the
+  # Windows job of pull requests renders a video too.
   e2e:
-    name: E2E frames (${{ matrix.os }})
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
+    name: E2E frames (ubuntu-latest)
+    runs-on: ubuntu-latest
     defaults:
       run:
         shell: bash
@@ -390,37 +387,10 @@ jobs:
           persist-credentials: false
 
       - name: Install apt-deps
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y llvm nasm yasm libx264-dev libx265-dev libvpx-dev libopus-dev \
             libfontconfig1-dev libasound2-dev libwayland-dev mesa-vulkan-drivers libvulkan1
-
-      - name: Install brew deps
-        if: runner.os == 'macOS'
-        run: brew install pkg-config nasm x264 x265 libvpx opus
-
-      - name: Install FFmpeg 9
-        if: runner.os == 'Windows'
-        env:
-          FFMPEG_BUILD: ffmpeg-n9.0-latest-win64-gpl-shared-9.0
-        run: |
-          TMP_DIR="$(cygpath -u "$RUNNER_TEMP")"
-          curl -fsSL -o "$TMP_DIR/ffmpeg.zip" \
-            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$FFMPEG_BUILD.zip"
-          7z x "$TMP_DIR/ffmpeg.zip" -o"$TMP_DIR" > /dev/null
-          FFMPEG_DIR="$(cygpath -w "$TMP_DIR/$FFMPEG_BUILD")"
-          echo "FFMPEG_DIR=$FFMPEG_DIR" >> "$GITHUB_ENV"
-          echo "$FFMPEG_DIR\bin" >> "$GITHUB_PATH"
-          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" >> "$GITHUB_ENV"
-
-      - name: Install the Vulkan loader and lavapipe
-        if: runner.os == 'Windows'
-        uses: jakoch/install-vulkan-sdk-action@v1.7.0
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          install_runtime_only: true
-          install_lavapipe: true
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:

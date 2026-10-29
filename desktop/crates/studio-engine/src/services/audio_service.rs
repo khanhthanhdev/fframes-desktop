@@ -53,6 +53,8 @@ struct Request {
     ready: Arc<ReadyPreview>,
     epoch: u64,
     position: usize,
+    /// The video frame the output goes silent at (`total_frames`, or a slide stop).
+    end_frame: usize,
     device: OutputDevice,
 }
 
@@ -123,11 +125,14 @@ impl AudioService {
             task: Mutex::new(Some(task)),
         }
     }
+    /// Prepares output from video frame `position`. The callback writes silence from the
+    /// exact sample of `end_frame` on (`total_frames`, or the slide stop playback holds at).
     pub fn stage(
         &self,
         ready: Arc<ReadyPreview>,
         epoch: u64,
         position: usize,
+        end_frame: usize,
         device: OutputDevice,
     ) {
         self.control.playing.store(false, Ordering::Release);
@@ -138,6 +143,7 @@ impl AudioService {
             ready,
             epoch,
             position,
+            end_frame,
             device,
         });
     }
@@ -622,13 +628,12 @@ fn prepare_session(
         .audio_source
         .clone()
         .ok_or_else(|| PreparationError::Source("Matching retained PCM file missing".into()))?;
-    let total = ((request
-        .ready
-        .timeline
-        .total_frames
-        .saturating_sub(request.position) as u128
-        * rate as u128)
-        .div_ceil(request.ready.timeline.fps as u128)) as u64;
+    let total = output_samples(
+        request.position,
+        request.end_frame.min(request.ready.timeline.total_frames),
+        rate,
+        request.ready.timeline.fps,
+    );
     let capacity = (rate as usize / 4).max(1);
     let mut config = supported.config();
     let period = match supported.buffer_size() {
@@ -741,6 +746,12 @@ fn prepare_session(
         handle,
         feeder: Some(feeder),
     }))
+}
+
+/// How many output samples play from video frame `position` until frame `end`: the
+/// callback writes silence from this sample on.
+fn output_samples(position: usize, end: usize, rate: u32, fps: usize) -> u64 {
+    ((end.saturating_sub(position) as u128 * rate as u128).div_ceil(fps.max(1) as u128)) as u64
 }
 
 fn build_stream<T: SizedSample + FromSample<f32>>(

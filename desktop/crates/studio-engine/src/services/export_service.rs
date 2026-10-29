@@ -65,7 +65,7 @@ impl ExportControl {
         self.state.load(Ordering::Acquire) == EXPORT_PUBLISHING
     }
 
-    fn begin_publication(&self) -> bool {
+    pub(crate) fn begin_publication(&self) -> bool {
         self.state
             .compare_exchange(
                 EXPORT_ACTIVE,
@@ -76,8 +76,14 @@ impl ExportControl {
             .is_ok()
     }
 
-    fn finish_publication(&self) {
+    pub(crate) fn finish_publication(&self) {
         self.state.store(EXPORT_PUBLISHED, Ordering::Release);
+    }
+
+    /// A publication that failed: the export is active again until it reports the
+    /// failure, so a Cancel in between still counts.
+    pub(crate) fn abandon_publication(&self) {
+        self.state.store(EXPORT_ACTIVE, Ordering::Release);
     }
 }
 
@@ -94,6 +100,13 @@ pub enum ExportProgress {
     Audio,
     Warning(String),
     Verifying,
+    /// A slide deck export decodes its stop frames into posters and thumbnails.
+    Posters {
+        done: usize,
+        total: usize,
+    },
+    /// A slide deck export writes its page and manifest and publishes the folder.
+    WritingDeck,
     Complete {
         destination: PathBuf,
         revision: String,
@@ -116,6 +129,54 @@ pub struct ExportRequest {
     pub props_json: Option<String>,
 }
 
+/// What [`render_verified`] renders: [`ExportRequest`] without its destination.
+pub struct RenderRequest {
+    pub source: FrozenExportSource,
+    pub sdk: PathBuf,
+    pub builds: PathBuf,
+    pub settings: ExportSettings,
+    pub timing_json: Option<String>,
+    pub props_json: Option<String>,
+}
+
+/// Where [`render_verified`] writes the video.
+pub enum RenderOutput {
+    /// An exclusive temporary sibling of this destination file, which must not exist;
+    /// [`publish_video`] links it into place.
+    BesideDestination(PathBuf),
+    /// This exact path in a folder the caller owns (a deck's staging folder). It must
+    /// not exist; on failure nothing is left there.
+    File(PathBuf),
+}
+
+/// A rendered video that the app decoded from start to end and flushed.
+pub struct VerifiedVideo {
+    path: PathBuf,
+    /// The private temporary name of a [`RenderOutput::BesideDestination`] render and
+    /// the canonical destination beside it.
+    beside: Option<(tempfile::TempPath, PathBuf)>,
+    revision: String,
+    capabilities: Option<ExportCapabilities>,
+}
+
+impl VerifiedVideo {
+    /// The verified file.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// The source revision it was rendered from.
+    pub fn revision(&self) -> &str {
+        &self.revision
+    }
+
+    /// What the worker reported it can export, when it was asked (any export but the
+    /// default one asks).
+    pub fn capabilities(&self) -> Option<&ExportCapabilities> {
+        self.capabilities.as_ref()
+    }
+}
+
 /// Compiles and renders a frozen revision to an exclusive sibling temporary file.
 /// A final destination is created only after the child closed and decoded the video.
 pub fn export_video(
@@ -130,6 +191,43 @@ pub fn export_video(
         sdk,
         builds,
         destination,
+        settings,
+        timing_json,
+        props_json,
+    } = request;
+    let verified = render_verified(
+        RenderRequest {
+            source,
+            sdk,
+            builds,
+            settings,
+            timing_json,
+            props_json,
+        },
+        RenderOutput::BesideDestination(destination),
+        &service,
+        &processes,
+        &control,
+        &mut progress,
+    )?;
+    publish_video(verified, &processes, &control, &mut progress)
+}
+
+/// Compiles the frozen revision's worker, renders it to `output` and verifies the file
+/// in the app process. Emits only non-terminal progress; on any failure or cancellation
+/// the partial file is removed.
+pub fn render_verified(
+    request: RenderRequest,
+    output: RenderOutput,
+    service: &BuildService,
+    processes: &ProcessTreeManager,
+    control: &ExportControl,
+    progress: &mut impl FnMut(ExportProgress),
+) -> Result<VerifiedVideo, String> {
+    let RenderRequest {
+        source,
+        sdk,
+        builds,
         settings,
         timing_json,
         props_json,
@@ -155,19 +253,20 @@ pub fn export_video(
         format!("mp4-export-{}", uuid::Uuid::new_v4()),
     );
     let build = compile_portable_worker_via(
-        &service,
+        service,
         subscriber,
         source.project(),
         &sdk,
         sdk_manifest,
         &builds,
-        &processes,
+        processes,
     )?;
     if processes.is_shutdown() || control.is_cancelled() {
         return Err("export cancelled after compilation".into());
     }
+    let mut reported = None;
     if !settings.is_default() || timing_json.is_some() || props_json.is_some() {
-        let capabilities = export_capabilities(&build, &processes)?;
+        let capabilities = export_capabilities(&build, processes)?;
         capabilities
             .accepts(&settings)
             .map_err(|error| format!("cannot export with these settings: {error}"))?;
@@ -179,29 +278,41 @@ pub fn export_video(
                 "this project's worker cannot export edited props; remove props.json or wire props hooks into its worker".into(),
             );
         }
+        reported = Some(capabilities);
     }
     let timing_file = timing_json.as_deref().map(write_timing_file).transpose()?;
     let props_file = props_json.as_deref().map(write_props_file).transpose()?;
 
-    let destination = prepare_destination(&destination, settings.container)?;
-    if destination.exists() {
-        return Err(format!(
-            "destination already exists; choose another file: {}",
-            destination.display()
-        ));
-    }
-    let parent = destination
-        .parent()
-        .ok_or_else(|| "export destination has no parent directory".to_owned())?;
-    let named_temporary = tempfile::Builder::new()
-        .prefix(".fframes-export-")
-        .suffix(&format!(".{}", settings.container.extension()))
-        .tempfile_in(parent)
-        .map_err(|error| format!("could not create export temporary file: {error}"))?;
-    let temporary_path = named_temporary.path().to_owned();
-    let temporary = named_temporary.into_temp_path();
-    fs::remove_file(&temporary_path)
-        .map_err(|error| format!("could not prepare export temporary file: {error}"))?;
+    let (temporary_path, beside) = match output {
+        RenderOutput::BesideDestination(destination) => {
+            let destination = prepare_destination(&destination, settings.container)?;
+            if destination.exists() {
+                return Err(format!(
+                    "destination already exists; choose another file: {}",
+                    destination.display()
+                ));
+            }
+            let parent = destination
+                .parent()
+                .ok_or_else(|| "export destination has no parent directory".to_owned())?;
+            let named_temporary = tempfile::Builder::new()
+                .prefix(".fframes-export-")
+                .suffix(&format!(".{}", settings.container.extension()))
+                .tempfile_in(parent)
+                .map_err(|error| format!("could not create export temporary file: {error}"))?;
+            let temporary_path = named_temporary.path().to_owned();
+            let temporary = named_temporary.into_temp_path();
+            fs::remove_file(&temporary_path)
+                .map_err(|error| format!("could not prepare export temporary file: {error}"))?;
+            (temporary_path, Some((temporary, destination)))
+        }
+        RenderOutput::File(path) => {
+            if fs::symlink_metadata(&path).is_ok() {
+                return Err(format!("render output already exists: {}", path.display()));
+            }
+            (path, None)
+        }
+    };
 
     let mut options = worker_options(&build);
     options.args([EXPORT_FLAG, "--output"]);
@@ -248,10 +359,10 @@ pub fn export_video(
     };
     let mut diagnostics = Vec::new();
     let status = loop {
-        drain_progress(&receiver, &mut diagnostics, &mut progress);
+        drain_progress(&receiver, &mut diagnostics, progress);
         if control.is_cancelled() || processes.is_shutdown() {
             let _ = child.lock().terminate_verified(Duration::from_millis(500));
-            join_progress_reader(reader, &receiver, &mut diagnostics, &mut progress);
+            join_progress_reader(reader, &receiver, &mut diagnostics, progress);
             let _ = fs::remove_file(&temporary_path);
             return Err("export cancelled".into());
         }
@@ -260,13 +371,13 @@ pub fn export_video(
             Ok(None) => thread::sleep(POLL_INTERVAL),
             Err(error) => {
                 let _ = child.lock().terminate_verified(Duration::from_millis(500));
-                join_progress_reader(reader, &receiver, &mut diagnostics, &mut progress);
+                join_progress_reader(reader, &receiver, &mut diagnostics, progress);
                 let _ = fs::remove_file(&temporary_path);
                 return Err(format!("could not read export process status: {error}"));
             }
         }
     };
-    join_progress_reader(reader, &receiver, &mut diagnostics, &mut progress);
+    join_progress_reader(reader, &receiver, &mut diagnostics, progress);
     if !status.success() {
         let _ = fs::remove_file(&temporary_path);
         return Err(format!(
@@ -292,11 +403,44 @@ pub fn export_video(
         return Err(error);
     }
     // Windows flushes only through a handle with write access.
-    fs::OpenOptions::new()
+    if let Err(error) = fs::OpenOptions::new()
         .write(true)
         .open(&temporary_path)
         .and_then(|file| file.sync_all())
-        .map_err(|error| format!("could not flush MP4 before publication: {error}"))?;
+    {
+        if beside.is_none() {
+            let _ = fs::remove_file(&temporary_path);
+        }
+        return Err(format!("could not flush MP4 before publication: {error}"));
+    }
+    Ok(VerifiedVideo {
+        path: temporary_path,
+        beside,
+        revision,
+        capabilities: reported,
+    })
+}
+
+/// Links a video verified beside its destination into place without replacing anything,
+/// then reports [`ExportProgress::Complete`].
+pub fn publish_video(
+    verified: VerifiedVideo,
+    processes: &ProcessTreeManager,
+    control: &ExportControl,
+    progress: &mut impl FnMut(ExportProgress),
+) -> Result<(), String> {
+    let VerifiedVideo {
+        path: temporary_path,
+        beside,
+        revision,
+        ..
+    } = verified;
+    let Some((temporary, destination)) = beside else {
+        return Err("this video was rendered into a folder and has no destination".into());
+    };
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "export destination has no parent directory".to_owned())?;
     if processes.is_shutdown() || !control.begin_publication() {
         let _ = fs::remove_file(&temporary_path);
         return Err("export cancelled before publication".into());
@@ -316,7 +460,7 @@ pub fn export_video(
             }
         }
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            control.state.store(EXPORT_ACTIVE, Ordering::Release);
+            control.abandon_publication();
             let _ = fs::remove_file(&temporary_path);
             return Err(format!(
                 "destination appeared during export; existing bytes were preserved: {}",
@@ -324,7 +468,7 @@ pub fn export_video(
             ));
         }
         Err(error) => {
-            control.state.store(EXPORT_ACTIVE, Ordering::Release);
+            control.abandon_publication();
             let _ = fs::remove_file(&temporary_path);
             return Err(format!("could not atomically publish MP4: {error}"));
         }

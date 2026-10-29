@@ -9,6 +9,11 @@ pub const MAX_PREVIEW_HEIGHT: u32 = 720;
 pub const MAX_BACKEND_DETAIL_BYTES: usize = 256;
 pub const MAX_INSPECT_FRAMES: usize = 256;
 pub const MAX_DIAGNOSTICS: usize = 1024;
+/// Suggestions are collected in small batches so preview seeks can run between them.
+pub const MAX_SUGGEST_FRAMES: usize = 16;
+pub const MAX_SUGGESTED_STOPS: usize = 300;
+pub const MAX_STOPS_PER_ORIGIN: usize = 64;
+pub const SUGGESTED_STOPS_CAPABILITY: &str = "suggested_stops_v1";
 pub const MAX_EDITOR_OBJECTS_PER_FRAME: usize = 4096;
 pub const MAX_EDITOR_METADATA_BYTES: usize = 1024 * 1024;
 pub const MAX_AUDIO_READ_BYTES: usize = 256 * 1024;
@@ -567,6 +572,76 @@ pub struct InspectResponse {
     pub truncated: bool,
 }
 
+/// A component's proposed stop, in scene seconds (`video` means video seconds).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SuggestedSlideStop {
+    pub scene: String,
+    pub origin: String,
+    pub seconds: f32,
+    pub label: Option<String>,
+    pub notes: Option<String>,
+}
+
+/// A bounded snapshot; repeated reports from the same origin replace earlier reports.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct StopSuggestions {
+    pub stops: Vec<SuggestedSlideStop>,
+    pub truncated: bool,
+}
+
+impl StopSuggestions {
+    /// Drops malformed or excess project-authored data before it crosses a boundary.
+    pub fn bound(&mut self) {
+        let mut counts = std::collections::BTreeMap::new();
+        let mut total = 0;
+        self.stops.retain(|stop| {
+            let valid = stop.seconds.is_finite()
+                && stop.seconds >= 0.0
+                && !stop.scene.is_empty()
+                && stop.scene.len() <= 256
+                && !stop.origin.is_empty()
+                && stop.origin.len() <= 1024
+                && stop.label.as_ref().is_none_or(|text| text.len() <= 256)
+                && stop
+                    .notes
+                    .as_ref()
+                    .is_none_or(|text| text.len() <= 8 * 1024)
+                && total < MAX_SUGGESTED_STOPS;
+            if !valid {
+                self.truncated = true;
+                return false;
+            }
+            let count = counts
+                .entry((stop.scene.clone(), stop.origin.clone()))
+                .or_insert(0);
+            let valid = *count < MAX_STOPS_PER_ORIGIN;
+            if valid {
+                *count += 1;
+                total += 1;
+            } else {
+                self.truncated = true;
+            }
+            valid
+        });
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SuggestStopsRequest {
+    pub envelope: PreviewEnvelope,
+    pub frames: Vec<usize>,
+    pub timing_generation: u64,
+    /// Starts a new scan, clearing observations from previous scans and ordinary seeks.
+    pub reset: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SuggestStopsResponse {
+    pub envelope: PreviewEnvelope,
+    pub timing_generation: u64,
+    pub suggestions: StopSuggestions,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PrepareAudioRequest {
     pub envelope: PreviewEnvelope,
@@ -652,6 +727,7 @@ pub enum PreviewRequest {
     Timeline(PreviewEnvelope),
     ScaledFrame(ScaledFrameRequest),
     Inspect(InspectRequest),
+    SuggestStops(SuggestStopsRequest),
     PrepareAudio(PrepareAudioRequest),
     ReadAudio(ReadAudioRequest),
     CancelAudio(ArtifactRequest),
@@ -668,6 +744,7 @@ pub enum PreviewResponse {
     Timeline(PreviewTimelineResponse),
     ScaledFrame(ScaledFrameResponse),
     Inspect(InspectResponse),
+    SuggestedStops(SuggestStopsResponse),
     PreparedAudio(PreparedAudioDescriptor),
     AudioRead(AudioReadResponse),
     TimingApplied(TimingAppliedResponse),

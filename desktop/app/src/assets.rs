@@ -62,6 +62,7 @@ icon_files!(
     "undo-2",
     "redo-2",
     "scissors",
+    "presentation",
     "caption-minimize-windows",
     "caption-maximize-windows",
     "caption-restore-windows",

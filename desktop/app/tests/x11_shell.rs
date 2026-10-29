@@ -1,10 +1,8 @@
 //! The production GPUI shell as a real process on a private X server.
 //!
-//! The headless parity suite (`studio-ui/tests/parity`, GPUI's `TestAppContext`) drives the shell
-//! through its actions; this test covers what a headless window cannot, exercising the
-//! hand-off wiring: the real `fframes-studio studio` binary with its hidden observation
-//! flags on an owned Xvfb, driven with xdotool, observed through its redacted telemetry
-//! file. It covers what pure tests cannot: the prompt's native input path, `StudioShell::adopt_promotion` adopting the staged preview on the UI
+//! This test covers what a headless window cannot, exercising the hand-off wiring: the real
+//! `fframes-studio studio` binary with its hidden observation flags on an owned Xvfb, driven
+//! with xdotool, observed through its redacted telemetry file. It covers what pure tests cannot: the prompt's native input path, `StudioShell::adopt_promotion` adopting the staged preview on the UI
 //! thread, the fresh audio epoch and the matching video/audio install, the accepted-awaiting
 //! label clearing exactly when the matching preview shows, and Undo's hand-off back.
 //!

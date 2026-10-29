@@ -479,7 +479,7 @@ fn images_and_plans_are_carried() {
 /// The case ACP adapters cannot express: the agent leaves background work and ends its
 /// reply. The turn ends on the wire's own end frame, and the driver says the work is
 /// still running, before that end and again when it clears; the engine's capture waits
-/// on it (`app/tests/agent_workflow/{claude,codex}_wire.rs`).
+/// on it.
 #[test]
 fn background_work_is_reported_around_the_turn_end_where_the_wire_has_it() {
     for fixture in WIRES {

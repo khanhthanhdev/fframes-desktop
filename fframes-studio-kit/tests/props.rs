@@ -5,9 +5,71 @@ use std::sync::{Arc, Mutex};
 
 use fframes::{EditorObjectKey, Previewer, RenderOptions};
 use fframes_kit::prelude::*;
+use fframes_kit::props::{PropsSource, SuggestedStop};
 use fframes_studio_kit::{PropsStore, REPEAT_KEY, VIDEO_SCENE_KEY};
 use fframes_studio_protocol::{EditorObjectIdentity, PropsDocument};
 use serde_json::json;
+
+#[test]
+fn stop_reports_replace_origins_and_stay_bounded_before_serialization() {
+    let store = Arc::new(PropsStore::default());
+    let stop = |seconds| SuggestedStop {
+        seconds,
+        label: Some("Bullet".into()),
+        notes: None,
+    };
+    store.view().suggest_stops("list", &[stop(1.0)]);
+    assert!(store.suggested_stops().stops.is_empty(), "not listening");
+    store.listen();
+    let view = store.view();
+    view.suggest_stops("list", &[stop(1.0), stop(2.0)]);
+    view.suggest_stops("other-list", &[stop(3.0)]);
+    view.suggest_stops("list", &[stop(1.5)]);
+    let snapshot = store.suggested_stops();
+    assert_eq!(
+        snapshot.stops.len(),
+        2,
+        "repeated renders replace, independent lists remain"
+    );
+    assert_eq!(snapshot.stops[0].seconds, 1.5);
+    assert_eq!(snapshot.stops[1].seconds, 3.0);
+    let hooks = store.hooks();
+    assert_eq!(hooks.suggested_stops(), snapshot);
+    hooks.clear_suggestions();
+
+    let mut input = vec![
+        stop(f32::NAN),
+        stop(-1.0),
+        SuggestedStop {
+            notes: Some("x".repeat(10 * 1024)),
+            ..stop(0.5)
+        },
+    ];
+    input.extend((0..1000).map(|i| stop(i as f32)));
+    view.suggest_stops("large", &input);
+    assert_eq!(store.suggested_stops().stops.len(), 64);
+    for i in 0..1000 {
+        view.suggest_stops(&format!("origin-{i}"), &[stop(0.75)]);
+    }
+    let snapshot = store.suggested_stops();
+    assert_eq!(snapshot.stops.len(), 300);
+    assert!(snapshot.truncated);
+    assert!(
+        snapshot
+            .stops
+            .iter()
+            .all(|s| s.seconds.is_finite() && s.seconds >= 0.0)
+    );
+    let encoded = serde_json::to_string(&snapshot).unwrap();
+    assert!(encoded.len() < 1024 * 1024);
+    let decoded: fframes_studio_protocol::StopSuggestions = serde_json::from_str(&encoded).unwrap();
+    assert_eq!(decoded, snapshot);
+    hooks.clear_suggestions();
+    assert_eq!(
+        store.suggested_stops(),
+        fframes_studio_protocol::StopSuggestions::default()
+    );
+}
 
 #[derive(Debug)]
 struct Probe {

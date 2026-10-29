@@ -114,8 +114,12 @@ impl ComposerInput {
             return position;
         };
         point(
-            position.x.clamp(bounds.left(), bounds.right() - px(0.5)),
-            position.y.clamp(bounds.top(), bounds.bottom() - px(0.5)),
+            position
+                .x
+                .clamp(bounds.left(), bounds.right() - px(HIT_INSET)),
+            position
+                .y
+                .clamp(bounds.top(), bounds.bottom() - px(HIT_INSET)),
         )
     }
 

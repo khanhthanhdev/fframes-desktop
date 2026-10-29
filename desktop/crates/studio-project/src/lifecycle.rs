@@ -225,6 +225,33 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ProjectError> {
     sync_directory(parent)
 }
 
+/// What a new project starts from.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum ProjectTemplate {
+    /// Three title scenes drawn with design tokens.
+    #[default]
+    Blank,
+    /// A six-slide deck built with fframes-kit's `slides` module, with slide stops and
+    /// speaker notes in `slides.json` and slide text editable in the Props panel.
+    SlideDeck,
+}
+
+impl ProjectTemplate {
+    pub const ALL: [ProjectTemplate; 2] = [ProjectTemplate::Blank, ProjectTemplate::SlideDeck];
+
+    /// The exact fframes-kit release the template depends on; the SDK must vendor it.
+    pub fn kit_version(self) -> Option<&'static str> {
+        match self {
+            ProjectTemplate::Blank => None,
+            ProjectTemplate::SlideDeck => Some(SLIDES_KIT_VERSION),
+        }
+    }
+}
+
+/// The fframes-kit release of the Slide deck template (`fframes-studio-kit`'s, which the
+/// SDK vendors).
+pub const SLIDES_KIT_VERSION: &str = "0.3.0";
+
 /// Scaffold exact portable versions. Managed SDK paths are bound only in build materialization.
 pub fn create(
     destination: &Path,
@@ -232,6 +259,54 @@ pub fn create(
     sdk: SdkPin,
     fframes_version: &str,
     runtime_version: &str,
+) -> Result<OpenProject, ProjectError> {
+    create_from_template(
+        destination,
+        name,
+        sdk,
+        fframes_version,
+        runtime_version,
+        ProjectTemplate::Blank,
+    )
+}
+
+/// The Slide deck's own files; the media are the Blank template's.
+const SLIDES_FILES: [(&str, &[u8]); 7] = [
+    (
+        "src/lib.rs",
+        include_bytes!("../templates-slides/src/lib.rs"),
+    ),
+    (
+        "src/video.rs",
+        include_bytes!("../templates-slides/src/video.rs"),
+    ),
+    (
+        "src/main.rs",
+        include_bytes!("../templates-slides/src/main.rs"),
+    ),
+    (
+        "src/bin/studio_worker.rs",
+        include_bytes!("../templates-slides/src/bin/studio_worker.rs"),
+    ),
+    (
+        "style/tokens.json",
+        include_bytes!("../templates-slides/style/tokens.json"),
+    ),
+    ("AGENTS.md", include_bytes!("../templates-slides/AGENTS.md")),
+    (
+        "slides.json",
+        include_bytes!("../templates-slides/slides.json"),
+    ),
+];
+
+/// [`create`] from `template`.
+pub fn create_from_template(
+    destination: &Path,
+    name: &str,
+    sdk: SdkPin,
+    fframes_version: &str,
+    runtime_version: &str,
+    template: ProjectTemplate,
 ) -> Result<OpenProject, ProjectError> {
     let parent = destination
         .parent()
@@ -267,13 +342,27 @@ pub fn create(
     };
     manifest.validate()?;
     // Parse the assembled TOML before writing; versions cannot inject extra declarations.
-    let mut cargo: toml::Value = include_str!("../templates/Cargo.toml").parse().unwrap();
+    let (cargo, runtime_crates): (&str, &[&str]) = match template {
+        ProjectTemplate::Blank => (
+            include_str!("../templates/Cargo.toml"),
+            &["fframes-studio-runtime", "fframes-studio-protocol"],
+        ),
+        ProjectTemplate::SlideDeck => (
+            include_str!("../templates-slides/Cargo.toml"),
+            &[
+                "fframes-studio-runtime",
+                "fframes-studio-protocol",
+                "fframes-studio-kit",
+            ],
+        ),
+    };
+    let mut cargo: toml::Value = cargo.parse().unwrap();
     cargo["dependencies"]["fframes"]["version"] =
         toml::Value::String(format!("={fframes_version}"));
-    for dep in ["fframes-studio-runtime", "fframes-studio-protocol"] {
+    for dep in runtime_crates {
         cargo["dependencies"][dep]["version"] = toml::Value::String(format!("={runtime_version}"));
     }
-    let files: [(&str, &[u8]); 9] = [
+    let blank: [(&str, &[u8]); 9] = [
         ("src/lib.rs", include_bytes!("../templates/src/lib.rs")),
         ("src/video.rs", include_bytes!("../templates/src/video.rs")),
         ("src/main.rs", include_bytes!("../templates/src/main.rs")),
@@ -296,6 +385,15 @@ pub fn create(
             include_bytes!("../../../fixtures/annotated-video-overlay/media/OFL.txt"),
         ),
     ];
+    let files: Vec<(&str, &[u8])> = match template {
+        ProjectTemplate::Blank => blank.to_vec(),
+        // The same .gitignore and media, the deck's sources and documents.
+        ProjectTemplate::SlideDeck => blank
+            .into_iter()
+            .filter(|(path, _)| path.starts_with("media/") || *path == ".gitignore")
+            .chain(SLIDES_FILES)
+            .collect(),
+    };
     for (path, bytes) in files {
         atomic_write(&root.join(path), bytes)?;
     }

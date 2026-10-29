@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use fframes_studio_protocol::export::ExportSettings;
 use serde::{Deserialize, Serialize};
-use studio_proto::{AppTheme, PermissionPolicy};
+use studio_proto::{AppTheme, MotionPreference, PermissionPolicy};
 
 use crate::app_paths::AppPaths;
 
@@ -18,6 +18,10 @@ pub const APP_SETTINGS_FILE: &str = "app-settings.json";
 pub struct AppSettings {
     /// Light, dark, or following the operating system.
     pub theme: AppTheme,
+    /// Full, reduced, or following the operating system. Files written before this
+    /// existed, and values this app no longer knows, read as `System`.
+    #[serde(deserialize_with = "lenient")]
+    pub motion: MotionPreference,
     /// The export panel's last choice, for every project. A value that no longer reads
     /// (a format this app dropped) is the default instead of discarding the other settings.
     #[serde(deserialize_with = "lenient")]
@@ -179,6 +183,47 @@ mod tests {
         };
         chosen.save(&paths).unwrap();
         assert_eq!(AppSettings::load(&paths), chosen);
+    }
+
+    #[test]
+    fn the_motion_preference_round_trips_and_older_files_read_as_system() {
+        let without: AppSettings =
+            serde_json::from_str(r#"{"theme":"dark","onboarding_completed":true}"#).unwrap();
+        assert_eq!(without.motion, MotionPreference::System);
+        assert_eq!(without.theme, AppTheme::Dark);
+        assert_eq!(without.onboarding_completed, Some(true));
+
+        let unknown: AppSettings =
+            serde_json::from_str(r#"{"theme":"light","motion":"wobbly"}"#).unwrap();
+        assert_eq!(unknown.motion, MotionPreference::System);
+        assert_eq!(unknown.theme, AppTheme::Light);
+
+        for motion in [
+            MotionPreference::System,
+            MotionPreference::Reduced,
+            MotionPreference::Full,
+        ] {
+            let settings = AppSettings {
+                theme: AppTheme::Dark,
+                motion,
+                ..AppSettings::default()
+            };
+            let text = serde_json::to_string(&settings).unwrap();
+            assert!(text.contains("\"motion\""), "{text}");
+            assert_eq!(
+                serde_json::from_str::<AppSettings>(&text).unwrap(),
+                settings
+            );
+        }
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::new(dir.path()).unwrap();
+        let reduced = AppSettings {
+            motion: MotionPreference::Reduced,
+            ..AppSettings::default()
+        };
+        reduced.save(&paths).unwrap();
+        assert_eq!(AppSettings::load(&paths), reduced);
     }
 
     #[test]

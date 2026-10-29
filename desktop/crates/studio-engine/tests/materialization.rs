@@ -3,6 +3,158 @@ use studio_engine::build_materialization::{materialize, sdk_pin};
 use studio_sdk::CompatibilityManifest;
 
 #[test]
+fn kit_patch_belongs_to_the_selected_packages_workspace_not_independent_tools() {
+    for (entry_dir, owner, inherited) in [
+        ("", None, false),
+        ("", Some("Cargo.toml"), false),
+        ("video", Some("Cargo.toml"), true),
+        ("video", Some("video/Cargo.toml"), false),
+    ] {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("project");
+        let sdk = temp.path().join("sdk");
+        let mut compatibility = CompatibilityManifest::default_linux_x64();
+        compatibility.kit_version = Some("0.3.0".into());
+        for name in [
+            "fframes",
+            "fframes-studio-runtime",
+            "fframes-studio-protocol",
+        ] {
+            let dir = sdk.join("framework/framework").join(name);
+            fs::create_dir_all(&dir).unwrap();
+            fs::write(dir.join("Cargo.toml"), "[package]").unwrap();
+        }
+        fs::create_dir_all(sdk.join("framework/vendor")).unwrap();
+        let project = studio_project::create(
+            &root,
+            "Video",
+            sdk_pin(&compatibility),
+            &compatibility.fframes_version,
+            &compatibility.runtime_version,
+        )
+        .unwrap();
+        let mut cargo: toml::Value = fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        cargo.as_table_mut().unwrap().remove("workspace");
+        cargo["dependencies"]
+            .as_table_mut()
+            .unwrap()
+            .insert("fframes-kit".into(), toml::Value::String("=0.3.0".into()));
+        let entry = std::path::Path::new(entry_dir).join("Cargo.toml");
+        if owner.is_some_and(|owner| std::path::Path::new(owner) == entry) {
+            cargo
+                .as_table_mut()
+                .unwrap()
+                .insert("workspace".into(), toml::Value::Table(toml::Table::new()));
+        }
+        if !entry_dir.is_empty() {
+            fs::create_dir_all(root.join(entry_dir)).unwrap();
+            fs::rename(root.join("src"), root.join(entry_dir).join("src")).unwrap();
+            let mut workspace: toml::Value = if inherited {
+                "[workspace]\nmembers = ['video']\nexclude = ['tools']\n"
+            } else {
+                "[workspace]\nmembers = []\nexclude = ['video', 'tools']\n"
+            }
+            .parse()
+            .unwrap();
+            if inherited {
+                let mut dependencies = toml::Table::new();
+                for name in ["fframes", "fframes-kit"] {
+                    dependencies.insert(name.into(), cargo["dependencies"][name].clone());
+                    cargo["dependencies"][name] =
+                        "workspace = true".parse::<toml::Value>().unwrap();
+                }
+                workspace["workspace"]
+                    .as_table_mut()
+                    .unwrap()
+                    .insert("dependencies".into(), toml::Value::Table(dependencies));
+            }
+            fs::write(
+                root.join("Cargo.toml"),
+                toml::to_string_pretty(&workspace).unwrap(),
+            )
+            .unwrap();
+            let mut manifest = project.manifest;
+            manifest.entry.manifest = entry
+                .to_string_lossy()
+                .replace('\\', "/")
+                .try_into()
+                .unwrap();
+            studio_project::lifecycle::write_manifest(&root, &manifest).unwrap();
+        }
+        fs::write(root.join(&entry), toml::to_string_pretty(&cargo).unwrap()).unwrap();
+        fs::create_dir(root.join("tools")).unwrap();
+        fs::write(
+            root.join("tools/Cargo.toml"),
+            "[package]\nname = 'tools'\nversion = '0.1.0'\n[workspace]\n",
+        )
+        .unwrap();
+        fs::create_dir(root.join("tools/src")).unwrap();
+        fs::write(root.join("tools/src/main.rs"), "fn main() {}\n").unwrap();
+        let project = studio_project::open(&root).unwrap();
+        let build =
+            materialize(&project, &sdk, compatibility, &temp.path().join("builds")).unwrap();
+        let patch_owner = owner.map(std::path::Path::new).unwrap_or(&entry);
+        for file in &project.inventory.files {
+            if file.path.as_str().rsplit('/').next() != Some("Cargo.toml") {
+                continue;
+            }
+            let staged: toml::Value = fs::read_to_string(build.root.join(file.path.as_str()))
+                .unwrap()
+                .parse()
+                .unwrap();
+            let original: toml::Value = fs::read_to_string(root.join(file.path.as_str()))
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert!(
+                original.get("patch").is_none(),
+                "portable source stays unchanged"
+            );
+            if std::path::Path::new(file.path.as_str()) == patch_owner {
+                assert_eq!(
+                    std::path::Path::new(
+                        staged["patch"]["crates-io"]["fframes"]["path"]
+                            .as_str()
+                            .unwrap()
+                    ),
+                    fs::canonicalize(&sdk)
+                        .unwrap()
+                        .join("framework/framework/fframes"),
+                    "entry {entry:?}, owner {owner:?}"
+                );
+            } else {
+                assert!(
+                    staged.get("patch").is_none(),
+                    "unrelated manifest {}",
+                    file.path.as_str()
+                );
+            }
+        }
+        if inherited {
+            let staged: toml::Value = fs::read_to_string(&build.manifest)
+                .unwrap()
+                .parse()
+                .unwrap();
+            assert_eq!(
+                staged["dependencies"]["fframes"]["workspace"].as_bool(),
+                Some(true)
+            );
+            assert_eq!(
+                staged["dependencies"]["fframes-kit"]["workspace"].as_bool(),
+                Some(true)
+            );
+        }
+        assert_eq!(
+            studio_project::open(&root).unwrap().inventory,
+            project.inventory
+        );
+    }
+}
+
+#[test]
 fn overlay_keeps_source_and_sdk_unchanged_and_rejects_external_dependencies() {
     let temp = tempfile::tempdir().unwrap();
     let root = temp.path().join("video");
@@ -308,6 +460,8 @@ fn unchanged_sources_reuse_the_build_and_changed_sources_never_run_a_stale_binar
             ])
             .arg(&build.manifest)
             .env("CARGO_TARGET_DIR", &build.environment.target_dir)
+            // A runner with colored Cargo output would split "Compiling studio-video".
+            .env("CARGO_TERM_COLOR", "never")
             .output()
             .unwrap();
         let log = String::from_utf8_lossy(&output.stderr).into_owned();

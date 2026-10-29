@@ -33,12 +33,8 @@ on:
         description: "Publish nothing; prepare preview release files, or run the consumer release gate and package verification"
         type: boolean
         default: false
-      windows_only:
-        description: "Build only Windows for an unsigned preview (consumer releases keep the full matrix)"
-        type: boolean
-        default: false
       sign_artifacts:
-        description: "Sign macOS and Windows binaries for a release build (requires configured signing secrets)"
+        description: "Sign the Windows binaries and installer for a release build (requires configured signing secrets)"
         type: boolean
         default: false
 
@@ -51,13 +47,15 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # fframes Studio ships for Windows only.
   matrix:
     name: Build Native (${{ matrix.target }})
     if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && (inputs.run_id == '' || inputs.run_id == null))
     strategy:
-      fail-fast: false
       matrix:
-        include: ${{ fromJSON(github.event_name == 'workflow_dispatch' && inputs.windows_only == true && inputs.consumer_release != true && '[{"runner":["self-hosted","Windows","X64"],"target":"x86_64-pc-windows-msvc"}]' || '[{"runner":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu"},{"runner":["self-hosted","Windows","X64"],"target":"x86_64-pc-windows-msvc"},{"runner":"macos-15","target":"aarch64-apple-darwin"}]') }}
+        include:
+          - runner: [self-hosted, Windows, X64]
+            target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
@@ -78,7 +76,6 @@ jobs:
       # Windows builds on the self-hosted runner, set up like its validation job: the toolchain,
       # FFmpeg and the warm target directory stay on the machine between runs.
       - uses: ./.github/actions/desktop-windows-self-hosted-setup
-        if: runner.os == 'Windows'
       - name: Check the release tag matches the app version
         if: github.event_name == 'push' || inputs.preview_release == true || inputs.consumer_release == true
         env:
@@ -96,25 +93,8 @@ jobs:
             exit 1
           fi
       # Tag-triggered builds are deliberately unsigned; signing is opt-in on manual dispatches.
-      - name: Check macOS signing credentials before building
-        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
-        env:
-          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
-          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
-          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: |
-          required=(APPLE_DEVELOPER_ID_P12_BASE64 APPLE_DEVELOPER_ID_P12_PASSWORD APPLE_DEVELOPER_IDENTITY APPLE_NOTARY_KEY_P8_BASE64 APPLE_NOTARY_KEY_ID APPLE_NOTARY_ISSUER_ID)
-          for name in "${required[@]}"; do
-            if [[ -z "${!name:-}" ]]; then
-              echo "Missing required signing secret: $name" >&2
-              exit 1
-            fi
-          done
       - name: Check Windows signing credentials before building
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
+        if: github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
         env:
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
@@ -126,43 +106,9 @@ jobs:
               exit 1
             fi
           done
-      - name: Set native build directory
-        if: runner.os != 'Windows'
-        run: echo "CARGO_TARGET_DIR=$RUNNER_TEMP/studio-native" >> "$GITHUB_ENV"
-      - uses: actions/setup-python@v5
-        if: runner.os != 'Windows'
-        with:
-          python-version: "3.12"
-      - uses: actions-rust-lang/setup-rust-toolchain@v1
-        if: runner.os != 'Windows'
-        with:
-          toolchain: "1.98.1"
-          components: rustfmt, clippy
       - name: Assert native architecture
         run: |
           python -c 'import subprocess; assert "host: ${{ matrix.target }}" in subprocess.check_output(["rustc", "-vV"], text=True)'
-      - name: Linux native prerequisites
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y clang libclang-dev cmake pkg-config dpkg-dev libssl-dev libfontconfig1-dev libasound2-dev libxkbcommon-x11-dev libwayland-dev libegl1-mesa-dev libgl1-mesa-dev libxcb1-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-xcb-dev libzstd-dev nasm
-          llvm_lib="$(find /usr/lib -name "libclang.so" 2>/dev/null | head -n1)"
-          if [ -n "$llvm_lib" ]; then
-            echo "LIBCLANG_PATH=$(dirname "$llvm_lib")" >> "$GITHUB_ENV"
-          fi
-      - name: macOS native prerequisites
-        if: runner.os == 'macOS'
-        run: |
-          HOMEBREW_NO_AUTO_UPDATE=1 brew install nasm || true
-          xcode_dir="$(xcode-select -p 2>/dev/null || echo '/Applications/Xcode.app/Contents/Developer')"
-          if [ -d "$xcode_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib" ]; then
-            echo "LIBCLANG_PATH=$xcode_dir/Toolchains/XcodeDefault.xctoolchain/usr/lib" >> "$GITHUB_ENV"
-          fi
-      - name: Build pinned native FFmpeg install
-        if: runner.os != 'Windows'
-        run: |
-          python desktop/scripts/build-native-ffmpeg.py --source "$RUNNER_TEMP/ffmpeg-source" --out "$RUNNER_TEMP/ffmpeg-native"
-          echo "FFMPEG_DIR=$RUNNER_TEMP/ffmpeg-native" >> "$GITHUB_ENV"
       - name: Focused tests and lint
         run: |
           cargo fmt --manifest-path desktop/Cargo.toml --all --check
@@ -184,18 +130,7 @@ jobs:
         run: SDK_BUNDLE="$RUNNER_TEMP/studio-sdk" cargo test --locked --manifest-path desktop/Cargo.toml -p studio-engine --test managed_worker -- --ignored
       - name: Package native app and SDK artifact
         run: python desktop/scripts/package-phase-zero.py --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" --sdk-bundle "$RUNNER_TEMP/studio-sdk"
-      - name: Sign and notarize macOS app package
-        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
-        env:
-          APPLE_DEVELOPER_ID_P12_BASE64: ${{ secrets.APPLE_DEVELOPER_ID_P12_BASE64 }}
-          APPLE_DEVELOPER_ID_P12_PASSWORD: ${{ secrets.APPLE_DEVELOPER_ID_P12_PASSWORD }}
-          APPLE_DEVELOPER_IDENTITY: ${{ secrets.APPLE_DEVELOPER_IDENTITY }}
-          APPLE_NOTARY_KEY_P8_BASE64: ${{ secrets.APPLE_NOTARY_KEY_P8_BASE64 }}
-          APPLE_NOTARY_KEY_ID: ${{ secrets.APPLE_NOTARY_KEY_ID }}
-          APPLE_NOTARY_ISSUER_ID: ${{ secrets.APPLE_NOTARY_ISSUER_ID }}
-        run: bash desktop/scripts/sign-macos-package.sh "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}"
       - name: Install pinned Inno Setup
-        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -210,46 +145,29 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "Inno Setup install failed (exit $($process.ExitCode))" }
           "INNO_SETUP_COMPILER=$(Join-Path $directory 'ISCC.exe')" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Sign Windows executables and FFmpeg DLLs, then build the signed installer
-        if: runner.os == 'Windows' && github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
+        if: github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)
         env:
           WINDOWS_CODESIGN_PFX_BASE64: ${{ secrets.WINDOWS_CODESIGN_PFX_BASE64 }}
           WINDOWS_CODESIGN_PFX_PASSWORD: ${{ secrets.WINDOWS_CODESIGN_PFX_PASSWORD }}
         shell: pwsh
         run: ./desktop/scripts/sign-windows-package.ps1 -PackagePath "$env:RUNNER_TEMP/fframes-studio-${{ matrix.target }}" -InstallerPath "$env:RUNNER_TEMP/fframes-studio-${{ matrix.target }}-setup.exe"
       - name: Package unsigned Windows installer candidate
-        if: runner.os == 'Windows' && !(github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true))
+        if: ${{ !(github.event_name == 'workflow_dispatch' && (inputs.sign_artifacts == true || inputs.consumer_release == true)) }}
         run: |
           python desktop/scripts/package-windows-installer.py \
             --source "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" \
             --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}-setup.exe"
       - name: Windows installer tests
-        if: runner.os == 'Windows'
         run: python desktop/scripts/test-packaging.py -k windows_installer
       - name: Attest native app package provenance
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.zip
-      - name: Package unsigned Linux Debian candidate
-        if: runner.os == 'Linux'
-        env:
-          MAINTAINER: "fframes Studio Maintainers <${{ github.repository_owner }}@users.noreply.github.com>"
-        run: |
-          python desktop/scripts/package-linux-deb.py \
-            --source "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}" \
-            --out "$RUNNER_TEMP/fframes-studio-${{ matrix.target }}.deb" \
-            --maintainer "$MAINTAINER"
-      - name: Attest Linux Debian candidate provenance
-        if: runner.os == 'Linux'
-        uses: actions/attest-build-provenance@v3
-        with:
-          subject-path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.deb
       - name: Attest Windows installer candidate provenance
-        if: runner.os == 'Windows'
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}-setup.exe
       - name: Retain Windows installer candidate
-        if: runner.os == 'Windows'
         uses: actions/upload-artifact@v4
         with:
           name: studio-windows-installer-${{ matrix.target }}
@@ -261,14 +179,6 @@ jobs:
         with:
           name: studio-${{ matrix.target }}
           path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.zip
-          if-no-files-found: error
-          retention-days: 14
-      - name: Retain Linux Debian candidate
-        if: runner.os == 'Linux'
-        uses: actions/upload-artifact@v4
-        with:
-          name: studio-linux-deb-${{ matrix.target }}
-          path: ${{ runner.temp }}/fframes-studio-${{ matrix.target }}.deb
           if-no-files-found: error
           retention-days: 14
 
@@ -322,7 +232,7 @@ jobs:
         run: |
           gh run download "${RUN_ID:-$GITHUB_RUN_ID}" -R "$REPOSITORY" -D raw-artifacts
           mkdir dist
-          find raw-artifacts -type f \( -name 'fframes-studio-*.zip' -o -name 'fframes-studio-*-setup.exe' -o -name 'fframes-studio-*.deb' \) -exec cp {} dist/ \;
+          find raw-artifacts -type f \( -name 'fframes-studio-*.zip' -o -name 'fframes-studio-*-setup.exe' \) -exec cp {} dist/ \;
           ls -lh dist
       - name: Generate manifests, install script, checksums and notes
         run: python3 desktop/scripts/prepare-github-release.py --tag "$RELEASE_TAG" --dist dist --repository "$GITHUB_REPOSITORY"
@@ -461,9 +371,7 @@ jobs:
           import os
           from pathlib import Path
           labels = {
-              "aarch64-apple-darwin": "macOS Apple Silicon",
               "x86_64-pc-windows-msvc": "Windows x64",
-              "x86_64-unknown-linux-gnu": "Linux x64",
           }
           packages = sorted(Path("dist").glob("fframes-studio-*.zip"))
           lines = [f"# fframes Studio {os.environ['RELEASE_TAG']}", "", "Native desktop video development studio for fframes.", "", "## Downloads", ""]

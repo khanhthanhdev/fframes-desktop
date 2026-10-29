@@ -19,9 +19,20 @@ use gpui::{
     StatefulInteractiveElement, Styled, Window, div, point, prelude::FluentBuilder, px, svg,
 };
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, Shadow, TextStyle, Theme, shadow_for, text_style};
 
-use super::interact::DISABLED_OPACITY;
+use super::interact::{States, dim_disabled};
+
+/// A menu's least width and greatest height.
+const MIN_W: f32 = 180.;
+const MAX_H: f32 = 320.;
+/// A row: its height, the check column and the row radius.
+const ROW_H: f32 = 24.;
+const CHECK: f32 = 12.;
+const ROW_RADIUS: f32 = 4.;
+/// The gap kept between a menu, its trigger and the window edge.
+const GAP: f32 = 4.;
+const MARGIN: f32 = 12.;
 
 pub(crate) type OpenHandler = Box<dyn Fn(&Bounds<Pixels>, &mut Window, &mut App) + 'static>;
 
@@ -223,20 +234,15 @@ pub struct Menu {
 }
 
 impl Menu {
-    /// The settings window's stand-in for `Menu.popup()`: a menu-shaped panel
-    /// at the pointer -- which is where `popup()` with no argument puts a real
-    /// `NSMenu` -- with the same check marks and the same click-away dismiss.
-    pub fn settings(
+    /// A menu panel: `card` behind a `line` hairline with the popover shadow, rows that
+    /// hover on `ctl_hover`.
+    pub fn new(
         theme: &Theme,
         id: impl Into<ElementId>,
         items: Vec<MenuItem>,
         state: &MenuState,
     ) -> Self {
-        let bg = if theme.is_dark() {
-            Hsla::from(gpui::rgb(0x2a2a2c))
-        } else {
-            gpui::white()
-        };
+        let colors = theme.colors;
         Self {
             id: id.into(),
             items,
@@ -244,61 +250,19 @@ impl Menu {
             trigger_bounds: state.trigger_bounds,
             state: state.clone(),
             focus: None,
-            min_width: px(180.),
-            max_height: px(320.),
-            radius: px(10.),
-            shadow: vec![gpui::BoxShadow {
-                color: gpui::hsla(0., 0., 0., 0.18),
-                offset: gpui::point(px(0.), px(6.)),
-                blur_radius: px(18.),
-                spread_radius: px(0.),
-                inset: false,
-            }],
-            bg,
-            border: theme.settings_border(),
-            hover: theme.settings_hover(),
-            text: theme.settings_text(),
+            min_width: px(MIN_W),
+            max_height: px(MAX_H),
+            radius: px(METRICS.radius.popover),
+            shadow: shadow_for(theme.appearance, Shadow::Pop).into_vec(),
+            bg: colors.card.into(),
+            border: colors.line.into(),
+            hover: States::of(theme).hover,
+            text: colors.text_1.into(),
             on_highlight: None,
             on_select: None,
             on_dismiss: None,
         }
     }
-
-    /// `PopperContent` on the plain palette: `rounded-xl border border-gray-3
-    /// bg-gray-1 shadow-s`.
-    pub fn plain(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        items: Vec<MenuItem>,
-        state: &MenuState,
-    ) -> Self {
-        Self {
-            bg: theme.gray(1),
-            border: theme.gray(3),
-            hover: theme.gray(3),
-            text: theme.gray(12),
-            ..Self::settings(theme, id, items, state)
-        }
-    }
-
-    /// The editor's popovers: an `ed-card` panel behind an `ed-line` hairline.
-    pub fn editor(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        items: Vec<MenuItem>,
-        state: &MenuState,
-    ) -> Self {
-        Self {
-            radius: px(12.),
-            shadow: theme.editor.pop_shadow(),
-            bg: Hsla::from(theme.editor.card),
-            border: Hsla::from(theme.editor.line),
-            hover: Hsla::from(theme.editor.ctl_hover),
-            text: Hsla::from(theme.editor.text_1),
-            ..Self::settings(theme, id, items, state)
-        }
-    }
-
     pub fn min_width(mut self, width: Pixels) -> Self {
         self.min_width = width;
         self
@@ -363,11 +327,11 @@ fn anchored_placement(
     max_height: Pixels,
     viewport: Size<Pixels>,
 ) -> (Point<Pixels>, Anchor, Pixels) {
-    let gap = px(4.);
-    let margin = px(12.);
+    let gap = px(GAP);
+    let margin = px(MARGIN);
     let below = (viewport.height - margin - trigger.bottom() - gap).max(px(0.));
     let above = (trigger.top() - gap - margin).max(px(0.));
-    let height = (px(item_count as f32 * 24. + 10.)).min(max_height);
+    let height = (px(item_count as f32 * ROW_H + 10.)).min(max_height);
     if height <= below || below >= above {
         (
             trigger.bottom_left() + point(px(0.), gap),
@@ -439,8 +403,8 @@ impl RenderOnce for Menu {
             }
         };
         let viewport = window.viewport_size();
-        let max_width = (viewport.width - px(24.)).max(px(0.));
-        let max_height = max_height.min((viewport.height - px(24.)).max(px(0.)));
+        let max_width = (viewport.width - px(2. * MARGIN)).max(px(0.));
+        let max_height = max_height.min((viewport.height - px(2. * MARGIN)).max(px(0.)));
         let min_width = trigger_bounds.map_or(min_width, |bounds| min_width.max(bounds.size.width));
         let (origin, anchor, max_height) = trigger_bounds
             .map_or((origin, Anchor::TopLeft, max_height), |bounds| {
@@ -471,7 +435,7 @@ impl RenderOnce for Menu {
                 gpui::anchored()
                     .position(origin)
                     .anchor(anchor)
-                    .snap_to_window_with_margin(px(12.))
+                    .snap_to_window_with_margin(px(MARGIN))
                     .child(
                         div()
                             .id(id)
@@ -485,18 +449,18 @@ impl RenderOnce for Menu {
                             .max_w(max_width)
                             .max_h(max_height)
                             .overflow_y_scroll()
-                            .p(px(4.))
+                            .p(px(METRICS.space_1))
                             .rounded(radius)
                             .shadow(shadow)
                             .border_1()
                             .border_color(border)
                             .bg(bg)
                             .text_color(text)
-                            .text_size(px(12.))
+                            .map(|this| text_style(this, TextStyle::Label))
                             .children(items.into_iter().enumerate().map(|(index, item)| {
                                 let handler = handler.clone();
                                 let disabled = disabled_rows.get(index).copied().unwrap_or(false);
-                                div()
+                                let row = div()
                                     .id(item.id.clone().unwrap_or_else(|| {
                                         SharedString::from(format!("{prefix}-item-{index}"))
                                     }))
@@ -506,22 +470,22 @@ impl RenderOnce for Menu {
                                     .flex_row()
                                     .flex_shrink_0()
                                     .items_center()
-                                    .gap(px(6.))
-                                    .h(px(24.))
-                                    .px(px(6.))
-                                    .rounded(px(4.))
-                                    .when(disabled, |this| this.opacity(DISABLED_OPACITY))
+                                    .gap(px(METRICS.space_1 + 2.))
+                                    .h(px(ROW_H))
+                                    .px(px(METRICS.space_1 + 2.))
+                                    .rounded(px(ROW_RADIUS));
+                                dim_disabled(row, disabled)
                                     .when(!disabled && highlighted == Some(index), |this| {
                                         this.bg(hover)
                                     })
                                     .when(!disabled, |this| {
                                         this.hover(move |style| style.bg(hover))
                                     })
-                                    .child(div().w(px(12.)).flex_shrink_0().children(
+                                    .child(div().w(px(CHECK)).flex_shrink_0().children(
                                         item.checked.then(|| {
                                             svg()
                                                 .path("icons/check.svg")
-                                                .size(px(12.))
+                                                .size(px(CHECK))
                                                 .text_color(text)
                                         }),
                                     ))
@@ -569,7 +533,7 @@ mod tests {
                     .h(px(30.))
                     .overflow_hidden()
                     .child(
-                        Menu::editor(&theme, "clipped", items, &state)
+                        Menu::new(&theme, "clipped", items, &state)
                             .on_dismiss(move |_, _| dismissed.borrow_mut().push(()))
                             .on_select(move |index, _, _| picked.borrow_mut().push(*index)),
                     ),
@@ -694,7 +658,7 @@ mod tests {
                 self.events.clone(),
                 self.events.clone(),
             );
-            Menu::editor(&theme, "popup", rows(), &self.state)
+            Menu::new(&theme, "popup", rows(), &self.state)
                 .focus(&self.focus)
                 .on_highlight(cx.listener(move |this, index: &usize, _, cx| {
                     highlight.borrow_mut().push(format!("highlight {index}"));

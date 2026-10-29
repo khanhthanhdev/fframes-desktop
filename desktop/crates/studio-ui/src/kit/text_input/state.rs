@@ -837,14 +837,6 @@ impl TextInputState {
     }
 }
 
-// `align` is a render-time property, but `offset_for_position` needs it to
-// undo the aligner's shift, so the element writes it back with the layout.
-impl TextInputState {
-    pub(super) fn set_align(&mut self, align: TextAlign) {
-        self.align = align;
-    }
-}
-
 impl Focusable for TextInputState {
     fn focus_handle(&self, _cx: &App) -> FocusHandle {
         self.focus.clone()

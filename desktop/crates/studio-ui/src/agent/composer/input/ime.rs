@@ -187,7 +187,7 @@ impl EntityInputHandler for ComposerInput {
             bounds.left() + start.x,
             bounds.top() + start.y - px(self.scroll_top),
         );
-        Some(Bounds::new(origin, size(px(2.0), self.line_height)))
+        Some(Bounds::new(origin, size(px(CARET_WIDTH), self.line_height)))
     }
 
     fn character_index_for_point(

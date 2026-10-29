@@ -8,13 +8,13 @@
 use std::{rc::Rc, sync::Arc};
 
 use gpui::{
-    App, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, Window, div, img,
-    prelude::*, px,
+    AnyElement, App, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, Window,
+    div, img, prelude::*, px,
 };
-use studio_theme::Theme;
+use studio_theme::{METRICS, Theme};
 
 use super::metrics::{STRIP_GAP, STRIP_PAD_TOP, STRIP_PAD_X, STRIP_THUMB};
-use crate::kit::{Icon, IconButton, icon};
+use crate::kit::{Chip, Emphasis, Icon, IconButton, IconButtonSize, Tone};
 
 /// Identifies a chip. Ids only grow within one composer, so a stale id from a
 /// removed chip never names a newer one.
@@ -146,6 +146,7 @@ pub fn strip(
             .flex()
             .flex_row()
             .flex_wrap()
+            .items_center()
             .gap(px(STRIP_GAP))
             .pt(px(STRIP_PAD_TOP))
             .px(px(STRIP_PAD_X))
@@ -154,83 +155,69 @@ pub fn strip(
     )
 }
 
+/// The timeline selection as a chip; its full label is the tooltip.
 fn context_chip(context: &ContextChip, theme: &Theme) -> impl IntoElement {
-    let (glyph, color) = if context.problem {
-        (Icon::AlertTriangle, theme.red_11)
+    let (glyph, tone) = if context.problem {
+        (Icon::AlertTriangle, Tone::Danger)
     } else {
-        (Icon::Layers, theme.editor.accent)
+        (Icon::Layers, Tone::Info)
     };
     let (tip_theme, tip) = (*theme, context.label.clone());
     div()
         .id("composer-context")
         .tooltip_show_delay(crate::kit::TOOLTIP_SHOW_DELAY)
         .tooltip(move |_, cx| crate::kit::Tooltip::new(&tip_theme, tip.clone()).view(cx))
-        .flex_none()
-        .h(px(28.0))
-        .max_w(px(260.0))
-        .flex()
-        .items_center()
-        .gap(px(6.0))
-        .px(px(8.0))
-        .rounded(px(8.0))
-        .border_1()
-        .border_color(theme.gray(6))
-        .bg(theme.gray(3))
-        .child(icon(glyph, 12.0, color))
         .child(
-            div()
-                .text_size(px(12.0))
-                .text_color(theme.gray(12))
-                .truncate()
-                .child(context.label.clone()),
+            Chip::new(theme, "composer-context-chip", context.label.clone())
+                .icon(glyph)
+                .tone(tone),
         )
 }
 
-fn chip(attachment: &Attachment, theme: &Theme, on_remove: RemoveHandler) -> impl IntoElement {
+fn chip(attachment: &Attachment, theme: &Theme, on_remove: RemoveHandler) -> AnyElement {
     let id = attachment.id;
     let label = attachment.draft.label.clone();
-    let remove = IconButton::new(("attachment-remove", id.0 as usize), Icon::X.path())
-        .size(px(16.0))
-        .icon_size(px(10.0))
-        .rounded(px(8.0))
-        .color(theme.gray(12))
-        .filled(theme.gray(4), Some(theme.gray(6)))
-        .hover_bg(theme.gray(5))
-        .label(format!("Remove {label}"))
-        .tooltip(theme, "Remove")
-        .on_click(move |_, window, cx| on_remove(id, window, cx));
-    let base = div()
-        .id(("attachment", id.0 as usize))
-        .relative()
-        .flex_none()
-        .rounded(px(8.0))
-        .border_1()
-        .border_color(theme.gray(6))
-        .bg(theme.gray(3));
-    let body = match (&attachment.draft.kind, &attachment.draft.image) {
-        (AttachmentKind::Image, Some(image)) => base.size(px(STRIP_THUMB)).overflow_hidden().child(
-            img(image.clone())
-                .size_full()
-                .object_fit(gpui::ObjectFit::Cover),
-        ),
-        _ => base
-            .h(px(28.0))
-            .max_w(px(180.0))
-            .flex()
-            .items_center()
-            .gap(px(6.0))
-            .pl(px(8.0))
-            .pr(px(24.0))
-            .child(icon(Icon::File, 12.0, theme.gray(11)))
-            .child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(theme.gray(12))
-                    .truncate()
-                    .child(label),
-            ),
-    };
-    body.child(div().absolute().top(px(2.0)).right(px(2.0)).child(remove))
+    match (&attachment.draft.kind, &attachment.draft.image) {
+        (AttachmentKind::Image, Some(image)) => {
+            let group = SharedString::from(format!("attachment-{}", id.0));
+            let remove =
+                IconButton::new(theme, ("attachment-remove", id.0 as usize), Icon::X.path())
+                    .size(IconButtonSize::Sm)
+                    .emphasis(Emphasis::Neutral)
+                    .round()
+                    .label(format!("Remove {label}"))
+                    .tooltip("Remove")
+                    .on_click(move |_, window, cx| on_remove(id, window, cx));
+            div()
+                .id(("attachment", id.0 as usize))
+                .group(group.clone())
+                .relative()
+                .flex_none()
+                .size(px(STRIP_THUMB))
+                .rounded(crate::agent::ui::ITEM_RADIUS)
+                .overflow_hidden()
+                .bg(theme.colors.ctl)
+                .child(
+                    img(image.clone())
+                        .size_full()
+                        .object_fit(gpui::ObjectFit::Cover),
+                )
+                .child(
+                    div()
+                        .absolute()
+                        .top(px(METRICS.space_1))
+                        .right(px(METRICS.space_1))
+                        .invisible()
+                        .group_hover(group, |style| style.visible())
+                        .child(remove),
+                )
+                .into_any_element()
+        }
+        _ => Chip::new(theme, ("attachment", id.0 as usize), label)
+            .icon(Icon::File)
+            .removable(move |window, cx| on_remove(id, window, cx))
+            .into_any_element(),
+    }
 }
 
 #[cfg(test)]

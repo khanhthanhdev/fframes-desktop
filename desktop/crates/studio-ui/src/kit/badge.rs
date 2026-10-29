@@ -18,23 +18,28 @@ pub enum Tone {
 /// Solid colour that represents `tone` (dot fill, notice bar, icon).
 pub fn tone_color(theme: &Theme, tone: Tone) -> Rgba {
     match tone {
-        Tone::Neutral => theme.editor.text_3,
-        Tone::Info => theme.editor.accent,
-        Tone::Success => theme.green_11,
-        Tone::Warning => theme.amber_11,
-        Tone::Danger => theme.red_11,
+        Tone::Neutral => theme.colors.text_3,
+        Tone::Info => theme.colors.accent,
+        Tone::Success => theme.colors.success,
+        Tone::Warning => theme.colors.warning,
+        Tone::Danger => theme.colors.danger,
     }
 }
 
 /// Soft background for `tone`; neutral and info use the control fill.
 pub fn tone_surface(theme: &Theme, tone: Tone) -> Rgba {
     match tone {
-        Tone::Neutral | Tone::Info => theme.editor.ctl,
-        Tone::Success => theme.green_3,
-        Tone::Warning => theme.amber_3,
-        Tone::Danger => theme.red_3,
+        Tone::Neutral | Tone::Info => theme.colors.ctl,
+        Tone::Success => theme.colors.success_bg,
+        Tone::Warning => theme.colors.warning_bg,
+        Tone::Danger => theme.colors.danger_bg,
     }
 }
+
+/// A badge's padding and a status dot's diameter.
+const BADGE_PAD_X: f32 = 6.;
+const BADGE_PAD_Y: f32 = 2.;
+const DOT: f32 = 6.;
 
 #[derive(IntoElement)]
 pub struct Badge {
@@ -60,13 +65,13 @@ impl RenderOnce for Badge {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::for_window(window, cx);
         let (fill, text) = match self.tone {
-            Tone::Neutral => (theme.editor.ctl, theme.editor.text_2),
+            Tone::Neutral => (theme.colors.ctl, theme.colors.text_2),
             tone => (tone_surface(&theme, tone), tone_color(&theme, tone)),
         };
         text_style(div(), TextStyle::Caption)
             .flex_none()
-            .px(px(6.))
-            .py(px(2.))
+            .px(px(BADGE_PAD_X))
+            .py(px(BADGE_PAD_Y))
             .rounded_full()
             .bg(fill)
             .text_color(text)
@@ -89,7 +94,7 @@ impl RenderOnce for StatusDot {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::for_window(window, cx);
         div()
-            .size(px(6.))
+            .size(px(DOT))
             .flex_none()
             .rounded_full()
             .bg(tone_color(&theme, self.tone))
@@ -106,16 +111,16 @@ mod tests {
     fn tones_map_to_the_theme() {
         for appearance in [Appearance::Light, Appearance::Dark] {
             let theme = Theme::new(appearance);
-            assert_eq!(tone_color(&theme, Tone::Neutral), theme.editor.text_3);
-            assert_eq!(tone_color(&theme, Tone::Info), theme.editor.accent);
-            assert_eq!(tone_color(&theme, Tone::Success), theme.green_11);
-            assert_eq!(tone_color(&theme, Tone::Warning), theme.amber_11);
-            assert_eq!(tone_color(&theme, Tone::Danger), theme.red_11);
-            assert_eq!(tone_surface(&theme, Tone::Neutral), theme.editor.ctl);
-            assert_eq!(tone_surface(&theme, Tone::Info), theme.editor.ctl);
-            assert_eq!(tone_surface(&theme, Tone::Success), theme.green_3);
-            assert_eq!(tone_surface(&theme, Tone::Warning), theme.amber_3);
-            assert_eq!(tone_surface(&theme, Tone::Danger), theme.red_3);
+            assert_eq!(tone_color(&theme, Tone::Neutral), theme.colors.text_3);
+            assert_eq!(tone_color(&theme, Tone::Info), theme.colors.accent);
+            assert_eq!(tone_color(&theme, Tone::Success), theme.colors.success);
+            assert_eq!(tone_color(&theme, Tone::Warning), theme.colors.warning);
+            assert_eq!(tone_color(&theme, Tone::Danger), theme.colors.danger);
+            assert_eq!(tone_surface(&theme, Tone::Neutral), theme.colors.ctl);
+            assert_eq!(tone_surface(&theme, Tone::Info), theme.colors.ctl);
+            assert_eq!(tone_surface(&theme, Tone::Success), theme.colors.success_bg);
+            assert_eq!(tone_surface(&theme, Tone::Warning), theme.colors.warning_bg);
+            assert_eq!(tone_surface(&theme, Tone::Danger), theme.colors.danger_bg);
         }
     }
 }

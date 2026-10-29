@@ -88,6 +88,10 @@ pub struct CompatibilityManifest {
     pub cargo_fframes_version: String,
     /// Version of `fframes-studio-runtime` and `fframes-studio-protocol`.
     pub runtime_version: String,
+    /// Version of `fframes-kit` vendored in the SDK; `None` for an SDK without the kit.
+    /// Not written when absent, so the digest of those manifests stays the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kit_version: Option<String>,
     pub artifacts: Vec<SdkArtifact>,
     pub ffmpeg: FfmpegManifestInfo,
     pub host_prerequisites: Vec<HostPrerequisiteProbe>,
@@ -166,6 +170,11 @@ impl CompatibilityManifest {
                 self.runtime_version
             ))
         })?;
+        if let Some(kit_version) = &self.kit_version {
+            Version::parse(kit_version).map_err(|error| {
+                ManifestError::Validation(format!("invalid kit_version '{kit_version}': {error}"))
+            })?;
+        }
 
         // Validate ffmpeg relative paths
         for path_str in [&self.ffmpeg.headers_rel_path, &self.ffmpeg.libs_rel_path] {
@@ -314,7 +323,7 @@ mod tests {
         assert!(!json.contains("preview_contract"));
         assert_eq!(
             manifest.digest(),
-            "69844c9c836606ee4ad359616e359af1d1f9bba9c03f29d323ed2d41eee53ffd"
+            "b122d5d7e7af533eed9dd9c32ab5a746005a41bd23287b3584a71a938b7293c8"
         );
     }
 
@@ -344,6 +353,35 @@ mod tests {
         invalid.runtime_version = "one".into();
         assert!(matches!(
             invalid.validate(),
+            Err(ManifestError::Validation(_))
+        ));
+    }
+
+    #[test]
+    fn kit_version_is_optional_and_validated() {
+        let manifest = CompatibilityManifest::default_linux_x64();
+        assert_eq!(
+            manifest.kit_version, None,
+            "manifests before the kit still load"
+        );
+        assert!(
+            !serde_json::to_string(&manifest)
+                .unwrap()
+                .contains("kit_version")
+        );
+
+        let mut with_kit = manifest.clone();
+        with_kit.kit_version = Some("0.1.0".into());
+        let json = serde_json::to_string(&with_kit).unwrap();
+        assert_eq!(
+            CompatibilityManifest::from_json_str(&json).unwrap(),
+            with_kit
+        );
+        assert_ne!(with_kit.digest(), manifest.digest());
+
+        with_kit.kit_version = Some("latest".into());
+        assert!(matches!(
+            with_kit.validate(),
             Err(ManifestError::Validation(_))
         ));
     }

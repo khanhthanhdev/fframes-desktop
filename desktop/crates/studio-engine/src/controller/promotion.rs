@@ -13,7 +13,8 @@ use crate::{
     edit_transaction::{
         ApplyGate, Boundary, Executor, Fault, FileState, Interrupt, Outcome, PlanError,
         PromotionError, RecordSeed, TaskEvent, TaskRevisionRecord, TransactionIntent,
-        TransactionKind, invert, mode_conflicts, plan, prompt_summary, touched_conflicts,
+        TransactionKind, invert, keep_changed_run_time_documents, mode_conflicts, plan,
+        prompt_summary, touched_conflicts,
     },
 };
 use sha2::{Digest, Sha256};
@@ -483,6 +484,8 @@ impl Controller {
         undoes_paths: Option<Vec<String>>,
     ) -> Result<UndoPreparation, EngineError> {
         let current = self.project.inventory.clone();
+        // A run-time document the person edited since is kept as it is now.
+        let changes = keep_changed_run_time_documents(changes, &current);
         let mut conflicts = touched_conflicts(&changes, &current);
         // Content can match while the permission bits do not: the exact inverse is only
         // guarded where the file still has the bits the edit left.

@@ -11,13 +11,7 @@ use gpui::{
 use studio_theme::{METRICS, Theme};
 
 use super::StudioShell;
-use crate::kit::windows_caption_controls;
-
-/// Cap's settings window: 782 × 775, never narrower than 780 × 560.
-const SETTINGS_SIZE: (f32, f32) = (782., 775.);
-const SETTINGS_MIN_SIZE: (f32, f32) = (780., 560.);
-/// Cap's title strip on Windows, across both columns, holding the caption buttons.
-const WINDOWS_TITLE_H: f32 = 36.;
+use crate::kit::{SETTINGS_NAV_PAD, windows_caption_controls};
 
 pub(super) struct SettingsWindow {
     shell: Entity<StudioShell>,
@@ -29,7 +23,9 @@ pub(super) struct SettingsWindow {
 impl SettingsWindow {
     /// Opens the window for `shell` and focuses it.
     pub(super) fn open(shell: Entity<StudioShell>, cx: &mut App) -> Option<WindowHandle<Self>> {
-        let bounds = Bounds::centered(None, size(px(SETTINGS_SIZE.0), px(SETTINGS_SIZE.1)), cx);
+        // Cap's settings window: 782 × 775, never narrower than 780 × 560.
+        let layout = METRICS.layout;
+        let bounds = Bounds::centered(None, size(px(layout.settings_w), px(layout.settings_h)), cx);
         let handle = cx
             .open_window(
                 WindowOptions {
@@ -39,12 +35,18 @@ impl SettingsWindow {
                     titlebar: Some(TitlebarOptions {
                         title: Some("fframes Studio Settings".into()),
                         appears_transparent: true,
-                        traffic_light_position: Some(point(px(20.), px(20.))),
+                        traffic_light_position: Some(point(
+                            px(layout.traffic_light_inset),
+                            px(layout.traffic_light_inset),
+                        )),
                     }),
                     app_owns_titlebar_drag: true,
                     // A normal window: a floating one hides whenever the app deactivates.
                     kind: WindowKind::Normal,
-                    window_min_size: Some(size(px(SETTINGS_MIN_SIZE.0), px(SETTINGS_MIN_SIZE.1))),
+                    window_min_size: Some(size(
+                        px(layout.settings_min_w),
+                        px(layout.settings_min_h),
+                    )),
                     ..Default::default()
                 },
                 |window, cx| {
@@ -117,8 +119,8 @@ impl Render for SettingsWindow {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.settings_content_bg())
-            .text_color(theme.settings_text())
+            .bg(theme.colors.window)
+            .text_color(theme.colors.text_1)
             .when(windows, |root| {
                 root.child(
                     div()
@@ -126,10 +128,10 @@ impl Render for SettingsWindow {
                         .flex_none()
                         .justify_end()
                         .w_full()
-                        .h(px(WINDOWS_TITLE_H))
-                        .bg(theme.header_bg())
+                        .h(px(METRICS.layout.windows_title_h))
+                        .bg(theme.colors.window)
                         .border_b_1()
-                        .border_color(theme.header_border())
+                        .border_color(theme.colors.line)
                         .window_control_area(WindowControlArea::Drag)
                         .child(windows_caption_controls(
                             &theme,
@@ -152,7 +154,7 @@ fn nav_header() -> Option<gpui::AnyElement> {
             .flex_none()
             .w_full()
             // The nav column's padding brings the first row down to the header's height.
-            .h(px(METRICS.header_h - 10.))
+            .h(px(METRICS.layout.header_h - SETTINGS_NAV_PAD))
             .on_mouse_down(MouseButton::Left, |event, window, _| {
                 if event.click_count == 2 {
                     window.titlebar_double_click();

@@ -186,10 +186,8 @@ pub struct NumberField {
 }
 
 impl NumberField {
-    /// The editor surface. Tailwind v4's bare `border` is `currentColor`, and
-    /// this project sets no compat default, so the box's hairline really is the
-    /// text colour rather than a gray step.
-    pub fn plain(theme: &Theme, text: impl Into<SharedString>) -> Self {
+    /// A `ctl` box behind a `line_strong` hairline, `text_1` digits and a `text_2` unit.
+    pub fn new(theme: &Theme, text: impl Into<SharedString>) -> Self {
         Self {
             text: text.into(),
             unit: None,
@@ -197,10 +195,10 @@ impl NumberField {
             focused: false,
             // `w-20`
             width: px(80.),
-            bg: Hsla::from(theme.gray_1),
-            border: Hsla::from(theme.gray_12),
-            text_color: Hsla::from(theme.gray_12),
-            unit_color: Hsla::from(theme.gray_11),
+            bg: Hsla::from(theme.colors.ctl),
+            border: Hsla::from(theme.colors.line_strong),
+            text_color: Hsla::from(theme.colors.text_1),
+            unit_color: Hsla::from(theme.colors.text_2),
         }
     }
 
@@ -290,7 +288,7 @@ mod tests {
     }
 
     #[test]
-    fn blur_reverts_an_unparseable_field_to_zero() {
+    fn blur_reverts_an_unparsable_field_to_zero() {
         let mut state = NumberFieldState::new(3., NumberLimits::default());
         state.set_text("");
         assert_eq!(state.blur(), Some(0.));

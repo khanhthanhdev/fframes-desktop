@@ -401,7 +401,13 @@ fn real_sdk_frame_audio_and_retained_source() {
 fn real_cpal_output_clock_mute_pause_seek_and_cleanup() {
     let (_temp, coordinator, ready, mut controller) = prepare_real();
     let service = AudioService::new(Instant::now());
-    service.stage(ready.clone(), 1, 0, OutputDevice::Default);
+    service.stage(
+        ready.clone(),
+        1,
+        0,
+        ready.timeline.total_frames,
+        OutputDevice::Default,
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     let output = loop {
         match service.event() {
@@ -451,8 +457,20 @@ fn real_cpal_output_clock_mute_pause_seek_and_cleanup() {
         "pause must stop the submitted cursor"
     );
 
-    service.stage(ready.clone(), 2, 30, OutputDevice::Default);
-    service.stage(ready.clone(), 3, 90, OutputDevice::Default);
+    service.stage(
+        ready.clone(),
+        2,
+        30,
+        ready.timeline.total_frames,
+        OutputDevice::Default,
+    );
+    service.stage(
+        ready.clone(),
+        3,
+        90,
+        ready.timeline.total_frames,
+        OutputDevice::Default,
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     let seek_output = loop {
         match service.event() {
@@ -484,7 +502,13 @@ fn real_cpal_output_clock_mute_pause_seek_and_cleanup() {
         "new epoch clock must be relative to its seek: {snapshot:?}"
     );
 
-    service.stage(ready.clone(), 4, 90, OutputDevice::Unavailable);
+    service.stage(
+        ready.clone(),
+        4,
+        90,
+        ready.timeline.total_frames,
+        OutputDevice::Unavailable,
+    );
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         match service.event() {
@@ -511,7 +535,13 @@ fn real_cpal_output_clock_mute_pause_seek_and_cleanup() {
     use std::io::Write;
     let mut file = fs::OpenOptions::new().write(true).open(path).unwrap();
     file.write_all(&f32::NAN.to_le_bytes()).unwrap();
-    service.stage(ready, 6, 0, OutputDevice::Default);
+    service.stage(
+        ready.clone(),
+        6,
+        0,
+        ready.timeline.total_frames,
+        OutputDevice::Default,
+    );
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         match service.event() {

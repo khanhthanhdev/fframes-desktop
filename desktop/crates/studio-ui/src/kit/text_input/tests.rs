@@ -248,6 +248,7 @@ fn layout_of(rows: &[Range<usize>], widths: &[f32]) -> InputLayout {
             line_height: px(20.),
             weight: FontWeight::NORMAL,
             marked: None,
+            color: gpui::transparent_black(),
         },
     }
 }
@@ -383,8 +384,8 @@ mod in_a_window {
                 .flex()
                 .flex_col()
                 .w(px(240.))
-                .child(TextInput::plain(&theme, "first", &self.first))
-                .child(TextInput::plain(&theme, "second", &self.second))
+                .child(TextInput::new(&theme, "first", &self.first))
+                .child(TextInput::new(&theme, "second", &self.second))
         }
     }
 

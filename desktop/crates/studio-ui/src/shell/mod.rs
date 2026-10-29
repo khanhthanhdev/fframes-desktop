@@ -1,5 +1,7 @@
+mod create;
 mod engine_events;
 mod export_panel;
+mod fixture;
 mod header;
 mod keymap;
 mod layout;
@@ -8,6 +10,7 @@ mod observation;
 mod onboarding;
 mod overflow;
 mod player;
+mod present;
 mod props_edits;
 mod review;
 mod sections;
@@ -46,18 +49,20 @@ use studio_theme::Theme;
 
 use crate::agent::{AgentSetupPage, Attention, ConversationPanel, PanelEvent};
 use crate::app_state::{AppEvent, AppState};
-use crate::kit::{EditorButton, Icon, IconButton, IconButtonSize, MenuState};
+use crate::kit::{Button, Emphasis, Icon, IconButton, IconButtonSize, MenuState};
 use crate::{
     canvas_view::CanvasViewState,
     frame_image::ImagePresentationManager,
     preset_panel::PresetPanel,
     props_panel::{PropsEvent, PropsPanel},
+    slides_panel::{SlidesEvent, SlidesPanel},
     timeline::{TimelineControls, TimelineEvent, TimelineView},
 };
 use left_column::SidebarTab;
 
 enum Picker {
-    Create,
+    /// The folder of a new project from the template.
+    Create(studio_project::ProjectTemplate),
     Restore,
     Open,
     Import,
@@ -130,10 +135,10 @@ pub struct StudioShell {
     _timeline_subscription: gpui::Subscription,
     /// The timeline's controls the transport and the header draw, as it last reported.
     timeline_controls: TimelineControls,
-    /// Timeline edits waiting for the engine, oldest first.
-    timeline_queue: VecDeque<studio_engine::timing::TimelineCommand>,
-    /// The timeline edit the engine is running.
-    timeline_in_flight: Option<(CommandId, studio_engine::timing::TimelineCommand)>,
+    /// Timeline and slide stop edits waiting for the engine, oldest first.
+    timeline_queue: VecDeque<timeline_edits::DocEdit>,
+    /// The timeline or slide stop edit the engine is running.
+    timeline_in_flight: Option<(CommandId, timeline_edits::DocEdit)>,
     /// The props generation last handed to the preview coordinator.
     props_sent: Option<u64>,
     /// The selection the coordinator was last asked the props of.
@@ -199,12 +204,22 @@ pub struct StudioShell {
     update_dismissed: bool,
     /// The appearance the cached header last rendered with, for the telemetry.
     header_appearance: std::cell::Cell<Option<studio_theme::Appearance>>,
+    /// The canvas message's toast at the foot of the stage; the player renders it.
+    canvas_toast: std::cell::RefCell<player::CanvasToast>,
+    /// The Create panel is open with this template chosen.
+    create_choice: Option<studio_project::ProjectTemplate>,
     overflow_open: bool,
     overflow_menu: MenuState,
     /// Where the overflow trigger was last painted; the menu opens against it.
     overflow_anchor: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
     overflow_focus: gpui::FocusHandle,
     painted_frame: Option<usize>,
+    /// The presentation under way (Present mode).
+    presenting: Option<present::PresentState>,
+    /// The full screen state the shell asked the window for.
+    fullscreen: present::Fullscreen,
+    /// What the next render restores after a presentation ended.
+    after_present: Option<present::AfterPresent>,
     /// The window's section views, created on the first render.
     sections: Option<sections::Sections>,
     /// Set while the accepted source is ahead of what the preview shows: a handoff that
@@ -218,6 +233,8 @@ pub struct StudioShell {
     _preset_subscription: gpui::Subscription,
     props_panel: gpui::Entity<PropsPanel>,
     _props_subscription: gpui::Subscription,
+    slides_panel: gpui::Entity<SlidesPanel>,
+    _slides_subscription: gpui::Subscription,
     agent: AgentHost,
     /// A promotion changed the source: take a fresh presentation (without cancelling the
     /// staged preview that was just adopted for exactly that source).
@@ -312,6 +329,7 @@ impl StudioShell {
                     shell.resume_scrub = false;
                 }
                 TimelineEvent::Edit(command) => shell.timeline_edit(command, cx),
+                TimelineEvent::Stop(command) => shell.slides_edit(command, cx),
                 TimelineEvent::ThumbnailsWanted => shell.request_thumbnails(cx),
                 TimelineEvent::Controls(controls) => shell.timeline_controls_changed(controls, cx),
                 TimelineEvent::ScopeChanged(scope) => {
@@ -357,6 +375,32 @@ impl StudioShell {
             |shell, _, event, window, cx| match event {
                 PropsEvent::Run(command) => shell.props_edit(command.clone(), cx),
                 PropsEvent::Leave => window.focus(&shell.focus, cx),
+            },
+        );
+        let slides_panel = cx.new(|cx| SlidesPanel::new(window, cx));
+        let slides_subscription = cx.subscribe_in(
+            &slides_panel,
+            window,
+            |shell, _, event, window, cx| match event {
+                SlidesEvent::Run(command) => shell.slides_edit(command.clone(), cx),
+                SlidesEvent::ScanStops => {
+                    if let Some(preview) = &shell.preview {
+                        preview.scan_stops();
+                    }
+                    cx.notify();
+                }
+                SlidesEvent::CancelScan => {
+                    if let Some(preview) = &shell.preview {
+                        preview.cancel_stop_scan();
+                    }
+                    cx.notify();
+                }
+                SlidesEvent::Seek(frame) => shell.seek_preview(*frame, cx),
+                SlidesEvent::AddAtPlayhead => shell
+                    .timeline
+                    .update(cx, |timeline, cx| timeline.add_stop_at_playhead(cx)),
+                SlidesEvent::PresentFrom(frame) => shell.present(Some(*frame), cx),
+                SlidesEvent::Leave => window.focus(&shell.focus, cx),
             },
         );
         let (engine, events) = EngineHandle::new(environment.clone(), app_version);
@@ -494,6 +538,8 @@ impl StudioShell {
             _preset_subscription: preset_subscription,
             props_panel,
             _props_subscription: props_subscription,
+            slides_panel,
+            _slides_subscription: slides_subscription,
             agent,
             refresh_wanted: false,
             presentation_refresh_pending: false,
@@ -534,11 +580,16 @@ impl StudioShell {
             update: settings::UpdateCheck::NotChecked,
             update_dismissed: false,
             header_appearance: std::cell::Cell::new(None),
+            canvas_toast: Default::default(),
+            create_choice: None,
             overflow_open: false,
             overflow_menu: MenuState::new(gpui::Point::default(), &[]),
             overflow_anchor: Default::default(),
             overflow_focus: cx.focus_handle(),
             painted_frame: None,
+            presenting: None,
+            fullscreen: present::Fullscreen::default(),
+            after_present: None,
             sections: None,
         };
         shell.dispatch(Command::Initialize, cx);
@@ -573,20 +624,20 @@ impl StudioShell {
         glyph: Option<Icon>,
         cx: &mut Context<Self>,
         action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
-    ) -> EditorButton {
+    ) -> Button {
         let theme = self.theme;
         let entity = cx.entity();
         let probe = self.bounds_probe(&gpui::ElementId::Name(id.into()), cx);
-        let mut button = EditorButton::plain(&theme, id)
+        let mut button = Button::new(&theme, id)
             .label(label)
             .disabled(!enabled)
             .on_click(move |_, _, cx| {
                 entity.update(cx, |shell, cx| action(shell, cx));
             });
         button = if primary {
-            button.accent(&theme)
+            button.emphasis(Emphasis::Primary)
         } else {
-            button.filled(&theme)
+            button.emphasis(Emphasis::Neutral)
         };
         if let Some(glyph) = glyph {
             button = button.left_icon(glyph.path());
@@ -613,10 +664,10 @@ impl StudioShell {
         let theme = self.theme;
         let entity = cx.entity();
         let probe = self.bounds_probe(&gpui::ElementId::Name(id.into()), cx);
-        let button = IconButton::editor(&theme, id, glyph.path())
-            .editor_size(size)
+        let button = IconButton::new(&theme, id, glyph.path())
+            .size(size)
             .label(label)
-            .tooltip(&theme, label)
+            .tooltip(label)
             .disabled(!enabled)
             .on_click(move |_, _, cx| {
                 entity.update(cx, |shell, cx| action(shell, cx));

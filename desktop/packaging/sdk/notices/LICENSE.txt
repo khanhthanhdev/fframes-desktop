@@ -11,3 +11,5 @@ This distribution and its managed SDK artifacts may incorporate components from:
    Copyright (c) Yevhenii Reizner
 5. Skia and the libraries built into its prebuilt archive (BSD-3-Clause and others)
    Copyright (c) Google Inc.; see skia-LICENSE.txt
+6. OpenH264 (BSD-2-Clause), an H.264 encoder built into FFmpeg (v2.7.0 on macOS and Linux)
+   Copyright (c) 2013, Cisco Systems; see openh264-LICENSE.txt

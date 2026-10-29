@@ -1,6 +1,9 @@
-//! The panel's small building blocks: key routing in fields, buttons, segments, tabs and text lines.
+//! The panel's small building blocks: key routing in fields, buttons, tabs and text lines.
 
 use super::*;
+
+/// Reports a tab's bounds to its probe.
+type BoundsReport = Rc<dyn Fn(gpui::Bounds<gpui::Pixels>, &mut gpui::App)>;
 
 impl ConversationPanel {
     /// Key routing for one text field. The composition state is the field's own, read at
@@ -93,22 +96,18 @@ impl ConversationPanel {
         id: impl Into<ElementId>,
         label: impl Into<SharedString>,
         enabled: bool,
-        tone: Tone,
+        emphasis: Emphasis,
         cx: &mut Context<Self>,
         action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) -> EditorButton {
+    ) -> Button {
         let theme = self.theme;
         let id: ElementId = id.into();
         let probe = Self::bounds_probe(&id, cx);
-        let button = EditorButton::plain(&theme, id)
+        let button = Button::new(&theme, id)
             .label(label)
+            .emphasis(emphasis)
             .disabled(!enabled)
             .on_click(Self::click(cx, action));
-        let button = match tone {
-            Tone::Normal => button.filled(&theme),
-            Tone::Primary => button.accent(&theme),
-            Tone::Danger => button.destructive(&theme),
-        };
         match probe {
             Some(probe) => button.on_bounds(probe.into_bounds_handler()),
             None => button,
@@ -121,101 +120,78 @@ impl ConversationPanel {
         id: impl Into<ElementId>,
         glyph: Icon,
         label: &'static str,
-        tone: Tone,
+        emphasis: Emphasis,
         cx: &mut Context<Self>,
         action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> IconButton {
         let theme = self.theme;
         let id: ElementId = id.into();
         let probe = Self::bounds_probe(&id, cx);
-        let mut button = IconButton::editor(&theme, id, glyph.path())
-            .editor_size(IconButtonSize::Small)
+        let button = IconButton::new(&theme, id, glyph.path())
+            .size(IconButtonSize::Sm)
+            .emphasis(emphasis)
             .label(label)
-            .tooltip(&theme, label)
+            .tooltip(label)
             .on_click(Self::click(cx, action));
-        if let Some(probe) = probe {
-            button = button.on_bounds(probe.into_bounds_handler());
-        }
-        match tone {
-            Tone::Normal => button,
-            Tone::Primary => button.accent(&theme),
-            Tone::Danger => button.destructive(&theme),
+        match probe {
+            Some(probe) => button.on_bounds(probe.into_bounds_handler()),
+            None => button,
         }
     }
 
-    /// One item of a segmented rail: the selected item is highlighted and inert.
-    pub(super) fn segment_item(
-        &self,
-        id: impl Into<ElementId>,
-        label: impl Into<SharedString>,
-        selected: bool,
-        cx: &mut Context<Self>,
-        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) -> EditorButton {
-        let id: ElementId = id.into();
-        let probe = Self::bounds_probe(&id, cx);
-        let mut button = EditorButton::plain(&self.theme, id)
-            .label(label)
-            .pressed(selected);
-        if let Some(probe) = probe {
-            button = button.on_bounds(probe.into_bounds_handler());
-        }
-        if selected {
-            button
-        } else {
-            button.on_click(Self::click(cx, action))
-        }
-    }
-
-    pub(super) fn segment_rail(&self) -> gpui::Div {
-        div()
-            .flex()
-            .flex_wrap()
-            .items_center()
-            .gap(px(2.))
-            .p(px(2.))
-            .rounded(px(METRICS.radius_control + 2.))
-            .bg(self.theme.editor.ctl)
-    }
-
-    pub(super) fn tab_item(
-        &self,
-        tab: Tab,
-        label: &'static str,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let active = self.tab == tab;
-        // The Changes tab keeps the id it had as "Project".
-        let id = match tab {
-            Tab::Project => "Project",
-            _ => label,
-        };
-        self.segment_item(
-            format!("agent-tab-{id}"),
-            label,
-            active,
-            cx,
-            move |this, _, cx| {
-                this.tab = tab;
-                if tab == Tab::History {
-                    this.refresh_sessions(cx);
+    /// The panel's tabs on a segmented control. Each option keeps the id and the probed
+    /// bounds it had as a button (the Changes tab is still `agent-tab-Project`).
+    pub(super) fn tabs(&mut self, cx: &mut Context<Self>) -> SegmentedControl {
+        const TABS: [(Tab, &str, &str); 3] = [
+            (Tab::Chat, "Chat", "agent-tab-Chat"),
+            (Tab::History, "History", "agent-tab-History"),
+            (Tab::Project, "Changes", "agent-tab-Project"),
+        ];
+        let options = TABS
+            .iter()
+            .map(|(tab, label, id)| SegmentOption::new(*label, self.tab == *tab).id(*id))
+            .collect();
+        let reports: Vec<Option<BoundsReport>> = TABS
+            .iter()
+            .map(|(_, _, id)| {
+                Self::bounds_probe(&ElementId::from(*id), cx)
+                    .map(|probe| Rc::new(probe.into_bounds_handler()) as BoundsReport)
+            })
+            .collect();
+        let entity = cx.entity();
+        SegmentedControl::new(&self.theme, "agent-tab", options)
+            .on_select(move |index, _, cx| {
+                let Some((tab, ..)) = TABS.get(*index).copied() else {
+                    return;
+                };
+                entity.update(cx, |this, cx| {
+                    if this.tab != tab {
+                        this.tab = tab;
+                        if tab == Tab::History {
+                            this.refresh_sessions(cx);
+                        }
+                        cx.notify();
+                    }
+                });
+            })
+            .on_option_bounds(move |index, bounds, cx| {
+                if let Some(Some(report)) = reports.get(index) {
+                    report(bounds, cx);
                 }
-                cx.notify();
-            },
-        )
+            })
     }
 
     /// A titled group on a nested card.
     pub(super) fn section(&self, title: &str) -> gpui::Div {
         let theme = self.theme;
-        Card::editor_nested(&theme)
+        Card::nested(&theme)
             .flex()
             .flex_col()
             .gap(px(METRICS.space_2))
             .p(px(METRICS.space_3))
             .child(
                 text_style(div(), TextStyle::Label)
-                    .text_color(theme.editor.text_1)
+                    .text_color(theme.colors.text_1)
                     .child(selectable(title.to_owned())),
             )
     }
@@ -234,7 +210,7 @@ impl ConversationPanel {
 
     pub(super) fn caption(&self, text: &str) -> gpui::Div {
         text_style(div(), TextStyle::Small)
-            .text_color(self.theme.editor.text_3)
+            .text_color(self.theme.colors.text_3)
             .child(selectable(text.to_owned()))
     }
 }

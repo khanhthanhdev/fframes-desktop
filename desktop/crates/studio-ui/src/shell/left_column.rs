@@ -1,7 +1,7 @@
-//! The tabbed sidebar right of the player (Agent, Project, Assets and Style), and the empty
-//! state with recent projects.
+//! The tabbed sidebar right of the player (Agent, Project, Assets, Style, Props and Slides),
+//! and the empty state with recent projects.
 
-use std::path::PathBuf;
+use std::path::Path;
 
 use gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
@@ -14,9 +14,9 @@ use super::sections::{Section, box_probe, section_probe};
 use super::settings::SettingsPage;
 use super::{Picker, StudioShell};
 use crate::kit::{
-    Badge, Card, CollapsibleSection, DISABLED_OPACITY, EditorButton, Handler, Icon, IconButton,
-    IconButtonSize, StatusDot, TabRail, TabRailItem, Tone, divider, focusable, heading, icon,
-    muted, on_activate, section_title, selectable, with_tooltip,
+    Badge, Button, ButtonSize, Card, CollapsibleSection, Divider, Emphasis, EmptyState, FormField,
+    Icon, IconButton, IconButtonSize, List, ListRow, PanelSection, StatusDot, TabRail, TabRailItem,
+    Tone, selectable,
 };
 
 impl StudioShell {
@@ -32,21 +32,7 @@ impl StudioShell {
         let entity = cx.entity();
         let selected = self.sidebar_tab;
         let attention = self.agent_attention.waiting && selected != SidebarTab::Agent;
-        let rail = TabRail::editor(
-            &theme,
-            "sidebar-tabs",
-            theme.editor.card.into(),
-            SidebarTab::ALL
-                .iter()
-                .map(|tab| {
-                    TabRailItem::new(tab.icon().path(), tab.name(), selected == *tab, false)
-                        .id(format!("sidebar-tab-{}", tab.name()))
-                        .dot(*tab == SidebarTab::Agent && attention)
-                })
-                .collect(),
-        )
-        .height(px(METRICS.tab_bar_h))
-        .on_select(move |index, _, cx| {
+        let rail = tab_rail(&theme, selected, attention).on_select(move |index, _, cx| {
             entity.update(cx, |shell, cx| {
                 shell.select_sidebar_tab(SidebarTab::from_index(*index), cx)
             });
@@ -55,7 +41,7 @@ impl StudioShell {
             SidebarTab::Agent => sections.agent.clone(),
             _ => sections.drawer.clone(),
         };
-        Card::editor(&theme)
+        Card::raised(&theme)
             .relative()
             .size_full()
             .flex()
@@ -74,12 +60,13 @@ impl StudioShell {
         }
     }
 
-    /// The selected Project, Assets, Style or Props tab's contents (a cached section).
+    /// The selected Project, Assets, Style, Props or Slides tab's contents (a cached section).
     pub(super) fn render_drawer(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let content = match self.sidebar_tab {
             SidebarTab::Assets => self.render_assets_tab(cx),
             SidebarTab::Style => self.render_style_tab(cx),
             SidebarTab::Props => self.props_panel.clone().into_any_element(),
+            SidebarTab::Slides => self.slides_panel.clone().into_any_element(),
             // The Agent tab draws the agent section instead; this one is not in the tree.
             SidebarTab::Project | SidebarTab::Agent => self.render_project_tab(cx),
         };
@@ -96,120 +83,65 @@ impl StudioShell {
             .into_any_element()
     }
 
-    /// A 28 px file row: icon, truncated name, hover fill. The full name is the tooltip.
-    fn list_row(
-        &self,
-        id: String,
-        label: String,
-        glyph: Icon,
-        cx: &mut Context<Self>,
-        action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
-    ) -> gpui::Stateful<gpui::Div> {
-        let theme = self.theme;
-        let entity = cx.entity();
-        let handler: Handler = std::rc::Rc::new(move |_, cx| {
-            entity.update(cx, |shell, cx| action(shell, cx));
-        });
-        let row = div()
-            .id(id)
-            .role(gpui::Role::Button)
-            .aria_label(label.clone())
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(METRICS.space_2))
-            .h(px(LIST_ROW_H))
-            .px(px(METRICS.space_2))
-            .min_w_0()
-            .rounded(px(METRICS.radius_item))
-            .hover(move |style| style.bg(theme.editor.ctl_hover))
-            .child(icon(glyph, METRICS.icon_sm, theme.editor.text_2))
-            .child(
-                text_style(div().min_w_0().flex_1().truncate(), TextStyle::Body)
-                    .text_color(theme.editor.text_1)
-                    .child(label.clone()),
-            );
-        let row = on_activate(
-            focusable(row, &theme, false).cursor_pointer(),
-            false,
-            Some(handler),
-        );
-        with_tooltip(row, &theme, Some(label.into()))
+    /// A project file's row: icon and name; a click reveals the file. The full name is the
+    /// tooltip.
+    fn file_row(&self, root: &Path, file: &str, glyph: Icon) -> ListRow {
+        let path = root.join(file);
+        ListRow::new(&self.theme, format!("file-{file}"))
+            .icon(glyph)
+            .title(file.to_owned())
+            .tooltip(file.to_owned())
+            .on_click(move |_, cx| cx.reveal_path(&path))
     }
 
     /// The file list of a project tab, or the hint shown while no project is open.
     fn file_list(
         &self,
         files: Option<&[String]>,
-        root: Option<PathBuf>,
+        root: Option<&Path>,
         glyph: Icon,
         empty: &'static str,
-        cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let theme = self.theme;
-        let mut list = div()
+        let list = match (files, root) {
+            (Some(files), Some(root)) => List::new()
+                .children(files.iter().map(|file| self.file_row(root, file, glyph)))
+                .empty(EmptyState::new(&theme, empty)),
+            _ => List::new().empty(EmptyState::new(
+                &theme,
+                "Create or open a project to browse its files.",
+            )),
+        };
+        div()
             .id("inventory")
             .flex_1()
             .min_h_0()
-            .flex()
-            .flex_col()
-            .overflow_y_scroll();
-        let (Some(files), Some(root)) = (files, root) else {
-            return list.child(
-                text_style(div(), TextStyle::Body)
-                    .text_color(theme.editor.text_2)
-                    .child(selectable("Create or open a project to browse its files.")),
-            );
-        };
-        if files.is_empty() {
-            list = list.child(
-                text_style(div(), TextStyle::Body)
-                    .text_color(theme.editor.text_2)
-                    .child(selectable(empty)),
-            );
-        }
-        for file in files {
-            let path = root.join(file);
-            list = list.child(self.list_row(
-                format!("file-{file}"),
-                file.clone(),
-                glyph,
-                cx,
-                move |_, cx| cx.reveal_path(&path),
-            ));
-        }
-        list
+            .overflow_y_scroll()
+            .child(list)
     }
 
     fn render_project_tab(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
         let project = self.presentation.project.clone();
-        let mut title = section_title(&theme, "Files");
-        if let Some(p) = &project {
-            title = title.child(Badge::new(p.file_count.to_string()));
-        }
         let files = self.file_list(
             project.as_ref().map(|p| p.files.as_slice()),
-            project.as_ref().map(|p| p.root.clone()),
+            project.as_ref().map(|p| p.root.as_path()),
             Icon::File,
             "No files to show",
-            cx,
         );
-        let mut tab = div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .gap(px(METRICS.space_2))
-            .child(title)
+        let mut section = PanelSection::new(&theme, "Files")
+            .grow()
+            .when_some(project.as_ref(), |section, p| {
+                section.trailing(Badge::new(p.file_count.to_string()))
+            })
             .child(files);
         if let Some(p) = &project
             && p.file_count > p.files.len()
         {
-            tab = tab.child(
+            section = section.child(
                 text_style(div(), TextStyle::Small)
                     .flex_none()
-                    .text_color(theme.editor.text_3)
+                    .text_color(theme.colors.text_3)
                     .child(selectable(format!(
                         "Showing {} of {} files",
                         p.files.len(),
@@ -217,21 +149,34 @@ impl StudioShell {
                     ))),
             );
         }
+        // The files and the library start at their content's height and share what is
+        // missing, so neither collapses in a short window.
+        let mut tab = div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_3))
+            .child(div().flex_auto().min_h_0().flex().flex_col().child(section));
 
         if project.is_some() {
             let entity = cx.entity();
             let library = div()
                 .id("left-library")
-                .flex_none()
-                .max_h(px(360.))
+                .min_h_0()
+                .max_h(px(METRICS.layout.library_max_h))
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
                 .gap(px(METRICS.space_3))
-                .child(divider(&self.theme))
+                .child(Divider::horizontal(&theme))
                 .child(
                     CollapsibleSection::new("recents-section", self.recents_open)
-                        .header(section_title(&self.theme, "Recent projects"))
+                        .header(
+                            text_style(div(), TextStyle::Label)
+                                .text_color(theme.colors.text_2)
+                                .child("Recent projects"),
+                        )
                         .content(div().pt(px(METRICS.space_2)).child(self.render_recents(cx)))
                         .on_toggle(move |open, _, cx| {
                             entity.update(cx, |shell, cx| {
@@ -249,19 +194,26 @@ impl StudioShell {
         let project = self.presentation.project.clone();
         let files = self.file_list(
             project.as_ref().map(|p| p.assets.as_slice()),
-            project.as_ref().map(|p| p.root.clone()),
+            project.as_ref().map(|p| p.root.as_path()),
             Icon::Image,
             "No assets imported",
-            cx,
         );
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .gap(px(METRICS.space_2))
-            .child(section_title(&self.theme, "Assets"))
-            .child(files)
+            .items_start()
+            .gap(px(METRICS.space_3))
+            .child(
+                div()
+                    .flex_1()
+                    .min_h_0()
+                    .w_full()
+                    .flex()
+                    .flex_col()
+                    .child(PanelSection::new(&self.theme, "Assets").grow().child(files)),
+            )
             .child(self.action_button(
                 "asset",
                 "Copy asset…",
@@ -276,42 +228,36 @@ impl StudioShell {
 
     fn render_style_tab(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
-        let mut tab = div()
+        let styles = self.presentation.project.as_ref().map(|p| {
+            PanelSection::new(&theme, "Style").child(
+                List::new()
+                    .children(
+                        p.styles
+                            .iter()
+                            .map(|file| self.file_row(&p.root, file, Icon::File)),
+                    )
+                    .empty(EmptyState::new(&theme, "No style preset configured")),
+            )
+        });
+        div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .gap(px(METRICS.space_2));
-        if let Some(p) = &self.presentation.project {
-            if p.styles.is_empty() {
-                tab = tab.child(
-                    text_style(div(), TextStyle::Small)
-                        .text_color(theme.editor.text_3)
-                        .child(selectable("No style preset configured")),
-                );
-            }
-            for file in &p.styles {
-                let path = p.root.join(file);
-                tab = tab.child(self.list_row(
-                    format!("file-{file}"),
-                    file.clone(),
-                    Icon::File,
-                    cx,
-                    move |_, cx| cx.reveal_path(&path),
-                ));
-            }
-        }
-        // The presets themselves are chosen in Settings → Presets.
-        tab.child(self.action_button(
-            "open-presets",
-            "Style presets…",
-            true,
-            false,
-            Some(Icon::Palette),
-            cx,
-            |s, cx| s.open_settings_page(SettingsPage::Presets, cx),
-        ))
-        .into_any_element()
+            .items_start()
+            .gap(px(METRICS.space_3))
+            .children(styles.map(|styles| div().w_full().child(styles)))
+            // The presets themselves are chosen in Settings → Presets.
+            .child(self.action_button(
+                "open-presets",
+                "Style presets…",
+                true,
+                false,
+                Some(Icon::Palette),
+                cx,
+                |s, cx| s.open_settings_page(SettingsPage::Presets, cx),
+            ))
+            .into_any_element()
     }
 
     /// The recent-projects list. Rendered once: in the left column while a project is
@@ -319,108 +265,26 @@ impl StudioShell {
     fn render_recents(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let theme = self.theme;
         let enabled = !self.busy;
-        let mut recents = div()
-            .id("recents")
-            .flex()
-            .flex_col()
-            .gap(px(METRICS.space_1));
-        if self.presentation.recents.is_empty() {
-            recents = recents.child(
-                text_style(div(), TextStyle::Body)
-                    .text_color(theme.editor.text_2)
-                    .child(selectable("No recent projects")),
-            );
-        }
-        for recent in self.presentation.recents.clone() {
+        let rows = self.presentation.recents.clone().into_iter().map(|recent| {
             let id = String::from(recent.id.clone());
-            let path = recent.path.clone();
-            let project_id = recent.id.clone();
-            let group = format!("recent-group-{id}");
-            let label = format!(
-                "{}{}",
-                recent.name,
-                if recent.missing { " · Missing" } else { "" }
-            );
-            let open_enabled = enabled && !recent.missing;
-            let entity = cx.entity();
-            let open: Handler = std::rc::Rc::new(move |_, cx| {
-                entity.update(cx, |shell, cx| {
-                    shell.dispatch(Command::Open(path.clone()), cx)
-                });
-            });
-            let mut name_line = div().flex().items_center().gap(px(METRICS.space_2)).child(
-                text_style(div().min_w_0().flex_1().truncate(), TextStyle::Body)
-                    .text_color(theme.editor.text_1)
-                    .child(recent.name.clone()),
-            );
-            if recent.missing {
-                name_line = name_line.child(Badge::new("Missing").tone(Tone::Warning));
-            }
-            let main = div()
-                .id(format!("recent-{id}"))
-                .role(gpui::Role::Button)
-                .aria_label(label)
-                .flex()
-                .flex_col()
-                .w_full()
-                .min_w_0()
-                .px(px(METRICS.space_2))
-                .py(px(METRICS.space_1))
-                .rounded(px(METRICS.radius_item))
-                .child(name_line)
-                .child(
-                    text_style(div().truncate(), TextStyle::Small)
-                        .text_color(theme.editor.text_3)
-                        .child(
-                            studio_bootstrap::external_path(&recent.path)
-                                .display()
-                                .to_string(),
-                        ),
-                );
-            let main = if open_enabled {
-                main.hover(move |style| style.bg(theme.editor.ctl_hover))
-                    .cursor_pointer()
-            } else {
-                main.opacity(DISABLED_OPACITY)
-            };
-            let main = on_activate(
-                focusable(main, &theme, !open_enabled),
-                !open_enabled,
-                Some(open),
-            );
-            let main = with_tooltip(
-                main,
-                &theme,
-                Some(
-                    studio_bootstrap::external_path(&recent.path)
-                        .display()
-                        .to_string()
-                        .into(),
-                ),
-            );
+            let shown_path = studio_bootstrap::external_path(&recent.path)
+                .display()
+                .to_string();
 
-            // Row actions appear on pointer hover and while keyboard focus is inside.
+            // Shown on pointer hover and while keyboard focus is inside them.
             let mut actions = div()
                 .id(format!("recent-actions-{id}"))
-                .focusable()
-                .absolute()
-                .top(px(METRICS.space_1))
-                .right(px(METRICS.space_1))
                 .flex()
                 .items_center()
-                .gap(px(METRICS.space_1))
-                .rounded(px(METRICS.radius_item))
-                .bg(theme.editor.ctl_hover)
-                .opacity(0.)
-                .group_hover(group.clone(), |style| style.opacity(1.))
-                .in_focus(|style| style.opacity(1.));
+                .gap(px(METRICS.space_1));
             for action in recent_row_actions(recent.missing) {
                 let entity = cx.entity();
-                let target = project_id.clone();
+                let target = recent.id.clone();
                 actions = actions.child(match action {
-                    "locate" => EditorButton::plain(&theme, format!("locate-{id}"))
+                    "locate" => Button::new(&theme, format!("locate-{id}"))
                         .label("Locate…")
-                        .filled(&theme)
+                        .size(ButtonSize::Sm)
+                        .emphasis(Emphasis::Neutral)
                         .disabled(!enabled)
                         .on_click(move |_, _, cx| {
                             entity.update(cx, |shell, cx| {
@@ -428,10 +292,10 @@ impl StudioShell {
                             });
                         })
                         .into_any_element(),
-                    _ => IconButton::editor(&theme, format!("remove-{id}"), Icon::X.path())
-                        .editor_size(IconButtonSize::Small)
+                    _ => IconButton::new(&theme, format!("remove-{id}"), Icon::X.path())
+                        .size(IconButtonSize::Sm)
                         .label("Remove recent")
-                        .tooltip(&theme, "Remove recent")
+                        .tooltip("Remove recent")
                         .disabled(!enabled)
                         .on_click(move |_, _, cx| {
                             entity.update(cx, |shell, cx| {
@@ -441,9 +305,31 @@ impl StudioShell {
                         .into_any_element(),
                 });
             }
-            recents = recents.child(div().relative().group(group).child(main).child(actions));
-        }
-        recents
+
+            let row = ListRow::new(&theme, format!("recent-{id}"))
+                .title(recent.name.clone())
+                .meta(shown_path.clone())
+                .tooltip(shown_path)
+                .action(actions);
+            if recent.missing {
+                // It cannot open; its actions still locate or remove it.
+                row.muted(true)
+                    .trailing(Badge::new("Missing").tone(Tone::Warning))
+            } else {
+                let entity = cx.entity();
+                let path = recent.path.clone();
+                row.disabled(!enabled).on_click(move |_, cx| {
+                    entity.update(cx, |shell, cx| {
+                        shell.dispatch(Command::Open(path.clone()), cx)
+                    });
+                })
+            }
+        });
+        div().id("recents").child(
+            List::new()
+                .children(rows.collect::<Vec<_>>())
+                .empty(EmptyState::new(&theme, "No recent projects")),
+        )
     }
 
     /// The managed SDK's status and its Install, Import and Select actions (Settings → SDK
@@ -457,63 +343,74 @@ impl StudioShell {
         } else {
             self.presentation.sdk.clone()
         };
+        let status_line = div()
+            .flex()
+            .items_center()
+            .gap(px(METRICS.space_2))
+            .child(StatusDot::new(sdk_status_tone(self.busy, sdk_ready)))
+            .child(
+                text_style(div().min_w_0().flex_1(), TextStyle::Small)
+                    .text_color(theme.colors.text_2)
+                    .child(selectable(status)),
+            );
         div()
             .flex()
             .flex_col()
-            .gap(px(METRICS.space_2))
-            .child(
-                div()
-                    .flex()
-                    .items_start()
-                    .gap(px(METRICS.space_2))
-                    .child(
-                        div()
-                            .pt(px(5.))
-                            .child(StatusDot::new(sdk_status_tone(self.busy, sdk_ready))),
-                    )
-                    .child(
-                        text_style(div().min_w_0().flex_1(), TextStyle::Small)
-                            .text_color(theme.editor.text_2)
-                            .child(selectable(status)),
-                    ),
-            )
-            .child(self.action_button(
-                "install",
-                "Install managed SDK",
-                enabled,
-                false,
-                None,
-                cx,
-                |s, cx| s.dispatch(Command::InstallSdk, cx),
-            ))
-            .child(self.action_button(
-                "import-sdk-bundle",
-                "Import offline SDK bundle…",
-                enabled,
-                false,
-                None,
-                cx,
-                |s, cx| s.pick(Picker::SdkBundle, cx),
-            ))
-            .when(self.presentation.sdk_repin.is_some(), |controls| {
-                controls.child(self.action_button(
-                    "use-installed-sdk",
-                    "Use installed SDK",
+            .gap(px(METRICS.space_1))
+            .child(FormField::stacked(&theme, "Status", status_line))
+            .child(FormField::row(
+                &theme,
+                "Managed SDK",
+                self.action_button(
+                    "install",
+                    "Install managed SDK",
                     enabled,
                     false,
                     None,
                     cx,
-                    |s, cx| s.dispatch(Command::UseInstalledSdk, cx),
+                    |s, cx| s.dispatch(Command::InstallSdk, cx),
+                ),
+            ))
+            .child(FormField::row(
+                &theme,
+                "Offline bundle",
+                self.action_button(
+                    "import-sdk-bundle",
+                    "Import offline SDK bundle…",
+                    enabled,
+                    false,
+                    None,
+                    cx,
+                    |s, cx| s.pick(Picker::SdkBundle, cx),
+                ),
+            ))
+            .when(self.presentation.sdk_repin.is_some(), |controls| {
+                controls.child(FormField::row(
+                    &theme,
+                    "Installed SDK",
+                    self.action_button(
+                        "use-installed-sdk",
+                        "Use installed SDK",
+                        enabled,
+                        false,
+                        None,
+                        cx,
+                        |s, cx| s.dispatch(Command::UseInstalledSdk, cx),
+                    ),
                 ))
             })
-            .child(self.action_button(
-                "sdk",
-                "Select installed SDK…",
-                enabled && self.presentation.project.is_some(),
-                false,
-                None,
-                cx,
-                |s, cx| s.pick(Picker::Sdk, cx),
+            .child(FormField::row(
+                &theme,
+                "This project",
+                self.action_button(
+                    "sdk",
+                    "Select installed SDK…",
+                    enabled && self.presentation.project.is_some(),
+                    false,
+                    None,
+                    cx,
+                    |s, cx| s.pick(Picker::Sdk, cx),
+                ),
             ))
     }
 
@@ -531,7 +428,7 @@ impl StudioShell {
                 true,
                 Some(Icon::Plus),
                 cx,
-                |s, cx| s.pick(Picker::Create, cx),
+                |s, cx| s.open_create(cx),
             ))
             .child(self.action_button(
                 "open",
@@ -553,7 +450,9 @@ impl StudioShell {
             ))
     }
 
+    /// The start screen: the app's name, the project actions and the recent projects.
     pub(super) fn render_empty_state(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme;
         let actions = self.project_actions(cx);
         div()
             .id("empty-state")
@@ -564,22 +463,46 @@ impl StudioShell {
             .items_center()
             .justify_center()
             .child(
-                Card::editor(&self.theme)
+                Card::raised(&theme)
                     .w_full()
-                    .max_w(px(520.))
+                    .max_w(px(METRICS.layout.start_max_w))
                     .max_h_full()
                     .flex()
                     .flex_col()
-                    .gap(px(METRICS.space_4))
+                    .gap(px(METRICS.space_6))
                     .p(px(METRICS.space_6))
-                    .child(heading(&self.theme, "fframes Studio"))
-                    .child(muted(
-                        &self.theme,
-                        "A native workspace for your video projects",
-                    ))
-                    .child(actions)
-                    .child(section_title(&self.theme, "Recent projects"))
-                    .child(self.render_recents(cx).max_h(px(260.)).overflow_y_scroll()),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(METRICS.space_4))
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(METRICS.space_1))
+                                    .child(
+                                        text_style(div(), TextStyle::Display)
+                                            .text_color(theme.colors.text_1)
+                                            .child(selectable("fframes Studio")),
+                                    )
+                                    .child(
+                                        text_style(div(), TextStyle::Body)
+                                            .text_color(theme.colors.text_2)
+                                            .child(selectable(
+                                                "A native workspace for your video projects",
+                                            )),
+                                    ),
+                            )
+                            .child(actions),
+                    )
+                    .child(
+                        PanelSection::new(&theme, "Recent projects").child(
+                            self.render_recents(cx)
+                                .max_h(px(METRICS.layout.start_recents_max_h))
+                                .overflow_y_scroll(),
+                        ),
+                    ),
             )
             .into_any_element()
     }
@@ -608,10 +531,8 @@ pub(super) enum SidebarTab {
     Assets,
     Style,
     Props,
+    Slides,
 }
-
-/// Height of a file or asset row.
-const LIST_ROW_H: f32 = 28.;
 
 /// The actions of a recent-project row, as the id prefix of each button: a missing
 /// project can be located, every project can be removed.
@@ -634,13 +555,34 @@ fn sdk_status_tone(busy: bool, ready: bool) -> Tone {
     }
 }
 
+/// The sidebar's tab rail with selected chosen; the Agent tab shows its dot when
+/// ttention is set. The gallery's shell fixture draws it too.
+pub(super) fn tab_rail(
+    theme: &studio_theme::Theme,
+    selected: SidebarTab,
+    attention: bool,
+) -> TabRail {
+    TabRail::new(
+        theme,
+        "sidebar-tabs",
+        SidebarTab::ALL
+            .iter()
+            .map(|tab| {
+                TabRailItem::new(tab.icon().path(), tab.name(), selected == *tab, false)
+                    .id(format!("sidebar-tab-{}", tab.name()))
+                    .dot(*tab == SidebarTab::Agent && attention)
+            })
+            .collect(),
+    )
+}
 impl SidebarTab {
-    const ALL: [SidebarTab; 5] = [
+    pub(super) const ALL: [SidebarTab; 6] = [
         SidebarTab::Agent,
         SidebarTab::Project,
         SidebarTab::Assets,
         SidebarTab::Style,
         SidebarTab::Props,
+        SidebarTab::Slides,
     ];
 
     /// Also the tab's element id, `sidebar-tab-{name}`.
@@ -651,6 +593,7 @@ impl SidebarTab {
             SidebarTab::Assets => "Assets",
             SidebarTab::Style => "Style",
             SidebarTab::Props => "Props",
+            SidebarTab::Slides => "Slides",
         }
     }
 
@@ -661,6 +604,7 @@ impl SidebarTab {
             SidebarTab::Assets => Icon::Image,
             SidebarTab::Style => Icon::Palette,
             SidebarTab::Props => Icon::Layers,
+            SidebarTab::Slides => Icon::Presentation,
         }
     }
 
@@ -689,7 +633,10 @@ mod tests {
     #[test]
     fn sidebar_tabs_keep_their_element_ids() {
         let names: Vec<_> = SidebarTab::ALL.iter().map(|t| t.name()).collect();
-        assert_eq!(names, ["Agent", "Project", "Assets", "Style", "Props"]);
+        assert_eq!(
+            names,
+            ["Agent", "Project", "Assets", "Style", "Props", "Slides"]
+        );
         for (index, tab) in SidebarTab::ALL.into_iter().enumerate() {
             assert_eq!(SidebarTab::from_index(index), tab);
         }

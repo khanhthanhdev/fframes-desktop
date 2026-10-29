@@ -23,10 +23,10 @@ use std::collections::{BTreeSet, HashSet};
 
 use gpui::{
     AnyElement, ClickEvent, Context, EventEmitter, InteractiveElement, IntoElement, ListAlignment,
-    ListOffset, ListState, ParentElement, Render, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, list, px,
+    ListOffset, ListState, ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement,
+    Styled, Window, div, list, px,
 };
-use studio_theme::{TextStyle, Theme, text_style};
+use studio_theme::{METRICS, MONO_FAMILY, TextStyle, Theme, text_style};
 
 pub use host::{ReviewHost, ReviewHostEvent, ReviewRequest, ReviewTarget};
 pub use model::{DiffFile, DiffMode, NotShown};
@@ -34,9 +34,9 @@ pub use source::Read;
 pub use source::{Facts, Loaded, ReviewBackend, facts, map_diffs};
 
 use model::{DiffRow, FileDiff, flatten_rows};
-use paint::{Colors, FILE_HEADER_H, HUNK_HEADER_H, Highlights, MONO_FAMILY, NOTICE_H, RowStyle};
+use paint::{Colors, FILE_HEADER_H, HUNK_HEADER_H, Highlights, NOTICE_H, RowStyle};
 
-use crate::kit::{Button, ButtonSize, ButtonVariant, Icon, SegmentOption, SegmentedControl, icon};
+use crate::kit::{Button, ButtonSize, Emphasis, Icon, SegmentOption, SegmentedControl, icon};
 
 /// Rows kept built beyond the viewport edges.
 const OVERDRAW_PX: f32 = 600.;
@@ -270,7 +270,7 @@ impl Changes {
         if let Some(&item_ix) = header {
             self.list.scroll_to(ListOffset {
                 item_ix,
-                offset_in_item: px(0.),
+                offset_in_item: Pixels::ZERO,
             });
             cx.notify();
         }
@@ -323,12 +323,12 @@ impl Changes {
             .id(SharedString::from(format!("changes-file-{file_ix}")))
             .w_full()
             .h(px(FILE_HEADER_H))
-            .px(px(10.))
+            .px(px(METRICS.space_3))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.))
-            .bg(colors.header_bg)
+            .gap(px(METRICS.space_2))
+            .bg(colors.header)
             .border_b_1()
             .border_color(colors.line)
             .text_color(colors.text)
@@ -341,7 +341,7 @@ impl Changes {
                 } else {
                     Icon::ChevronDown
                 },
-                14.,
+                METRICS.size.icon_sm,
                 colors.muted,
             ))
             .child(
@@ -379,12 +379,12 @@ impl Changes {
                 div()
                     .debug_selector(move || format!("changes-revert-{file_ix}"))
                     .child(
-                        Button::plain(
+                        Button::new(
                             theme,
                             SharedString::from(format!("changes-revert-button-{file_ix}")),
-                            ButtonVariant::Gray,
-                            ButtonSize::Xs,
                         )
+                        .emphasis(Emphasis::Neutral)
+                        .size(ButtonSize::Sm)
                         .label("Revert")
                         .disabled(busy)
                         .on_click(cx.listener(
@@ -423,7 +423,7 @@ impl Changes {
                     .debug_selector(move || format!("changes-notice-{file}-{notice}"))
                     .w_full()
                     .h(px(NOTICE_H))
-                    .px(px(12.))
+                    .px(px(METRICS.space_3))
                     .flex()
                     .items_center()
                     .text_color(colors.muted)
@@ -434,15 +434,13 @@ impl Changes {
                 let header = self.files[file as usize].hunks[hunk as usize]
                     .header
                     .clone();
-                div()
+                text_style(div(), TextStyle::CodeSmall)
                     .w_full()
                     .h(px(HUNK_HEADER_H))
-                    .px(px(12.))
+                    .px(px(METRICS.space_3))
                     .flex()
                     .items_center()
-                    .bg(colors.header_bg.opacity(0.5))
-                    .font_family(MONO_FAMILY)
-                    .text_size(px(11.))
+                    .bg(colors.hunk_header)
                     .text_color(colors.faint)
                     .child(SharedString::from(header))
                     .into_any_element()
@@ -478,13 +476,13 @@ impl Changes {
         let wrap = self.wrap;
         let mut bar = text_style(div(), TextStyle::Label)
             .w_full()
-            .h(px(40.))
+            .h(px(METRICS.layout.toolbar_h))
             .flex_none()
-            .px(px(10.))
+            .px(px(METRICS.space_3))
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(8.))
+            .gap(px(METRICS.space_2))
             .border_b_1()
             .border_color(colors.line)
             .text_color(colors.text)
@@ -505,7 +503,7 @@ impl Changes {
             .child(div().flex_1())
             .child(
                 div().debug_selector(|| "changes-mode".into()).child(
-                    SegmentedControl::editor(
+                    SegmentedControl::new(
                         theme,
                         "changes-mode-control",
                         vec![
@@ -524,25 +522,22 @@ impl Changes {
                 ),
             )
             .child(
-                Button::plain(
-                    theme,
-                    "changes-collapse",
-                    ButtonVariant::Gray,
-                    ButtonSize::Sm,
-                )
-                .label(if all_collapsed {
-                    "Expand all"
-                } else {
-                    "Collapse all"
-                })
-                .disabled(self.files.is_empty())
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    this.set_all_collapsed(!all_collapsed, cx);
-                })),
+                Button::new(theme, "changes-collapse")
+                    .emphasis(Emphasis::Neutral)
+                    .label(if all_collapsed {
+                        "Expand all"
+                    } else {
+                        "Collapse all"
+                    })
+                    .disabled(self.files.is_empty())
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        this.set_all_collapsed(!all_collapsed, cx);
+                    })),
             )
             .child(
                 div().debug_selector(|| "changes-wrap".into()).child(
-                    Button::plain(theme, "changes-wrap", ButtonVariant::Gray, ButtonSize::Sm)
+                    Button::new(theme, "changes-wrap")
+                        .emphasis(Emphasis::Neutral)
                         .label(if wrap { "No wrap" } else { "Wrap" })
                         .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                             this.set_wrap(!wrap, cx);
@@ -554,16 +549,12 @@ impl Changes {
         }
         bar.child(
             div().debug_selector(|| "changes-close".into()).child(
-                Button::plain(
-                    theme,
-                    "changes-close-button",
-                    ButtonVariant::Gray,
-                    ButtonSize::Sm,
-                )
-                .label("Close")
-                .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
-                    cx.emit(ChangesEvent::Close);
-                })),
+                Button::new(theme, "changes-close-button")
+                    .emphasis(Emphasis::Neutral)
+                    .label("Close")
+                    .on_click(cx.listener(|_, _: &ClickEvent, _, cx| {
+                        cx.emit(ChangesEvent::Close);
+                    })),
             ),
         )
         .into_any_element()
@@ -606,7 +597,7 @@ impl Render for Changes {
             .size_full()
             .flex()
             .flex_col()
-            .bg(theme.editor.card)
+            .bg(theme.colors.card)
             .child(self.toolbar(&theme, &colors, cx))
             .children(self.confirm_strip(&theme, &colors, cx))
             .child(body)

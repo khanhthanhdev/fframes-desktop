@@ -214,6 +214,25 @@ pub fn touched_conflicts(deltas: &[FileDelta], current: &SourceInventory) -> Vec
         .collect()
 }
 
+/// The changes an Undo inverts: run-time documents (`timeline.json`, `props.json`,
+/// `slides.json`) that changed after the edit keep their current bytes ("keep current")
+/// instead of blocking the Undo of the edit's code, since the person edits them in
+/// Studio without a task.
+pub fn keep_changed_run_time_documents(
+    deltas: Vec<FileDelta>,
+    current: &SourceInventory,
+) -> Vec<FileDelta> {
+    let changed: BTreeSet<String> = touched_conflicts(&deltas, current)
+        .into_iter()
+        .map(|conflict| conflict.path)
+        .filter(|path| studio_project::revision::run_time_document(path))
+        .collect();
+    deltas
+        .into_iter()
+        .filter(|delta| !changed.contains(&delta.path))
+        .collect()
+}
+
 /// Undo's guard on exact permission bits: files whose content is still the edit's but
 /// whose permission bits differ from the bits the edit left (a `chmod` since). Deltas
 /// without recorded bits (a delete) are not examined. Only touches the filesystem to
@@ -552,6 +571,8 @@ pub enum Boundary {
     TimingWrite(crate::timing::file::WriteStep),
     /// Controller-side: a step of a `props.json` write (no journal record).
     PropsWrite(crate::timing::file::WriteStep),
+    /// Controller-side: a step of a `slides.json` write (no journal record).
+    SlidesWrite(crate::timing::file::WriteStep),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -51,6 +51,8 @@ pub struct Presentation {
     pub timeline: Option<crate::timing::TimelineSnapshot>,
     /// The open project's props document and what can be edited now.
     pub props: Option<crate::props::PropsSnapshot>,
+    /// The open project's slide stops, resolved against the timeline the person sees.
+    pub slides: Option<crate::slides::SlidesSnapshot>,
 }
 
 #[derive(Clone)]
@@ -61,7 +63,8 @@ pub struct AgentSdk {
 
 pub enum Command {
     Initialize,
-    Create(PathBuf),
+    /// A new project in the folder, from the template.
+    Create(PathBuf, studio_project::ProjectTemplate),
     Open(PathBuf),
     Locate(PathBuf, ProjectId),
     Import(PathBuf),
@@ -85,6 +88,9 @@ pub enum Command {
     Timeline(crate::timing::TimelineCommand),
     /// A props edit of the open project (a field, a drag, undo or redo).
     Props(crate::props::PropsCommand),
+    /// A slides edit of the open project (a stop, its text, a drag). Undo and redo are
+    /// [`Command::Timeline`]'s: one history holds both.
+    Slides(crate::slides::SlidesCommand),
 }
 pub struct Backend {
     pub paths: Option<AppPaths>,
@@ -139,21 +145,23 @@ impl Backend {
             .clone();
         match command {
             Command::Initialize => (),
-            Command::Create(path) => {
+            Command::Create(path, template) => {
                 let compatibility = self
                     .compatibility
                     .as_ref()
                     .ok_or_else(|| self.compatibility_error.clone())?;
+                template_supported(template, compatibility.kit_version.as_deref())?;
                 let name = path
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("New video");
-                studio_project::create(
+                studio_project::create_from_template(
                     &path,
                     name,
                     sdk_pin(compatibility),
                     &compatibility.fframes_version,
                     &compatibility.runtime_version,
+                    template,
                 )
                 .map_err(|e| e.to_string())?;
                 self.open(&path, &paths)?;
@@ -415,6 +423,11 @@ impl Backend {
                 .lock()
                 .props_command(command)
                 .map_err(|e| e.to_string())?,
+            Command::Slides(command) => self
+                .current()?
+                .lock()
+                .slides_command(command)
+                .map_err(|e| e.to_string())?,
         }
         Ok(())
     }
@@ -611,6 +624,7 @@ impl Backend {
             let project = ProjectPresentation::from_controller(&controller);
             let timeline = controller.timeline_snapshot();
             let props = controller.props_snapshot();
+            let slides = controller.slides_snapshot();
             (
                 project,
                 controller.state().clone(),
@@ -618,6 +632,7 @@ impl Backend {
                 PresetView::capture(&mut controller, &self.catalog),
                 timeline,
                 props,
+                slides,
             )
         });
         Ok(Presentation {
@@ -627,8 +642,9 @@ impl Backend {
             sdk: self.sdk.clone(),
             state: open.as_ref().map(|(_, state, ..)| state.clone()),
             preset: open.as_ref().map(|(_, _, _, preset, ..)| preset.clone()),
-            timeline: open.as_ref().map(|(.., timeline, _)| timeline.clone()),
-            props: open.as_ref().map(|(.., props)| props.clone()),
+            timeline: open.as_ref().map(|(.., timeline, _, _)| timeline.clone()),
+            props: open.as_ref().map(|(.., props, _)| props.clone()),
+            slides: open.as_ref().map(|(.., slides)| slides.clone()),
             owner: open.map(|(_, _, owner, ..)| owner),
             paths: self.paths.clone(),
             agent_sdk: self.agent_sdk.clone(),
@@ -670,10 +686,46 @@ impl StudioEnvironment {
     }
 }
 
+/// Whether the SDK can build `template`: a template on fframes-kit needs the SDK to
+/// vendor exactly its kit release (`kit_version`).
+fn template_supported(
+    template: studio_project::ProjectTemplate,
+    sdk_kit: Option<&str>,
+) -> Result<(), String> {
+    match template.kit_version() {
+        Some(kit) if sdk_kit != Some(kit) => Err(format!(
+            "The Slide deck template needs an SDK with fframes-kit {kit}; {}. Install the current managed SDK, or create a Blank project",
+            match sdk_kit {
+                Some(sdk) => format!("this SDK includes fframes-kit {sdk}"),
+                None => "this SDK has no fframes-kit".to_owned(),
+            }
+        )),
+        _ => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[test]
+    fn the_slide_deck_template_needs_the_sdk_kit() {
+        use studio_project::ProjectTemplate::{Blank, SlideDeck};
+        assert!(template_supported(Blank, None).is_ok());
+        assert!(template_supported(SlideDeck, Some("0.3.0")).is_ok());
+        assert!(template_supported(SlideDeck, Some("0.2.0")).is_err());
+        assert!(
+            template_supported(SlideDeck, None)
+                .unwrap_err()
+                .contains("no fframes-kit")
+        );
+        assert!(
+            template_supported(SlideDeck, Some("0.1.0"))
+                .unwrap_err()
+                .contains("includes fframes-kit 0.1.0")
+        );
+    }
 
     #[test]
     fn use_installed_sdk_repins_a_project_whose_sdk_is_not_installed() {

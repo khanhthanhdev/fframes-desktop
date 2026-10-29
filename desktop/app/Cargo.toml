@@ -56,4 +56,7 @@ tempfile = { workspace = true }
 libc = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dev-dependencies]
-windows-sys = { version = "0.59", features = ["Win32_Security", "Win32_System_SystemServices"] }
+# Graphics_Gdi, Storage_Xps, UI_WindowsAndMessaging and raw-window-handle: the gallery's
+# `--capture` mode (examples/ui_gallery/capture.rs).
+windows-sys = { version = "0.59", features = ["Win32_Security", "Win32_System_SystemServices", "Win32_Graphics_Gdi", "Win32_Storage_Xps", "Win32_UI_WindowsAndMessaging"] }
+raw-window-handle = "0.6"

@@ -11,7 +11,7 @@
 
 use gpui::{
     Div, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled, WindowControlArea,
-    div, prelude::FluentBuilder, px, rgb, rgba, svg,
+    div, prelude::FluentBuilder, px, svg,
 };
 use studio_theme::Theme;
 
@@ -27,12 +27,13 @@ pub fn windows_caption_controls(
     minimizable: bool,
     resizable: bool,
 ) -> Div {
-    let dark = theme.is_dark();
-    let hover = rgba(if dark { 0xffffff0d } else { 0x0000000d });
-    let pressed = rgba(if dark { 0xe9e9e908 } else { 0x00000008 });
+    let colors = theme.colors;
+    let (hover, pressed) = (colors.caption_hover, colors.caption_pressed);
+    let (close_hover, close_pressed) = (colors.caption_close, colors.caption_close_pressed);
+    let close_glyph = colors.on_accent;
     let button = |id: &'static str, glyph: Icon, height: f32, area, enabled: bool| {
         let foreground = Theme::with_alpha(
-            rgb(if dark { 0xffffff } else { 0x12161f }),
+            colors.caption_glyph,
             if active && enabled { 0.8 } else { 0.4 },
         );
         let close = id == "caption-close";
@@ -49,8 +50,8 @@ pub fn windows_caption_controls(
             .window_control_area(area)
             .when(enabled, |button| {
                 button
-                    .hover(move |style| style.bg(if close { rgb(0xc42b1c) } else { hover }))
-                    .active(move |style| style.bg(if close { rgba(0xc42b1ce6) } else { pressed }))
+                    .hover(move |style| style.bg(if close { close_hover } else { hover }))
+                    .active(move |style| style.bg(if close { close_pressed } else { pressed }))
             })
             .child(
                 svg()
@@ -61,8 +62,8 @@ pub fn windows_caption_controls(
                     .text_color(foreground)
                     .when(close, |glyph| {
                         glyph
-                            .group_hover(id, |style| style.text_color(gpui::white()))
-                            .group_active(id, |style| style.text_color(gpui::white()))
+                            .group_hover(id, move |style| style.text_color(close_glyph))
+                            .group_active(id, move |style| style.text_color(close_glyph))
                     }),
             )
     };

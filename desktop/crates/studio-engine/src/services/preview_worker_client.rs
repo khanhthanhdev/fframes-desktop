@@ -145,6 +145,53 @@ impl PreviewWorkerClient {
     pub fn identity(&self) -> &PreviewIdentity {
         &self.identity
     }
+
+    /// Whether this worker can collect component-authored slide stops.
+    pub fn supports_suggested_stops(&self) -> bool {
+        self.hello.as_ref().is_some_and(|hello| {
+            hello
+                .capabilities
+                .iter()
+                .any(|cap| cap == SUGGESTED_STOPS_CAPABILITY)
+        })
+    }
+
+    /// Samples one bounded batch without changing the displayed playhead.
+    pub fn suggest_stops(
+        &mut self,
+        frames: Vec<usize>,
+        timing_generation: u64,
+        reset: bool,
+    ) -> Result<StopSuggestions, WorkerClientError> {
+        if !self.supports_suggested_stops()
+            || frames.is_empty()
+            || frames.len() > MAX_SUGGEST_FRAMES
+            || self.timeline.as_ref().is_none_or(|timeline| {
+                timeline.timing_generation != timing_generation
+                    || frames.iter().any(|frame| *frame >= timeline.total_frames)
+            })
+        {
+            return Err(invalid(
+                "Slide-stop sampling is unsupported or outside the current timeline",
+            ));
+        }
+        let envelope = self.envelope()?;
+        let request = PreviewRequest::SuggestStops(SuggestStopsRequest {
+            envelope: envelope.clone(),
+            frames,
+            timing_generation,
+            reset,
+        });
+        match self.exchange(&request, &envelope, false)?.0 {
+            PreviewResponse::SuggestedStops(mut response)
+                if response.timing_generation == timing_generation =>
+            {
+                response.suggestions.bound();
+                Ok(response.suggestions)
+            }
+            _ => Err(invalid("Slide-stop response has a stale timing generation")),
+        }
+    }
     pub fn process_id(&self) -> Option<u32> {
         self.transport.process_id()
     }
@@ -260,6 +307,7 @@ impl PreviewWorkerClient {
                 PreviewResponse::TimingApplied(r) => Some(&r.envelope),
                 PreviewResponse::PropsApplied(r) => Some(&r.envelope),
                 PreviewResponse::PropsInfo(r) => Some(&r.envelope),
+                PreviewResponse::SuggestedStops(r) => Some(&r.envelope),
                 PreviewResponse::Error(r) => r.envelope.as_ref(),
                 PreviewResponse::Hello(_) => None,
             };
@@ -333,6 +381,7 @@ impl PreviewWorkerClient {
                 | (PreviewRequest::SetTiming(_), PreviewResponse::TimingApplied(_))
                 | (PreviewRequest::SetProps(_), PreviewResponse::PropsApplied(_))
                 | (PreviewRequest::PropsInfo(_), PreviewResponse::PropsInfo(_))
+                | (PreviewRequest::SuggestStops(_), PreviewResponse::SuggestedStops(_))
                 | (PreviewRequest::Shutdown(_), PreviewResponse::Ack(_)) => (),
                 _ => return Err(invalid("Unexpected typed preview destination")),
             }
@@ -1106,6 +1155,63 @@ mod tests {
             object_key: "headline".into(),
             repeat_key: "main".into(),
         }
+    }
+
+    #[test]
+    fn suggested_stops_check_capability_batches_generation_and_untrusted_bounds() {
+        let mut old = scripted_worker(false, vec![]);
+        assert!(!old.supports_suggested_stops());
+        assert!(old.suggest_stops(vec![0], 0, true).is_err());
+        assert_eq!(
+            old.next_request, 1,
+            "old workers receive no unrecognized request"
+        );
+        let response = |generation| {
+            PreviewResponse::SuggestedStops(SuggestStopsResponse {
+                envelope: timing_envelope(3),
+                timing_generation: generation,
+                suggestions: StopSuggestions {
+                    stops: vec![SuggestedSlideStop {
+                        scene: "intro".into(),
+                        origin: "bullets".into(),
+                        seconds: 1.0,
+                        label: Some("x".repeat(257)),
+                        notes: None,
+                    }],
+                    truncated: false,
+                },
+            })
+        };
+        let mut worker = scripted_worker_with(
+            "cpu",
+            &[SUGGESTED_STOPS_CAPABILITY],
+            vec![laid_out(2, 4), response(4)],
+        );
+        worker.timeline().unwrap();
+        for frames in [vec![], vec![0; 17], vec![30]] {
+            assert!(worker.suggest_stops(frames, 4, true).is_err());
+        }
+        assert!(worker.suggest_stops(vec![0], 3, true).is_err());
+        assert_eq!(
+            worker.next_request, 2,
+            "invalid inputs never cross the transport"
+        );
+        let result = worker.suggest_stops(vec![0, 15], 4, true).unwrap();
+        assert!(
+            result.truncated && result.stops.is_empty(),
+            "engine bounds worker-authored text again"
+        );
+        let mut stale = scripted_worker_with(
+            "cpu",
+            &[SUGGESTED_STOPS_CAPABILITY],
+            vec![laid_out(2, 4), response(3)],
+        );
+        stale.timeline().unwrap();
+        assert!(stale.suggest_stops(vec![0], 4, true).is_err());
+        assert!(
+            !stale.has_stopped(),
+            "stale suggestion generation is discarded without killing the worker"
+        );
     }
 
     #[test]

@@ -20,6 +20,7 @@ use studio_engine::services::preview_coordinator::{
 
 use super::{Picker, StudioShell};
 use crate::agent::Attachment;
+use crate::export::settings::{ExportTarget, deck_settings};
 use crate::preset_panel::{PresetEvent, PresetPick};
 
 impl StudioShell {
@@ -118,7 +119,7 @@ impl StudioShell {
         if matches!(
             &command,
             Command::Close
-                | Command::Create(_)
+                | Command::Create(..)
                 | Command::Import(_)
                 | Command::Open(_)
                 | Command::Locate(_, _)
@@ -155,7 +156,7 @@ impl StudioShell {
     fn leaves_session(&self, command: &Command) -> bool {
         let current = self.presentation.project.as_ref().map(|p| &p.root);
         match command {
-            Command::Close | Command::Import(_) | Command::Create(_) => true,
+            Command::Close | Command::Import(_) | Command::Create(..) => true,
             Command::Open(path) | Command::Locate(path, _) | Command::Independent(path) => {
                 current != Some(path)
             }
@@ -705,20 +706,24 @@ impl StudioShell {
         cx.notify();
         if matches!(
             kind,
-            Picker::Create | Picker::Restore | Picker::PresetExport(_) | Picker::Export
+            Picker::Create(_) | Picker::Restore | Picker::PresetExport(_) | Picker::Export
         ) {
             let home = std::env::var_os("HOME")
                 .or_else(|| std::env::var_os("USERPROFILE"))
                 .map(PathBuf::from)
                 .unwrap_or_else(std::env::temp_dir);
+            // A deck asks for a new folder name; the folder must not exist.
+            let deck = self.export_panel.target == ExportTarget::Deck;
             let export_file_name = match self.export_settings().container {
+                _ if deck => "Slides",
                 fframes_studio_protocol::export::ExportContainer::Mp4 => "Exported video.mp4",
                 fframes_studio_protocol::export::ExportContainer::Webm => "Exported video.webm",
             };
             let picker = cx.prompt_for_new_path(
                 &home,
                 Some(match kind {
-                    Picker::Create => "New video",
+                    Picker::Create(studio_project::ProjectTemplate::SlideDeck) => "New slide deck",
+                    Picker::Create(_) => "New video",
                     Picker::PresetExport(_) => "Exported preset",
                     Picker::Export => export_file_name,
                     _ => "Recovered video",
@@ -744,10 +749,10 @@ impl StudioShell {
                         Ok(Ok(Some(path))) => {
                             if let Picker::PresetExport(key) = kind {
                                 shell.run_preset(PresetCommand::Export { key, dest: path }, cx);
-                            } else if matches!(kind, Picker::Create) {
-                                shell.dispatch(Command::Create(path), cx);
+                            } else if let Picker::Create(template) = kind {
+                                shell.dispatch(Command::Create(path, template), cx);
                             } else if matches!(kind, Picker::Export) {
-                                shell.start_export(path, cx);
+                                shell.start_export(path, deck, cx);
                             } else if let Some(accepted) = accepted {
                                 shell.dispatch(Command::Restore(path, accepted), cx);
                             }
@@ -812,7 +817,9 @@ impl StudioShell {
         }
     }
 
-    fn start_export(&mut self, destination: PathBuf, cx: &mut Context<Self>) {
+    /// Starts a video export to the file `destination`, or with `deck` a slide deck
+    /// export into the new folder `destination`.
+    fn start_export(&mut self, destination: PathBuf, deck: bool, cx: &mut Context<Self>) {
         if self.export_cancelled.is_some() {
             return;
         }
@@ -829,27 +836,35 @@ impl StudioShell {
             cx.notify();
             return;
         };
-        let settings = self.export_settings();
+        let settings = if deck {
+            deck_settings(self.export_panel.choice.unwrap_or_default())
+        } else {
+            self.export_settings()
+        };
         // The container decides the extension: the worker refuses any other.
         let extension = settings.container.extension();
-        let destination =
-            if destination.extension().and_then(|value| value.to_str()) == Some(extension) {
-                destination
-            } else {
-                destination.with_extension(extension)
-            };
-        let job =
-            match self
-                .engine
+        let destination = if deck
+            || destination.extension().and_then(|value| value.to_str()) == Some(extension)
+        {
+            destination
+        } else {
+            destination.with_extension(extension)
+        };
+        let started = if deck {
+            self.engine
+                .start_deck_export(session, destination, settings, sdk, self.builds.clone())
+        } else {
+            self.engine
                 .start_export(session, destination, settings, sdk, self.builds.clone())
-            {
-                Ok(job) => job,
-                Err(error) => {
-                    self.export_status = Some(ExportProgress::Failed(error));
-                    cx.notify();
-                    return;
-                }
-            };
+        };
+        let job = match started {
+            Ok(job) => job,
+            Err(error) => {
+                self.export_status = Some(ExportProgress::Failed(error));
+                cx.notify();
+                return;
+            }
+        };
         let control = job.control.clone();
         self.export_cancelled = Some(control.clone());
         self.export_processes = Some(job.processes.clone());

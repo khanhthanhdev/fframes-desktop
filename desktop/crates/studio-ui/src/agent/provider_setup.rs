@@ -10,7 +10,7 @@
 //!
 //! The types are GPUI-free and unit-tested; the handlers below only wire them to the panel.
 use super::{
-    ConversationPanel, Tone,
+    ConversationPanel, Emphasis,
     controls::{self, derive_controls},
 };
 use gpui::{
@@ -748,10 +748,11 @@ impl ConversationPanel {
         action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
     ) -> gpui::Stateful<gpui::Div> {
         let theme = self.theme;
-        let palette = theme.editor;
+        let palette = theme.colors;
+        let radius = px(METRICS.radius.control);
         let radio = div()
             .flex_none()
-            .size(px(14.))
+            .size(px(METRICS.size.icon_sm))
             .flex()
             .items_center()
             .justify_center()
@@ -762,16 +763,21 @@ impl ConversationPanel {
             } else {
                 palette.line_strong
             })
-            .children(selected.then(|| div().size(px(8.)).rounded_full().bg(palette.accent)));
+            .children(selected.then(|| {
+                div()
+                    .size(px(METRICS.space_2))
+                    .rounded_full()
+                    .bg(palette.accent)
+            }));
         let row = div()
             .id(id.into())
             .role(gpui::Role::RadioButton)
             .aria_label(action_label)
             .flex()
             .items_center()
-            .gap(px(8.))
-            .p(px(8.))
-            .rounded(px(METRICS.radius_control))
+            .gap(px(METRICS.space_2))
+            .p(px(METRICS.space_2))
+            .rounded(radius)
             .bg(if selected {
                 palette.ctl
             } else {
@@ -825,7 +831,7 @@ impl ConversationPanel {
                 "Detect agents"
             },
             !setup.scans.is_running() && !installing,
-            Tone::Normal,
+            Emphasis::Neutral,
             cx,
             |this, _, cx| this.detect_agents(cx),
         ));
@@ -881,7 +887,7 @@ impl ConversationPanel {
                     format!("agent-install-cancel-{}", profile.id),
                     "Cancel install",
                     true,
-                    Tone::Normal,
+                    Emphasis::Neutral,
                     cx,
                     |this, _, cx| {
                         this.agent_setup.install.cancel();
@@ -895,7 +901,7 @@ impl ConversationPanel {
                             format!("agent-detected-{}", profile.id),
                             "Select",
                             settings_editable && !self.saves.is_pending(),
-                            Tone::Primary,
+                            Emphasis::Primary,
                             cx,
                             move |this, _, cx| this.use_detected(&select_id, cx),
                         ));
@@ -905,7 +911,7 @@ impl ConversationPanel {
                             format!("agent-install-{}", profile.id),
                             "Install adapter",
                             !installing && !setup.scans.is_running(),
-                            Tone::Normal,
+                            Emphasis::Neutral,
                             cx,
                             move |this, _, cx| this.install_adapter(&install_id, cx),
                         ));
@@ -915,7 +921,7 @@ impl ConversationPanel {
                             format!("agent-get-node-{}", profile.id),
                             "Get Node.js",
                             true,
-                            Tone::Normal,
+                            Emphasis::Neutral,
                             cx,
                             |this, _, cx| {
                                 this.open_link(provider_profiles::NODE_DOWNLOAD_URL, cx);
@@ -927,7 +933,7 @@ impl ConversationPanel {
                             format!("agent-install-guide-{}", profile.id),
                             "Install guide",
                             true,
-                            Tone::Normal,
+                            Emphasis::Neutral,
                             cx,
                             move |this, _, cx| {
                                 if this.open_link(url, cx) {

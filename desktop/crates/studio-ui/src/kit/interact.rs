@@ -10,11 +10,11 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, Div, InteractiveElement, IntoElement, Pixels, SharedString,
-    Stateful, StatefulInteractiveElement, Styled, Window, canvas, point, px,
+    AnyElement, App, Bounds, BoxShadow, Div, Hsla, InteractiveElement, IntoElement, Pixels,
+    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, canvas, point, px,
 };
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, Theme};
 
 use super::{TOOLTIP_SHOW_DELAY, Tooltip};
 
@@ -25,9 +25,49 @@ pub type Handler = Rc<dyn Fn(&mut Window, &mut App)>;
 pub type BoundsHandler = Rc<dyn Fn(Bounds<Pixels>, &mut App)>;
 
 /// Width of the focus ring in pixels.
-pub const FOCUS_RING_PX: f32 = 2.;
+pub const FOCUS_RING_PX: f32 = METRICS.size.focus_ring;
 /// Opacity of a disabled control.
-pub const DISABLED_OPACITY: f32 = 0.45;
+pub const DISABLED_OPACITY: f32 = METRICS.opacity.disabled;
+
+/// The fills every interactive component shares: hover is `ctl_hover`, pressed and
+/// selected are `ctl_active`, a control at rest that has a fill is `ctl`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct States {
+    pub rest: Hsla,
+    pub hover: Hsla,
+    pub pressed: Hsla,
+    pub selected: Hsla,
+}
+
+impl States {
+    pub fn of(theme: &Theme) -> Self {
+        let colors = theme.colors;
+        Self {
+            rest: colors.ctl.into(),
+            hover: colors.ctl_hover.into(),
+            pressed: colors.ctl_active.into(),
+            selected: colors.ctl_active.into(),
+        }
+    }
+}
+
+/// The disabled look: the whole element at [`DISABLED_OPACITY`].
+pub fn dim_disabled<E: Styled>(element: E, disabled: bool) -> E {
+    if disabled {
+        element.opacity(DISABLED_OPACITY)
+    } else {
+        element
+    }
+}
+
+/// Hides row actions until hover or descendant focus, without removing their tab stops.
+pub fn reveal_actions(element: Stateful<Div>, group: SharedString) -> Stateful<Div> {
+    element
+        .focusable()
+        .opacity(0.)
+        .in_focus(|style| style.opacity(1.))
+        .group_hover(group, |style| style.opacity(1.))
+}
 
 /// What a key press means to a control.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -62,10 +102,10 @@ pub fn activates(disabled: bool, key: &str) -> bool {
     !disabled && nav_key(key) == Some(Nav::Activate)
 }
 
-/// The 2 px accent ring painted outside the element while it has keyboard focus.
+/// The 2 px `focus` ring painted outside the element while it has keyboard focus.
 pub fn focus_ring(theme: &Theme) -> Vec<BoxShadow> {
     vec![BoxShadow {
-        color: theme.editor.accent.into(),
+        color: theme.colors.focus.into(),
         offset: point(px(0.), px(0.)),
         blur_radius: px(0.),
         spread_radius: px(FOCUS_RING_PX),
@@ -170,7 +210,7 @@ mod tests {
             let ring = focus_ring(&theme);
             assert_eq!(ring.len(), 1);
             assert_eq!(f32::from(ring[0].spread_radius), 2.);
-            assert_eq!(ring[0].color, gpui::Hsla::from(theme.editor.accent));
+            assert_eq!(ring[0].color, gpui::Hsla::from(theme.colors.focus));
         }
     }
 

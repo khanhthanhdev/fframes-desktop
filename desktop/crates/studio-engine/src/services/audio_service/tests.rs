@@ -136,6 +136,43 @@ fn callback_gates_do_not_consume_but_mute_underrun_and_stale_do() {
 }
 
 #[test]
+fn a_slide_stop_bound_writes_no_sample_past_its_frame() {
+    // 300 Hz at 30 fps: ten samples a frame. Playing frames 2..5 of 10 is 30 samples.
+    assert_eq!(output_samples(2, 5, 300, 30), 30);
+    assert_eq!(output_samples(2, 10, 300, 30), 80);
+    assert_eq!(output_samples(7, 5, 300, 30), 0);
+    // 44.1 kHz at 24 fps: a partial sample rounds up, never past the next frame's first.
+    assert_eq!(output_samples(0, 1, 44_100, 24), 1838);
+
+    let total = output_samples(2, 5, 300, 30);
+    let state = OutputState::new(64, 0.01);
+    // The feeder has PCM well past the bound in the ring.
+    for position in 0..64 {
+        assert!(state.ring.push(position, [0.5, -0.5]));
+    }
+    let control = control(3);
+    let mut out = [1.0f32; 2 * 50];
+    invoke(&mut out, 2, &state, &control, 3, total, Some(0.01));
+    let audible = out
+        .chunks(2)
+        .take_while(|frame| frame != &[0.0, 0.0])
+        .count();
+    assert_eq!(audible, total as usize);
+    assert!(
+        out[2 * total as usize..]
+            .iter()
+            .all(|sample| *sample == 0.0),
+        "samples past the stop reached the device"
+    );
+    assert_eq!(state.cursor.load(Ordering::Acquire), total);
+    // Later callbacks stay silent and do not move the cursor.
+    let mut more = [1.0f32; 8];
+    invoke(&mut more, 2, &state, &control, 3, total, Some(0.01));
+    assert_eq!(more, [0.0; 8]);
+    assert_eq!(state.cursor.load(Ordering::Acquire), total);
+}
+
+#[test]
 fn eof_keeps_final_anchor_and_invalid_latency_is_visible_and_estimated() {
     let state = OutputState::new(4, 0.025);
     state.ring.push(0, [0.1, 0.2]);

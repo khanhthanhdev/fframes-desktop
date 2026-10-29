@@ -28,13 +28,14 @@ use std::{
 use studio_project::{
     OpenProject,
     checkpoint::Checkpoints,
-    revision::{FileKind, PROPS_FILE, TIMING_FILE},
+    revision::{FileKind, PROPS_FILE, SLIDES_FILE, TIMING_FILE},
 };
 
 mod preset;
 mod promotion;
 mod props;
 mod review;
+mod slides;
 mod timing;
 pub use preset::{PresetMutation, PresetOutcome};
 pub use promotion::{CompletionOutcome, Promotion, UndoPreparation};
@@ -95,10 +96,14 @@ pub struct Controller {
     agent_scope: Option<AgentScope>,
     agent: AgentTaskManager,
     drafts: DraftStore,
-    /// The timing document of this session and its edit history.
+    /// The timing document of this session.
     timing: crate::timing::TimingSession,
     /// The props document of this session and its edit history.
     props: crate::props::PropsSession,
+    /// The slides document of this session and the timeline its stops resolve against.
+    slides: crate::slides::SlidesSession,
+    /// One undo history for the timing and slides documents, in gesture order.
+    run_time_history: crate::timing::history::History<crate::timing::history::RunTimeDoc>,
 }
 
 /// The process scope of one agent task, keyed by the task that owns it so cleanup can
@@ -211,9 +216,17 @@ impl Controller {
             .map_err(|error| {
                 format!("{PROPS_FILE} could not be recovered from an interrupted save: {error}")
             });
+        let slides_recovery = crate::timing::file::recover_doc(
+            &project.root,
+            &crate::slides::SLIDES,
+        )
+        .map_err(|error| {
+            format!("{SLIDES_FILE} could not be recovered from an interrupted save: {error}")
+        });
         if recovery.touched_source
             || matches!(timing_recovery, Ok(Some(_)))
             || matches!(props_recovery, Ok(Some(_)))
+            || matches!(slides_recovery, Ok(Some(_)))
         {
             (project, source_degraded) = open_source(root)?;
         }
@@ -353,8 +366,13 @@ impl Controller {
             Ok(Some(note)) | Err(note) => notices.push(note),
             Ok(None) => {}
         }
+        match slides_recovery {
+            Ok(Some(note)) | Err(note) => notices.push(note),
+            Ok(None) => {}
+        }
         let timing = crate::timing::TimingSession::load(&project.root);
         let props = crate::props::PropsSession::load(&project.root);
+        let slides = crate::slides::SlidesSession::load(&project.root);
         let recovery_notice = (!notices.is_empty()).then(|| notices.join(" "));
         let mut controller = Self {
             project,
@@ -386,6 +404,8 @@ impl Controller {
             drafts,
             timing,
             props,
+            slides,
+            run_time_history: Default::default(),
         };
         controller.heal_manifest_reference();
         Ok(controller)
@@ -603,6 +623,7 @@ impl Controller {
         self.project = project;
         self.observe_timing_file();
         self.observe_props_file();
+        self.observe_slides_file();
         if self.state().source() != &previous {
             // A timing-only change keeps the generation: the running job and its
             // processes still describe the source.

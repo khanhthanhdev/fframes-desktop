@@ -31,6 +31,7 @@ impl ConversationPanel {
         }
         self.view_rows = view.rows;
         self.view_keys = keys;
+        self.sync_activity();
         self.hidden_newer = view.hidden_newer;
     }
 

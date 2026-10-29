@@ -28,9 +28,10 @@ use unicode_segmentation::UnicodeSegmentation;
 
 use super::keymap::{self, EnterOutcome, KEY_CONTEXT, enter_outcome, escape_dismisses_completion};
 use super::metrics::{
-    CARET_BLINK_MS, DRAG_SCROLL_FRAME_MS, INPUT_LINE_HEIGHT, INPUT_MAX_HEIGHT, INPUT_TEXT_SIZE,
-    PressIntent, caret_visible, input_drag_scroll_delta, input_max_scroll, input_scroll_offset,
-    input_scroll_offset_for_cursor, press_intent, word_range,
+    CARET_BLINK_MS, CARET_WIDTH, DRAG_SCROLL_FRAME_MS, FALLBACK_WIDTH, HIT_INSET,
+    INPUT_LINE_HEIGHT, INPUT_MAX_HEIGHT, MIN_WRAP_WIDTH, PressIntent, caret_visible,
+    input_drag_scroll_delta, input_max_scroll, input_scroll_offset, input_scroll_offset_for_cursor,
+    press_intent, word_range,
 };
 
 mod element;

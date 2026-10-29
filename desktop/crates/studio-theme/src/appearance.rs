@@ -1,33 +1,101 @@
-//! The user's light/dark preference and how a window resolves it.
+//! The user's UI preferences (light/dark, motion) and how a window resolves them.
 
 use gpui::{App, Context, Global, Window};
 
-use crate::{AppTheme, Appearance, Theme};
+use crate::{AppTheme, Appearance, MotionPreference, Theme};
 
-/// The app-wide preference, loaded from the app settings at start.
-struct ThemePreference(AppTheme);
+/// The app-wide UI preferences, loaded from the app settings at start. One global holds
+/// both so a settings change repaints once.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UiPrefs {
+    pub theme: AppTheme,
+    pub motion: MotionPreference,
+}
 
-impl Global for ThemePreference {}
+impl Global for UiPrefs {}
 
-/// Installs the preference the app settings hold.
+/// Installs the theme preference the app settings hold, keeping the motion preference.
+/// Phase 1 replaces this with [`init_prefs`].
 pub fn init(cx: &mut App, preference: AppTheme) {
-    cx.set_global(ThemePreference(preference));
+    let prefs = UiPrefs {
+        theme: preference,
+        ..current_prefs(cx)
+    };
+    init_prefs(cx, prefs);
 }
 
-/// The preference in force; `System` until [`init`] ran.
+/// Installs the preferences the app settings hold.
+pub fn init_prefs(cx: &mut App, prefs: UiPrefs) {
+    apply_motion(prefs.motion, cx);
+    cx.set_global(prefs);
+}
+
+/// The preferences in force; the defaults (`System`, `System`) until [`init_prefs`] ran.
+pub fn current_prefs(cx: &App) -> UiPrefs {
+    cx.try_global::<UiPrefs>().copied().unwrap_or_default()
+}
+
+/// The theme preference in force; `System` until [`init`] ran.
 pub fn current_preference(cx: &App) -> AppTheme {
-    cx.try_global::<ThemePreference>()
-        .map(|preference| preference.0)
-        .unwrap_or_default()
+    current_prefs(cx).theme
 }
 
-/// Changes the preference and repaints every window. Persisting it is the
-/// caller's job.
-pub fn set_preference(preference: AppTheme, cx: &mut App) {
-    cx.set_global(ThemePreference(preference));
+/// The motion preference in force; `System` until [`init_prefs`] ran.
+pub fn current_motion(cx: &App) -> MotionPreference {
+    current_prefs(cx).motion
+}
+
+/// Changes both preferences and repaints every window. Persisting them
+/// (`AppSettings::save`) is the caller's job.
+pub fn set_prefs(prefs: UiPrefs, cx: &mut App) {
+    init_prefs(cx, prefs);
     cx.refresh_windows();
 }
 
+/// Changes the theme preference and repaints every window. Persisting it is the
+/// caller's job.
+pub fn set_preference(preference: AppTheme, cx: &mut App) {
+    let prefs = UiPrefs {
+        theme: preference,
+        ..current_prefs(cx)
+    };
+    set_prefs(prefs, cx);
+}
+
+/// Changes the motion preference and repaints every window. Persisting it is the
+/// caller's job.
+pub fn set_motion(motion: MotionPreference, cx: &mut App) {
+    let prefs = UiPrefs {
+        motion,
+        ..current_prefs(cx)
+    };
+    set_prefs(prefs, cx);
+}
+
+/// Whether animations should snap: `Reduced` always, `Full` never, and `System` when the
+/// operating system asks for it. GPUI reports no OS setting, so `system_reduced` is
+/// `false` for every caller today and `System` means full motion.
+pub fn resolve_reduced_motion(preference: MotionPreference, system_reduced: bool) -> bool {
+    match preference {
+        MotionPreference::System => system_reduced,
+        MotionPreference::Reduced => true,
+        MotionPreference::Full => false,
+    }
+}
+
+/// Whether the studio should reduce motion now. When true every animation snaps, a
+/// spinner shows a static ring, and the streaming veil is off. Phase 1's
+/// `reduced_motion(cx)`; named apart from the context-free [`crate::reduced_motion`]
+/// until that one's callers move.
+pub fn prefers_reduced_motion(cx: &App) -> bool {
+    resolve_reduced_motion(current_motion(cx), false)
+}
+
+/// Mirrors the preference into GPUI's own flag, so `with_animation` and animated images
+/// honour it too.
+fn apply_motion(motion: MotionPreference, cx: &mut App) {
+    cx.set_reduce_motion(resolve_reduced_motion(motion, false));
+}
 /// Light and Dark force that appearance; System follows the window, which
 /// follows the operating system.
 pub fn resolve_appearance(preference: AppTheme, system: Appearance) -> Appearance {
@@ -116,5 +184,69 @@ mod tests {
         assert!(changed);
         assert!(theme.is_dark());
         assert_eq!(cx.update(|cx| current_preference(cx)), AppTheme::Dark);
+    }
+
+    #[test]
+    fn motion_preference_resolves() {
+        for system in [false, true] {
+            assert_eq!(
+                resolve_reduced_motion(MotionPreference::System, system),
+                system
+            );
+            assert!(resolve_reduced_motion(MotionPreference::Reduced, system));
+            assert!(!resolve_reduced_motion(MotionPreference::Full, system));
+        }
+    }
+
+    #[gpui::test]
+    fn prefs_default_to_system_and_full_motion(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            assert_eq!(current_prefs(cx), UiPrefs::default());
+            assert_eq!(current_motion(cx), MotionPreference::System);
+            assert!(!prefers_reduced_motion(cx));
+        });
+    }
+
+    #[gpui::test]
+    fn the_motion_and_theme_preferences_change_independently(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            init_prefs(
+                cx,
+                UiPrefs {
+                    theme: AppTheme::Dark,
+                    motion: MotionPreference::Reduced,
+                },
+            );
+            assert!(prefers_reduced_motion(cx));
+            assert!(cx.reduce_motion(), "GPUI's own flag follows");
+
+            set_preference(AppTheme::Light, cx);
+            assert_eq!(current_motion(cx), MotionPreference::Reduced);
+            assert_eq!(current_preference(cx), AppTheme::Light);
+
+            set_motion(MotionPreference::Full, cx);
+            assert!(!prefers_reduced_motion(cx));
+            assert!(!cx.reduce_motion());
+            assert_eq!(current_preference(cx), AppTheme::Light);
+
+            init(cx, AppTheme::Dark);
+            assert_eq!(
+                current_prefs(cx),
+                UiPrefs {
+                    theme: AppTheme::Dark,
+                    motion: MotionPreference::Full,
+                }
+            );
+
+            set_prefs(
+                UiPrefs {
+                    theme: AppTheme::System,
+                    motion: MotionPreference::Reduced,
+                },
+                cx,
+            );
+            assert!(cx.reduce_motion());
+            assert_eq!(current_preference(cx), AppTheme::System);
+        });
     }
 }

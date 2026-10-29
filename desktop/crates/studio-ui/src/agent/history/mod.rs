@@ -12,16 +12,16 @@
 
 use gpui::{
     AnyElement, AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Window, div, prelude::FluentBuilder as _, px,
+    IntoElement, ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Window,
+    div, px,
 };
 use studio_engine::agent::OutcomeKind;
 use studio_engine::agent::session_store::history::SessionSummary;
-use studio_theme::{TextStyle, Theme, text_style};
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use crate::kit::{
-    Badge, Button, ButtonSize, ButtonVariant, TextInput, TextInputEvent, TextInputState, Tone,
-    focusable,
+    Button, Emphasis, EmptyState, List, ListRow, StatusDot, TextInput, TextInputEvent,
+    TextInputState, Tone,
 };
 use crate::probe::{BoundsSink, probe_element};
 
@@ -85,18 +85,10 @@ pub enum HistoryEvent {
     NewSession,
 }
 
-/// Label and colour of an outcome chip.
+/// Label and colour of an outcome: the panel's one vocabulary ([`crate::agent::ui::outcome_style`]),
+/// so History and the transcript name an outcome alike.
 pub fn outcome_chip(outcome: OutcomeKind) -> (&'static str, Tone) {
-    match outcome {
-        OutcomeKind::Accepted => ("Accepted", Tone::Success),
-        OutcomeKind::Undone => ("Undone", Tone::Neutral),
-        OutcomeKind::AwaitingReview => ("In review", Tone::Info),
-        OutcomeKind::Conflict => ("Conflict", Tone::Warning),
-        OutcomeKind::Failed => ("Failed", Tone::Danger),
-        OutcomeKind::Cancelled => ("Cancelled", Tone::Neutral),
-        OutcomeKind::Interrupted => ("Interrupted", Tone::Warning),
-        OutcomeKind::Discarded => ("Discarded", Tone::Neutral),
-    }
+    crate::agent::ui::outcome_style(outcome)
 }
 
 /// `5m ago`; empty when the time is unknown.
@@ -113,9 +105,6 @@ pub fn relative_time(now_unix: u64, then_unix: u64) -> String {
         _ => format!("{}mo ago", secs / 2_592_000),
     }
 }
-
-const ROW_PAD_X: f32 = 8.0;
-const LIST_GAP: f32 = 2.0;
 
 pub struct HistoryList {
     entries: Vec<SessionEntry>,
@@ -236,58 +225,40 @@ impl HistoryList {
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join(" \u{b7} ");
-        let hover = theme.editor.ctl_hover;
+        let status = if entry.unreadable {
+            Some(("Unreadable", Tone::Danger))
+        } else {
+            entry.outcome.map(outcome_chip)
+        };
+        let entity = cx.entity();
         let id = entry.id.clone();
-        let row = div()
-            .id(("history-row", ix))
+        let mut row = ListRow::new(theme, ("history-row", ix))
+            .title(entry.title.clone())
+            .selected(entry.current)
+            .on_click(move |_, cx| entity.update(cx, |this, cx| this.open_id(&id, cx)));
+        if !meta.is_empty() {
+            row = row.meta(meta);
+        }
+        if let Some((label, tone)) = status {
+            row = row.trailing(
+                text_style(
+                    div().flex().items_center().gap(px(METRICS.space_1)),
+                    TextStyle::Small,
+                )
+                .text_color(theme.colors.text_2)
+                .child(StatusDot::new(tone))
+                .child(label),
+            );
+        }
+        div()
             .debug_selector(move || format!("history-row-{ix}"))
             .relative()
-            .role(Role::Button)
-            .aria_label(SharedString::from(entry.title.clone()))
-            .w_full()
-            .px(px(ROW_PAD_X))
-            .py(px(6.))
-            .rounded(px(6.))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .cursor_pointer()
-            .hover(move |style| style.bg(hover))
-            .on_click(cx.listener(move |this, _, _, cx| this.open_id(&id, cx)))
-            .child(
-                div()
-                    .flex_1()
-                    .min_w_0()
-                    .flex()
-                    .flex_col()
-                    .child(
-                        text_style(div().truncate(), TextStyle::Label)
-                            .text_color(theme.editor.text_1)
-                            .child(SharedString::from(entry.title.clone())),
-                    )
-                    .when_some((!meta.is_empty()).then_some(meta), |col, meta| {
-                        col.child(
-                            text_style(div().truncate(), TextStyle::Small)
-                                .text_color(theme.editor.text_3)
-                                .child(SharedString::from(meta)),
-                        )
-                    }),
-            )
-            .when(entry.current, |row| {
-                row.child(Badge::new("Current").tone(Tone::Info))
-            })
-            .when(entry.unreadable, |row| {
-                row.child(Badge::new("Unreadable").tone(Tone::Danger))
-            })
-            .when_some(entry.outcome, |row, outcome| {
-                let (label, tone) = outcome_chip(outcome);
-                row.child(Badge::new(label).tone(tone))
-            })
+            .child(row)
             .children(probe_element(
                 &self.bounds_sink,
                 format!("history-row-{ix}"),
-            ));
-        focusable(row, theme, false).into_any_element()
+            ))
+            .into_any_element()
     }
 }
 
@@ -301,30 +272,24 @@ impl Render for HistoryList {
             } else {
                 format!("No sessions match \u{201c}{query}\u{201d}")
             };
-            text_style(
-                div()
-                    .debug_selector(|| "history-empty".into())
-                    .px(px(ROW_PAD_X))
-                    .py(px(12.)),
-                TextStyle::Label,
-            )
-            .text_color(theme.editor.text_3)
-            .child(SharedString::from(text))
-            .into_any_element()
+            div()
+                .debug_selector(|| "history-empty".into())
+                .py(px(METRICS.space_3))
+                .child(EmptyState::new(&theme, text))
+                .into_any_element()
         } else {
             div()
                 .id("history-rows")
                 .flex_1()
                 .min_h_0()
                 .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap(px(LIST_GAP))
-                .children(
-                    self.shown
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, &entry)| self.row(ix, &self.entries[entry], &theme, cx)),
+                .child(
+                    List::new().children(
+                        self.shown
+                            .iter()
+                            .enumerate()
+                            .map(|(ix, &entry)| self.row(ix, &self.entries[entry], &theme, cx)),
+                    ),
                 )
                 .into_any_element()
         };
@@ -332,20 +297,14 @@ impl Render for HistoryList {
             .id("history-list")
             .debug_selector(|| "history-list".into())
             .size_full()
-            .p(px(2.))
-            .rounded(px(8.))
-            .border_1()
-            .border_color(theme.editor.line)
-            .bg(theme.editor.card)
             .flex()
             .flex_col()
-            .gap(px(4.))
             .child(
                 div()
                     .flex()
                     .items_center()
-                    .gap(px(6.))
-                    .p(px(4.))
+                    .gap(px(METRICS.space_2))
+                    .pb(px(METRICS.space_2))
                     .child(
                         div()
                             .flex_1()
@@ -353,7 +312,7 @@ impl Render for HistoryList {
                             .debug_selector(|| "history-search".into())
                             .relative()
                             .children(probe_element(&self.bounds_sink, "history-search"))
-                            .child(TextInput::plain(
+                            .child(TextInput::new(
                                 &theme,
                                 "history-search-input",
                                 &self.query_input,
@@ -365,14 +324,10 @@ impl Render for HistoryList {
                             .relative()
                             .children(probe_element(&self.bounds_sink, "history-new"))
                             .child(
-                                Button::plain(
-                                    &theme,
-                                    "history-new-button",
-                                    ButtonVariant::Gray,
-                                    ButtonSize::Sm,
-                                )
-                                .label("New session")
-                                .on_click(cx.listener(|this, _, _, cx| this.new_session(cx))),
+                                Button::new(&theme, "history-new-button")
+                                    .emphasis(Emphasis::Neutral)
+                                    .label("New session")
+                                    .on_click(cx.listener(|this, _, _, cx| this.new_session(cx))),
                             ),
                     ),
             )

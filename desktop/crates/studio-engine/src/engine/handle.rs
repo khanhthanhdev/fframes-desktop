@@ -16,11 +16,13 @@
 use super::backend::{Backend, Command, Presentation, StudioEnvironment};
 use crate::agent::{AgentWorkflow, BuildSettings};
 use crate::containment::OwnershipPolicy;
+use crate::deck::{DeckRequest, DeckStop, export_deck};
 use crate::presets::{Catalog, PresetReport};
 use crate::providers::host::{HostInbox, WorkflowWake};
 use crate::services::build_service::BuildService;
 use crate::services::export_service::{
-    ExportControl, ExportProgress, ExportRequest, export_video, probe_export_capabilities,
+    ExportControl, ExportProgress, ExportRequest, RenderRequest, export_video,
+    probe_export_capabilities,
 };
 use crate::services::preview_coordinator::BuildSpec;
 use crate::services::teardown::{Teardown, TeardownReport};
@@ -55,12 +57,15 @@ pub struct CommandFinished {
 }
 
 /// What the preview coordinator reported that the open project must hear: a compiled
-/// build, a failed one, a ready candidate.
+/// build, a failed one, a ready candidate, the displayed preview laid out again.
 #[derive(Default)]
 pub struct PreviewNews {
     pub compiled: Option<OperationTag>,
     pub error: Option<(OperationTag, String)>,
     pub ready: Option<Arc<ReadyPreview>>,
+    /// The displayed preview after a timing edit, as the window installed it: its
+    /// timeline is the one the person sees, which the slide stops resolve against.
+    pub retimed: Option<Arc<ReadyPreview>>,
 }
 
 /// The open project after hearing [`PreviewNews`].
@@ -318,6 +323,81 @@ impl EngineHandle {
         Ok(job)
     }
 
+    /// Exports the accepted revision of `session` as a slide deck folder `destination`
+    /// (which must not exist) on its own thread. The stops resolve against the engine's
+    /// latest laid-out timeline, which must belong to the frozen build and the exported
+    /// timing; otherwise the export refuses with "Wait for the preview to update". One
+    /// [`ExportControl`] covers rendering, posters and the folder's publication.
+    pub fn start_deck_export(
+        &self,
+        session: SessionId,
+        destination: PathBuf,
+        settings: ExportSettings,
+        sdk: PathBuf,
+        service: BuildService,
+    ) -> Result<ExportJob, String> {
+        let control = Arc::new(ExportControl::default());
+        let processes = studio_bootstrap::ProcessTreeManager::new();
+        let (sender, progress) = async_channel::bounded(16);
+        let backend = self.inner.backend.clone();
+        let job = ExportJob {
+            control: control.clone(),
+            processes: processes.clone(),
+            progress,
+        };
+        std::thread::Builder::new()
+            .name("studio-deck-export".into())
+            .spawn(move || {
+                let send = |event| {
+                    let _ = sender.send_blocking(event);
+                };
+                let project = {
+                    let backend = backend.lock();
+                    (backend.session == Some(session))
+                        .then(|| backend.controller.clone().zip(backend.paths.clone()))
+                        .flatten()
+                };
+                let Some((controller, paths)) = project else {
+                    send(ExportProgress::Failed(
+                        "The project closed before the export started".into(),
+                    ));
+                    return;
+                };
+                let prepared = freeze_deck(&controller.lock());
+                drop(controller);
+                let result = prepared.and_then(|frozen| {
+                    export_deck(
+                        DeckRequest {
+                            render: RenderRequest {
+                                source: frozen.source,
+                                sdk,
+                                builds: paths.builds(),
+                                settings,
+                                timing_json: frozen.timing_json,
+                                props_json: frozen.props_json,
+                            },
+                            destination,
+                            title: frozen.title,
+                            stops: frozen.stops,
+                        },
+                        &service,
+                        &processes,
+                        &control,
+                        &mut |event| send(event),
+                    )
+                });
+                if let Err(error) = result {
+                    send(if control.is_cancelled() {
+                        ExportProgress::Cancelled
+                    } else {
+                        ExportProgress::Failed(error)
+                    });
+                }
+            })
+            .map_err(|error| format!("Could not start the export job: {error}"))?;
+        Ok(job)
+    }
+
     /// Asks the worker of the accepted revision of `session` what it can export, on its own
     /// thread: the build is the preview's when the project is unchanged. The answer arrives
     /// once; the channel closes without one when the project closed first.
@@ -401,6 +481,57 @@ impl EngineHandle {
             let _ = controller.close();
         }
     }
+}
+
+/// Why a deck cannot use the slides the engine resolved.
+const WAIT_FOR_PREVIEW: &str = "Wait for the preview to update";
+
+/// What a deck export takes from the open project, all under one lock.
+struct FrozenDeck {
+    source: crate::FrozenExportSource,
+    timing_json: Option<String>,
+    props_json: Option<String>,
+    title: String,
+    stops: Vec<DeckStop>,
+}
+
+/// Freezes the export source with its timing and props, and resolves the stops against
+/// the latest laid-out timeline, which must be the frozen build's (the preview of
+/// another build lays out other scenes) and the exported timing's (checked by
+/// [`crate::Controller::resolved_slides`]).
+fn freeze_deck(controller: &crate::Controller) -> Result<FrozenDeck, String> {
+    let source = controller
+        .freeze_export_source()
+        .map_err(|error| error.to_string())?;
+    let timing_json = controller.timing_for_export()?;
+    let props_json = controller.props_for_export()?;
+    let state = controller.state();
+    let frozen_build = source.project().inventory.build_revision();
+    if state.built() != Some(state.build_source()) || frozen_build != *state.build_source() {
+        return Err(format!(
+            "{WAIT_FOR_PREVIEW}: the slides are laid out on another build than the exported one"
+        ));
+    }
+    let (stops, _skipped) = controller
+        .resolved_slides()
+        .map_err(|reason| format!("{WAIT_FOR_PREVIEW}: {reason}"))?;
+    if stops.is_empty() {
+        return Err(format!("{WAIT_FOR_PREVIEW}: no slide stop resolved"));
+    }
+    Ok(FrozenDeck {
+        title: source.project().manifest.display.name.clone(),
+        source,
+        timing_json,
+        props_json,
+        stops: stops
+            .into_iter()
+            .map(|stop| DeckStop {
+                video_frame: stop.video_frame,
+                title: stop.title,
+                notes: stop.notes,
+            })
+            .collect(),
+    })
 }
 
 fn run(
@@ -555,6 +686,11 @@ fn gate(engine: &Inner, news: PreviewNews) -> PreviewGated {
             }
             // The scenes the build reports are what the timeline edits.
             c.learn_timeline(ready.tag(), &ready.timeline);
+        }
+        if let Some(retimed) = &news.retimed {
+            // Only builds reach the engine otherwise: without this the slide stops
+            // would resolve against the layout before the timing edit.
+            c.learn_timeline(retimed.tag(), &retimed.timeline);
         }
         c.state().clone()
     });
@@ -856,6 +992,49 @@ mod workflow_and_export_tests {
             _ => panic!("a failure"),
         }
         assert!(job.progress.recv_blocking().is_err(), "nothing after it");
+        engine.shutdown(Duration::from_secs(5));
+    }
+
+    #[test]
+    fn a_deck_export_refuses_without_a_built_preview_and_leaves_no_folder() {
+        let temp = tempfile::tempdir().unwrap();
+        let (engine, _events, session) = opened_engine(&temp);
+        let destination = temp.path().join("Slides");
+        let settings = ExportSettings {
+            codec: fframes_studio_protocol::export::ExportCodec::H264,
+            ..ExportSettings::default()
+        };
+        let closed = engine
+            .start_deck_export(
+                SessionId(session.unwrap().0 + 1),
+                destination.clone(),
+                settings,
+                temp.path().join("sdk"),
+                crate::services::worker_project::shared_build_service(),
+            )
+            .unwrap();
+        match closed.progress.recv_blocking() {
+            Ok(ExportProgress::Failed(reason)) => assert!(reason.contains("closed")),
+            _ => panic!("a failure"),
+        }
+        let unbuilt = engine
+            .start_deck_export(
+                session.unwrap(),
+                destination.clone(),
+                settings,
+                temp.path().join("sdk"),
+                crate::services::worker_project::shared_build_service(),
+            )
+            .unwrap();
+        match unbuilt.progress.recv_blocking() {
+            Ok(ExportProgress::Failed(reason)) => assert!(reason.contains("build"), "{reason}"),
+            _ => panic!("a failure"),
+        }
+        assert!(
+            unbuilt.progress.recv_blocking().is_err(),
+            "nothing after it"
+        );
+        assert!(!destination.exists());
         engine.shutdown(Duration::from_secs(5));
     }
 }

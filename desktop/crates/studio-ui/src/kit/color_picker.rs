@@ -24,7 +24,7 @@ use gpui::{
     Point, RenderOnce, Rgba, Styled, Window, div, linear_color_stop, linear_gradient, point, px,
 };
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, Theme};
 
 // ---------------------------------------------------------------------------
 // Geometry -- fixed, so pointer maths never needs a layout pass.
@@ -115,6 +115,21 @@ pub fn rgb_to_hsv(rgb: [u8; 3]) -> (f32, f32, f32) {
     (hue, sat, max)
 }
 
+/// The saturation-value field's gradient ends and the thumbs' ring: the colour space's own
+/// white and black, the same in light and dark.
+const PICKER_WHITE: Hsla = Hsla {
+    h: 0.,
+    s: 0.,
+    l: 1.,
+    a: 1.,
+};
+const PICKER_BLACK: Hsla = Hsla {
+    h: 0.,
+    s: 0.,
+    l: 0.,
+    a: 1.,
+};
+
 fn rgb_hsla(rgb: [u8; 3]) -> Hsla {
     Hsla::from(Rgba {
         r: rgb[0] as f32 / 255.,
@@ -161,7 +176,7 @@ impl ColorPickerSnapshot {
         }
     }
 
-    pub fn rgb(&self) -> [u8; 3] {
+    pub fn channels(&self) -> [u8; 3] {
         hsv_to_rgb(self.hue, self.sat, self.val)
     }
 
@@ -240,7 +255,7 @@ impl RenderOnce for ColorPicker {
             on_hue_down,
         } = self;
 
-        let rgb = snapshot.rgb();
+        let rgb = snapshot.channels();
         let hue_rgb = hsv_to_rgb(snapshot.hue, 1., 1.);
         let sv_thumb = point(
             snapshot.sat * SV_WIDTH - THUMB / 2.,
@@ -271,9 +286,11 @@ impl RenderOnce for ColorPicker {
             .gap(px(GAP))
             .rounded(px(12.))
             .border_1()
-            .border_color(Hsla::from(theme.editor.line))
-            .bg(Hsla::from(theme.editor.card))
-            .shadow(theme.editor.pop_shadow())
+            .border_color(Hsla::from(theme.colors.line))
+            .bg(Hsla::from(theme.colors.card))
+            .shadow(
+                studio_theme::shadow_for(theme.appearance, studio_theme::Shadow::Pop).into_vec(),
+            )
             // A press on the panel body must not fall through to the
             // caller's click-away backdrop underneath.
             .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
@@ -287,13 +304,13 @@ impl RenderOnce for ColorPicker {
                     .overflow_hidden()
                     .bg(linear_gradient(
                         90.,
-                        linear_color_stop(gpui::white(), 0.),
+                        linear_color_stop(PICKER_WHITE, 0.),
                         linear_color_stop(rgb_hsla(hue_rgb), 1.),
                     ))
                     .child(div().size_full().bg(linear_gradient(
                         180.,
                         linear_color_stop(gpui::transparent_black(), 0.),
-                        linear_color_stop(gpui::black(), 1.),
+                        linear_color_stop(PICKER_BLACK, 1.),
                     )))
                     .child(
                         div()
@@ -303,7 +320,7 @@ impl RenderOnce for ColorPicker {
                             .size(px(THUMB))
                             .rounded_full()
                             .border_2()
-                            .border_color(gpui::white())
+                            .border_color(PICKER_WHITE)
                             .bg(rgb_hsla(rgb))
                             .shadow_sm(),
                     )
@@ -339,7 +356,7 @@ impl RenderOnce for ColorPicker {
                             .size(px(THUMB))
                             .rounded_full()
                             .border_2()
-                            .border_color(gpui::white())
+                            .border_color(PICKER_WHITE)
                             .bg(rgb_hsla(hue_rgb))
                             .shadow_sm(),
                     )
@@ -364,6 +381,34 @@ impl RenderOnce for ColorPicker {
                     .children(hex_field),
             )
     }
+}
+
+/// The swatch that opens a picker: `swatch` square, radius `item`, a `line_strong`
+/// hairline over the colour (none: the field has no valid colour). A tab stop that
+/// runs `on_open` on click, Enter and Space; the caller anchors the picker to its bounds.
+pub fn color_swatch(
+    theme: &Theme,
+    id: impl Into<gpui::ElementId>,
+    fill: Option<Rgba>,
+    disabled: bool,
+    on_open: super::interact::Handler,
+) -> gpui::Stateful<gpui::Div> {
+    use gpui::{StatefulInteractiveElement as _, prelude::FluentBuilder as _};
+    let swatch = super::interact::focusable(div().id(id), theme, disabled)
+        .role(gpui::Role::Button)
+        .aria_label(gpui::SharedString::from("Pick a colour"))
+        .relative()
+        .flex_none()
+        .size(px(METRICS.size.swatch))
+        .rounded(px(METRICS.radius.item))
+        .border_1()
+        .border_color(theme.colors.line_strong)
+        .when_some(fill, |this, fill| this.bg(fill))
+        .when(!disabled, |this| this.cursor_pointer());
+    super::interact::dim_disabled(
+        super::interact::on_activate(swatch, disabled, Some(on_open)),
+        disabled,
+    )
 }
 
 /// `.when_some(handler, ...)` reads poorly on two elements in a row; a tiny

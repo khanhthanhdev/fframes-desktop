@@ -1,0 +1,203 @@
+/* fframes Studio slide deck. No external resources: the page runs from disk. */
+:root {
+  color-scheme: dark;
+  --bg: #000;
+  --panel: rgba(18, 18, 22, 0.94);
+  --text: #f2f2f4;
+  --muted: #a0a0ab;
+  --accent: #5b8cff;
+  --line: rgba(255, 255, 255, 0.12);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+}
+
+[hidden] { display: none !important; }
+
+.stage {
+  position: fixed;
+  inset: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+body.with-notes .stage { right: min(420px, 40vw); }
+
+.layer {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--bg);
+}
+
+.poster { pointer-events: none; }
+
+.start {
+  position: absolute;
+  inset: auto 0 8vh 0;
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+
+.start-title { font-size: 1.4rem; margin: 0 0 0.4rem; }
+.start-hint { color: var(--muted); margin: 0; }
+
+kbd {
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 0.35em;
+  font: inherit;
+}
+
+.counter {
+  position: absolute;
+  right: 16px;
+  bottom: 12px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
+  opacity: 0;
+  transition: opacity 0.3s;
+  pointer-events: none;
+}
+
+.counter.visible { opacity: 1; }
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.close {
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 1.2rem;
+  line-height: 1;
+  width: 2rem;
+  height: 2rem;
+  cursor: pointer;
+}
+
+.close:hover, .close:focus-visible { border-color: var(--accent); outline: none; }
+
+.muted { color: var(--muted); }
+
+.notes {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(420px, 40vw);
+  padding: 16px 20px;
+  background: var(--panel);
+  border-left: 1px solid var(--line);
+  overflow: auto;
+}
+
+.notes-title { font-size: 1.25rem; margin: 16px 0 8px; overflow-wrap: anywhere; }
+.notes-text { white-space: pre-wrap; line-height: 1.5; overflow-wrap: anywhere; font-size: 1.05rem; }
+.keys { font-size: 0.8rem; margin-top: 2rem; }
+
+.overview {
+  position: fixed;
+  inset: 0;
+  padding: 20px 24px;
+  background: var(--panel);
+  overflow: auto;
+}
+
+.overview-title { font-size: 1.1rem; margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+
+.grid {
+  list-style: none;
+  margin: 16px 0 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 16px;
+}
+
+.card {
+  display: block;
+  width: 100%;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 8px;
+  background: #111;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  font: inherit;
+}
+
+.card:hover, .card:focus-visible { border-color: var(--line); outline: none; }
+.card.current { border-color: var(--accent); }
+
+.card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  background: #000;
+}
+
+.card-label {
+  display: flex;
+  gap: 8px;
+  padding: 6px 10px 8px;
+  font-size: 0.85rem;
+}
+
+.card-number { color: var(--muted); font-variant-numeric: tabular-nums; }
+.card-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.print { display: none; }
+
+.noscript { padding: 2rem; }
+.noscript a { color: var(--accent); }
+
+@media print {
+  @page { margin: 12mm; }
+  :root { color-scheme: light; }
+  html, body {
+    background: #fff;
+    color: #000;
+    overflow: visible;
+    height: auto;
+  }
+  .stage, .notes, .overview, .noscript { display: none !important; }
+  .print { display: block; }
+  .print-page {
+    break-after: page;
+    page-break-after: always;
+    break-inside: avoid;
+  }
+  .print-page:last-child { break-after: auto; page-break-after: auto; }
+  .print-page img {
+    display: block;
+    width: 100%;
+    height: auto;
+    max-height: 70vh;
+    object-fit: contain;
+  }
+  .print-page h2 { font-size: 14pt; margin: 8pt 0 4pt; }
+  .print-page p { white-space: pre-wrap; font-size: 11pt; margin: 0; }
+}

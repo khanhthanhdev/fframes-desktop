@@ -36,6 +36,8 @@ pub fn shadow_for(appearance: Appearance, kind: Shadow) -> SmallVec<[BoxShadow; 
             -12.
         )],
         Shadow::Preview => smallvec![black(0.35, 12., 32., -8.)],
+        // The dark pill is a wash on the trough (`segment_selected`), with no lift.
+        Shadow::RaisedPill if dark => SmallVec::new(),
         Shadow::RaisedPill => smallvec![black(0.12, 1., 2., 0.), black(0.06, 0., 0., 0.5)],
         Shadow::Thumb => smallvec![black(0.25, 1., 3., 0.)],
     }
@@ -66,5 +68,6 @@ mod tests {
         );
         assert_eq!(px(pop_dark[0].spread_radius), -12.);
         assert_eq!(shadow_for(Appearance::Light, Shadow::RaisedPill).len(), 2);
+        assert!(shadow_for(Appearance::Dark, Shadow::RaisedPill).is_empty());
     }
 }

@@ -9,16 +9,21 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use gpui::{
-    AnyElement, FontWeight, InteractiveElement, IntoElement, ParentElement, SharedString, Styled,
-    Window, div, px, relative,
+    AnyElement, InteractiveElement, IntoElement, ParentElement, SharedString, Styled, Window, div,
+    prelude::FluentBuilder, px,
 };
 use studio_markdown::{Block, InlineRun, TableAlign};
 
 use super::super::inline::{Flat, flatten};
-use super::super::style::{MdStyle, heading_size};
+use studio_theme::{METRICS, text_style};
+
+use super::super::style::{MdStyle, heading_style};
 use super::super::text_element::{MdText, SharedSelection};
 use super::super::veil::RowVeil;
 use super::{code, table};
+
+/// The bar down the side of a quote.
+const QUOTE_BAR_W: f32 = 2.;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Prepared {
@@ -207,15 +212,8 @@ impl<'a> BuildCx<'a> {
 pub fn build(block: &Prepared, cx: &mut BuildCx) -> AnyElement {
     match block {
         Prepared::Paragraph(flat) => div().child(cx.text(flat)).into_any_element(),
-        Prepared::Heading(level, flat) => div()
-            .text_size(heading_size(*level))
-            .line_height(relative(1.3))
-            .font_weight(if *level <= 2 {
-                FontWeight::BOLD
-            } else {
-                FontWeight::SEMIBOLD
-            })
-            .pt(px(if *level <= 2 { 4. } else { 2. }))
+        Prepared::Heading(level, flat) => text_style(div(), heading_style(*level))
+            .when(*level <= 2, |heading| heading.pt(px(METRICS.space_1)))
             .child(cx.text(flat))
             .into_any_element(),
         Prepared::Code {
@@ -226,12 +224,12 @@ pub fn build(block: &Prepared, cx: &mut BuildCx) -> AnyElement {
         Prepared::Quote(children) => div()
             .flex()
             .flex_row()
-            .gap(px(10.))
+            .gap(px(METRICS.space_3))
             .child(
                 div()
-                    .w(px(2.))
+                    .w(px(QUOTE_BAR_W))
                     .flex_none()
-                    .rounded(px(1.))
+                    .rounded_full()
                     .bg(cx.style.quote_bar),
             )
             .child(
@@ -240,7 +238,7 @@ pub fn build(block: &Prepared, cx: &mut BuildCx) -> AnyElement {
                     .flex_col()
                     .flex_1()
                     .min_w_0()
-                    .gap(px(6.))
+                    .gap(px(METRICS.space_2))
                     .text_color(cx.style.muted)
                     .children(
                         children
@@ -255,7 +253,7 @@ pub fn build(block: &Prepared, cx: &mut BuildCx) -> AnyElement {
             div()
                 .flex()
                 .flex_col()
-                .gap(px(4.))
+                .gap(px(METRICS.space_1))
                 .children(
                     items
                         .iter()
@@ -268,10 +266,10 @@ pub fn build(block: &Prepared, cx: &mut BuildCx) -> AnyElement {
                             div()
                                 .flex()
                                 .flex_row()
-                                .gap(px(6.))
+                                .gap(px(METRICS.space_1))
                                 .child(
                                     div()
-                                        .w(px(22.))
+                                        .min_w(px(METRICS.space_4))
                                         .flex_none()
                                         .text_right()
                                         .text_color(marker_color)
@@ -283,7 +281,7 @@ pub fn build(block: &Prepared, cx: &mut BuildCx) -> AnyElement {
                                         .flex_col()
                                         .flex_1()
                                         .min_w_0()
-                                        .gap(px(4.))
+                                        .gap(px(METRICS.space_1))
                                         .children(
                                             item.iter().map(|b| build(b, cx)).collect::<Vec<_>>(),
                                         ),
@@ -300,8 +298,8 @@ pub fn build(block: &Prepared, cx: &mut BuildCx) -> AnyElement {
             widths,
         } => table::build(header, rows, align, widths, cx),
         Prepared::Rule => div()
-            .h(px(1.))
-            .my(px(4.))
+            .h(px(METRICS.size.divider))
+            .my(px(METRICS.space_1))
             .bg(cx.style.rule)
             .into_any_element(),
     }

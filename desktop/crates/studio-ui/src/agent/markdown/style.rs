@@ -1,27 +1,16 @@
 //! Colours and fonts of rendered markdown, derived from the resolved studio theme.
 
-use gpui::{Hsla, Pixels, SharedString, px};
-use studio_theme::Theme;
+use gpui::{Hsla, SharedString};
+use studio_theme::{MONO_FAMILY, TextStyle, Theme};
 
-/// Size of code text, a notch under the body size.
-pub const CODE_SIZE: f32 = 12.0;
-
-/// The monospace family code is set in. The theme carries no code font.
-pub const MONO_FAMILY: &str = if cfg!(target_os = "windows") {
-    "Consolas"
-} else if cfg!(target_os = "macos") {
-    "Menlo"
-} else {
-    "DejaVu Sans Mono"
-};
-
-/// Size of a heading of `level` (1 to 6); the body is 13.
-pub fn heading_size(level: u8) -> Pixels {
+/// The text style of a heading of `level` (1 to 6) on the body's scale: h1 `Display`, h2
+/// `Heading`, h3 `Title`, the rest `BodyStrong`.
+pub fn heading_style(level: u8) -> TextStyle {
     match level {
-        1 => px(18.),
-        2 => px(16.),
-        3 => px(14.5),
-        _ => px(13.),
+        1 => TextStyle::Display,
+        2 => TextStyle::Heading,
+        3 => TextStyle::Title,
+        _ => TextStyle::BodyStrong,
     }
 }
 
@@ -42,7 +31,7 @@ pub struct MdStyle {
 
 impl MdStyle {
     pub fn new(theme: &Theme) -> Self {
-        let palette = theme.editor;
+        let palette = theme.colors;
         Self {
             theme: *theme,
             text: palette.text_1.into(),
@@ -52,7 +41,7 @@ impl MdStyle {
             code_border: palette.line.into(),
             rule: palette.line.into(),
             quote_bar: palette.line_strong.into(),
-            selection: gpui::hsla(211. / 360., 0.9, 0.55, 0.32),
+            selection: palette.selection.into(),
             mono: SharedString::from(MONO_FAMILY),
         }
     }

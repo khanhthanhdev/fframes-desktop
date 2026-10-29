@@ -14,7 +14,6 @@ use std::path::Path;
 pub use doc::{CodeScene, TimingClip, TimingDoc};
 pub use edits::{ResolvedClip, TrimEdge};
 use file::KnownFile;
-use history::History;
 
 use crate::TimingEditing;
 
@@ -40,6 +39,7 @@ pub enum TimelineCommand {
     /// Starts a drag: its edits preview live and become one undo step and one write.
     BeginGesture,
     EndGesture,
+    /// Undoes the latest timing or slides step: both documents share one history.
     Undo,
     Redo,
 }
@@ -70,7 +70,8 @@ struct LearnedScenes {
     scenes: Result<Vec<CodeScene>, String>,
 }
 
-/// The timing document of the open project and its edit history.
+/// The timing document of the open project. Its edit history is shared with the slides
+/// document and lives on the controller ([`history::RunTimeDoc`]).
 #[derive(Debug)]
 pub struct TimingSession {
     /// The document edits start from; `Err` when the live file cannot be read as one.
@@ -79,7 +80,6 @@ pub struct TimingSession {
     /// inventory entry with this hash is the session's own write.
     known: Option<KnownFile>,
     generation: u64,
-    pub(crate) history: History,
     scenes: Option<LearnedScenes>,
     notice: Option<String>,
 }
@@ -91,7 +91,6 @@ impl TimingSession {
             doc: Ok(TimingDoc::default()),
             known: None,
             generation: 0,
-            history: History::default(),
             scenes: None,
             notice: None,
         };
@@ -120,11 +119,10 @@ impl TimingSession {
         }
     }
 
-    /// Reloads after an outside change: the history is cleared (a running gesture is
-    /// aborted) and `reason` is shown.
+    /// Reloads after an outside change and shows `reason`. The caller clears the
+    /// document's steps from the shared history (a running gesture is aborted).
     pub fn reload(&mut self, root: &Path, reason: String) {
         self.read(root);
-        self.history.clear();
         self.notice = Some(reason);
     }
 

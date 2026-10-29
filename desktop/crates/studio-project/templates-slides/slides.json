@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "stops": [
+    { "scene": "intro", "at": "end", "title": "Welcome", "notes": "Say hello and what the talk is about." },
+    { "scene": "agenda", "at": 27, "title": "What a slide does", "notes": "A slide is a scene: it builds in, then holds." },
+    { "scene": "agenda", "at": 45, "notes": "Each bullet is its own stop, so you talk to one point at a time." },
+    { "scene": "agenda", "at": 63, "notes": "The stops live in slides.json; Studio's Slides tab edits them." },
+    { "scene": "agenda", "at": "end" },
+    { "scene": "present", "at": "end", "title": "Present it", "notes": "Present plays the deck full screen and holds at every stop." },
+    { "scene": "outputs", "at": "end", "title": "One source, two outputs", "notes": "The same code renders a video and an HTML deck." },
+    { "scene": "edit", "at": 27, "title": "Make it yours", "notes": "Select a slide's text in the preview to edit it in the Props panel." },
+    { "scene": "edit", "at": 45, "notes": "A new slide is one more Slide in src/video.rs with its own key." },
+    { "scene": "edit", "at": 63, "notes": "Notes like these go into exported decks, so keep them shareable." },
+    { "scene": "edit", "at": "end" },
+    { "scene": "thanks", "at": "end", "title": "Thank you", "notes": "Take questions." }
+  ]
+}

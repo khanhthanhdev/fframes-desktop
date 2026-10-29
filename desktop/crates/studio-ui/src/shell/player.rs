@@ -2,7 +2,7 @@
 //! and stage.
 
 use std::sync::atomic::Ordering;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gpui::{
     Context, InteractiveElement, IntoElement, MouseButton, ParentElement,
@@ -19,7 +19,18 @@ use super::transport::{show_total_time, transport_mode};
 use super::{PreparedInstall, StudioShell};
 use crate::actions;
 use crate::canvas_view::StageLayout;
-use crate::kit::{Badge, Card, Icon, Tone, focus_ring, icon, selectable, with_tooltip};
+use crate::kit::{
+    Badge, Card, EmptyState, Icon, Notice, Toast, ToastHost, Tone, focus_ring, icon, selectable,
+    with_tooltip,
+};
+
+/// The canvas message's toast: the host, and the message it last showed, so a message that
+/// is set again on every frame shows once.
+#[derive(Debug, Default)]
+pub(super) struct CanvasToast {
+    host: ToastHost,
+    seen: Option<String>,
+}
 
 impl StudioShell {
     pub(super) fn detach_preview(&mut self, cx: &mut Context<Self>) {
@@ -64,9 +75,11 @@ impl StudioShell {
             return;
         };
         let events = preview.events();
-        if let Some(retimed) = events.retimed {
-            self.retimed(retimed, cx);
+        if events.stop_scan_changed {
+            cx.notify();
         }
+        // The engine hears the layout the window installed, so the slide stops follow it.
+        let retimed = events.retimed.and_then(|retimed| self.retimed(retimed, cx));
         if let Some((key, frame)) = events.thumbnail {
             self.timeline
                 .update(cx, |v, cx| v.thumbnail(key, frame, cx));
@@ -88,7 +101,11 @@ impl StudioShell {
             self.props_panel
                 .update(cx, |panel, cx| panel.set_info(identity, info, cx));
         }
-        if events.compiled.is_none() && events.ready.is_none() && events.error.is_none() {
+        if events.compiled.is_none()
+            && events.ready.is_none()
+            && events.error.is_none()
+            && retimed.is_none()
+        {
             return;
         }
         self.preview_gate_pending = true;
@@ -96,12 +113,13 @@ impl StudioShell {
             compiled: events.compiled,
             error: events.error,
             ready: events.ready,
+            retimed,
         });
     }
 
     /// The displayed preview laid out with a new timing document: its timeline, length and
     /// audio change, the worker stays. Playback stops; the playhead keeps its frame number
-    /// and its frame is asked for again.
+    /// and its frame is asked for again. Returns the preview when it was installed.
     fn retimed(
         &mut self,
         retimed: Result<
@@ -109,13 +127,13 @@ impl StudioShell {
             (studio_engine::OperationTag, String),
         >,
         cx: &mut Context<Self>,
-    ) {
+    ) -> Option<std::sync::Arc<studio_engine::ReadyPreview>> {
         let ready = match retimed {
             Ok(ready) => ready,
             Err((_, error)) => {
                 self.error = Some(format!("The timeline edit could not be previewed: {error}"));
                 cx.notify();
-                return;
+                return None;
             }
         };
         let model = match studio_engine::TimelineModel::new(ready.timeline.clone()) {
@@ -123,11 +141,11 @@ impl StudioShell {
             Err(error) => {
                 self.error = Some(error);
                 cx.notify();
-                return;
+                return None;
             }
         };
         if self.preview_state.retime(&ready).is_err() {
-            return;
+            return None;
         }
         let resume = self.transport.playing();
         self.pending_ready = None;
@@ -151,14 +169,24 @@ impl StudioShell {
             .unwrap_or_else(|| std::sync::Arc::from([]));
         self.timeline
             .update(cx, |v, cx| v.install(model, waveform, position, cx));
-        self.displayed = Some(ready);
+        self.displayed = Some(ready.clone());
         self.thumbnails_sent = None;
         self.request_frame(position, cx);
         self.request_thumbnails(cx);
-        if resume {
+        self.after_retime(resume, cx);
+        cx.notify();
+        Some(ready)
+    }
+
+    /// The clock was reinstalled for a new layout: playback that ran goes on, except
+    /// while presenting, which holds at the nearest stop (again once the new stops
+    /// arrive, see `sync_deck`).
+    pub(super) fn after_retime(&mut self, was_playing: bool, cx: &mut Context<Self>) {
+        if self.presenting.is_some() {
+            self.hold_at_nearest_stop(cx);
+        } else if was_playing {
             self.toggle_playback(cx);
         }
-        cx.notify();
     }
 
     /// Asks the coordinator for the timeline's visible thumbnails when they changed;
@@ -196,55 +224,75 @@ impl StudioShell {
             self.discard_install(cx);
             self.error = Some(e);
         } else if let (Some(ready), Some(state)) = (ready, state) {
-            // A staged preview of just-published bytes carries the promotion
-            // tag (base source = the published revision, the task's own
-            // generation); it is installable only under the engine's current
-            // authorization, never as a build of the task base.
-            let promoted = state.promotion().is_some_and(|p| p.tag() == ready.tag());
-            if !promoted && !state.is_current_build(ready.tag()) {
-                if let Some(preview) = &self.preview {
-                    preview.cancel_build();
-                }
-                self.preview_state.cancel_build();
-            } else if self.transport.playing()
-                && (promoted
-                    || matches!(state.job(), studio_engine::JobState::Succeeded(tag) if tag == ready.tag()))
-            {
-                // Re-evaluate the audible position, then re-prime the candidate
-                // under the newly frozen seek serial. Old playback served the
-                // entire compilation/preparation, not the compiler's cursor.
-                self.resume_install = true;
-                self.pause_playback(cx);
-            } else if self.preview_state.can_install(&ready, &state).is_ok() {
-                let mut clock = self.transport.clone();
-                if let Err(e) = clock.reinstall(
-                    ready.timeline.fps,
-                    ready.timeline.total_frames,
+            // A presentation never starts playback or swaps the video under the
+            // presenter: the build waits until it ends.
+            if let Some(present) = &mut self.presenting {
+                present.hold_build(ready);
+                self.notify_player(cx);
+            } else {
+                self.offer_ready(ready, &state, cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// A ready build the engine allows: installed when it is still current, after a
+    /// pause when playback runs.
+    pub(super) fn offer_ready(
+        &mut self,
+        ready: std::sync::Arc<studio_engine::ReadyPreview>,
+        state: &studio_engine::ProjectState,
+        cx: &mut Context<Self>,
+    ) {
+        // A staged preview of just-published bytes carries the promotion
+        // tag (base source = the published revision, the task's own
+        // generation); it is installable only under the engine's current
+        // authorization, never as a build of the task base.
+        let promoted = state.promotion().is_some_and(|p| p.tag() == ready.tag());
+        if !promoted && !state.is_current_build(ready.tag()) {
+            if let Some(preview) = &self.preview {
+                preview.cancel_build();
+            }
+            self.preview_state.cancel_build();
+        } else if self.transport.playing()
+            && (promoted
+                || matches!(state.job(), studio_engine::JobState::Succeeded(tag) if tag == ready.tag()))
+        {
+            // Re-evaluate the audible position, then re-prime the candidate
+            // under the newly frozen seek serial. Old playback served the
+            // entire compilation/preparation, not the compiler's cursor.
+            self.resume_install = true;
+            self.pause_playback(cx);
+        } else if self.preview_state.can_install(&ready, state).is_ok() {
+            let mut clock = self.transport.clone();
+            if let Err(e) = clock.reinstall(
+                ready.timeline.fps,
+                ready.timeline.total_frames,
+                ready.position,
+                self.clock_start.elapsed().as_secs_f64(),
+            ) {
+                self.error = Some(e.to_string());
+            } else {
+                // Reserve the staged epoch in the active clock as well.
+                // A seek during preparation must advance past this epoch,
+                // never collide with a callback for another revision.
+                let _ = self.transport.wait_for_output();
+                self.audio.stage(
+                    ready.clone(),
+                    clock.epoch(),
                     ready.position,
-                    self.clock_start.elapsed().as_secs_f64(),
-                ) {
-                    self.error = Some(e.to_string());
-                } else {
-                    // Reserve the staged epoch in the active clock as well.
-                    // A seek during preparation must advance past this epoch,
-                    // never collide with a callback for another revision.
-                    let _ = self.transport.wait_for_output();
-                    self.audio.stage(
-                        ready.clone(),
-                        clock.epoch(),
-                        ready.position,
-                        self.output_device.clone(),
-                    );
-                    self.output = None;
-                    self.audio_ready_epoch = None;
-                    self.pending_ready = Some(PreparedInstall {
-                        ready,
-                        clock,
-                        audio: None,
-                        audio_ready: false,
-                    });
-                    self.audio_note = "Priming matching audio and first frame".into();
-                }
+                    clock.end_frame(),
+                    self.output_device.clone(),
+                );
+                self.output = None;
+                self.audio_ready_epoch = None;
+                self.pending_ready = Some(PreparedInstall {
+                    ready,
+                    clock,
+                    audio: None,
+                    audio_ready: false,
+                });
+                self.audio_note = "Priming matching audio and first frame".into();
             }
         }
         cx.notify();
@@ -273,7 +321,7 @@ impl StudioShell {
         self.schedule_playback_timer(cx);
     }
 
-    fn request_frame(&mut self, position: usize, cx: &mut Context<Self>) {
+    pub(super) fn request_frame(&mut self, position: usize, cx: &mut Context<Self>) {
         if self.send_frame_request(position, cx) {
             cx.notify();
         }
@@ -281,7 +329,7 @@ impl StudioShell {
 
     /// A new frame or playhead during playback: only the player section renders again, the
     /// cached sections stay as they are.
-    fn notify_player(&mut self, cx: &mut Context<Self>) {
+    pub(super) fn notify_player(&mut self, cx: &mut Context<Self>) {
         match &self.sections {
             Some(sections) => sections.player.update(cx, |_, cx| cx.notify()),
             None => cx.notify(),
@@ -408,7 +456,7 @@ impl StudioShell {
             MouseButton::Middle => self.canvas_pan_position = Some(point),
             MouseButton::Left if event.modifiers.shift => {
                 if !self.canvas.begin_rectangle(point.0, point.1) {
-                    self.canvas.message =
+                    self.canvas.error =
                         Some("Start a rectangle drag inside the painted video image.".into());
                 }
             }
@@ -428,8 +476,9 @@ impl StudioShell {
         if self.displayed.is_none() {
             return;
         }
+        self.canvas.error = None;
         if let Err(error) = self.canvas.select_at(point.0, point.1, cycle) {
-            self.canvas.message = Some(error.to_string());
+            self.canvas.error = Some(error.to_string());
         }
         self.install_task_scope(self.timeline.read(cx).selected_scope(), cx);
         cx.notify();
@@ -500,8 +549,9 @@ impl StudioShell {
         if self.displayed.is_none() {
             return;
         }
+        self.canvas.error = None;
         if let Err(error) = self.canvas.cycle_last_hit() {
-            self.canvas.message = Some(error.to_string());
+            self.canvas.error = Some(error.to_string());
         }
         self.sync_props_selection(cx);
         cx.notify();
@@ -524,10 +574,12 @@ impl StudioShell {
         if let Some(ready) = &self.displayed {
             self.output = None;
             self.audio_ready_epoch = None;
+            // Silent from the frame playback stops at: a slide stop while presenting.
             self.audio.stage(
                 ready.clone(),
                 self.transport.epoch(),
                 self.transport.position(),
+                self.transport.end_frame(),
                 self.output_device.clone(),
             );
             self.audio_note = "Buffering · waiting for matching first frame and PCM".into();
@@ -726,8 +778,14 @@ impl StudioShell {
     /// The preview, transport and history controls: toolbar, stage and transport
     /// inside one card. The timeline card is placed by `render`.
     pub(super) fn render_player_area(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        // Presenting, the section shows the presentation stage alone: frames still
+        // notify only this section.
+        if self.presenting.is_some() {
+            return self.render_present_stage(cx);
+        }
+        self.sync_canvas_toast(cx);
         let entity = cx.entity();
-        let mut player = Card::editor(&self.theme)
+        let mut player = Card::raised(&self.theme)
             .relative()
             .flex_1()
             .min_w_0()
@@ -735,7 +793,7 @@ impl StudioShell {
             .flex()
             .flex_col()
             .overflow_hidden()
-            .child(self.render_player_toolbar())
+            .child(self.render_player_toolbar(cx))
             .child(self.render_stage(cx))
             .child(self.render_transport(cx))
             .child(super::sections::section_probe(
@@ -777,9 +835,9 @@ impl StudioShell {
         player.into_any_element()
     }
 
-    fn render_player_toolbar(&self) -> gpui::AnyElement {
+    fn render_player_toolbar(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
-        let palette = theme.editor;
+        let palette = theme.colors;
         let (label, tone) = preview_badge(&self.preview_state.status, self.displayed.is_some());
         let audio_label = self.audio_status();
         div()
@@ -818,6 +876,15 @@ impl StudioShell {
                     .text_color(palette.text_2)
                     .child(selectable(audio_label)),
             )
+            .child(div().flex_none().child(self.action_button(
+                "present",
+                "Present",
+                self.displayed.is_some(),
+                false,
+                Some(Icon::Presentation),
+                cx,
+                |s, cx| s.present(None, cx),
+            )))
             .into_any_element()
     }
 
@@ -825,7 +892,7 @@ impl StudioShell {
     /// the `preview-surface` that owns pointer, keyboard and telemetry.
     fn render_stage(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
-        let palette = theme.editor;
+        let palette = theme.colors;
         let radius = px(METRICS.radius_frame);
         let mut preview_surface = div()
             .id("preview-surface")
@@ -881,7 +948,7 @@ impl StudioShell {
                 shell.canvas_scroll(event, cx)
             }))
             .flex_1()
-            .min_h(px(120.))
+            .min_h(px(METRICS.layout.stage_min_h))
             .flex()
             .flex_col()
             .items_center()
@@ -961,7 +1028,7 @@ impl StudioShell {
                         placed(div(), layout.to_frame_space(bounds))
                             .border_2()
                             .border_color(palette.accent)
-                            .bg(theme.selection()),
+                            .bg(theme.colors.selection),
                     );
                 }
                 if let (Some(viewport), Some(rect)) =
@@ -973,7 +1040,7 @@ impl StudioShell {
                             layout.to_frame_space(viewport.video_scope_bounds(rect)),
                         )
                         .border_2()
-                        .border_color(theme.amber_11),
+                        .border_color(palette.scope),
                     );
                 }
                 preview_surface
@@ -993,36 +1060,49 @@ impl StudioShell {
                 preview_surface.child(image.size_full())
             };
         } else {
-            preview_surface = preview_surface
-                .child(
-                    text_style(div(), TextStyle::Title)
-                        .text_color(palette.text_1)
-                        .child(selectable(if self.displayed.is_some() {
-                            "Empty video"
-                        } else {
-                            "No preview available"
-                        })),
+            preview_surface = preview_surface.child(
+                EmptyState::new(
+                    &theme,
+                    if self.displayed.is_some() {
+                        "Empty video"
+                    } else {
+                        "No preview available"
+                    },
                 )
-                .child(
-                    text_style(div(), TextStyle::Body)
-                        .text_color(palette.text_2)
-                        .child(selectable(
-                            "Build preview to compile the project's current source.",
-                        )),
-                );
+                .body("Build preview to compile the project's current source.")
+                .centered(),
+            );
         }
         let mut stage = div()
             .id("stage")
             .relative()
             .flex_1()
-            .min_h(px(120.))
+            .min_h(px(METRICS.layout.stage_min_h))
             .flex()
             .flex_col()
             .overflow_hidden()
             .p(px(METRICS.space_4))
             .bg(palette.stage)
             .child(preview_surface);
-        if let Some(message) = &self.canvas.message {
+        if let Some(error) = self.canvas.error.clone() {
+            let entity = cx.entity();
+            stage = stage.child(
+                div()
+                    .absolute()
+                    .left(px(METRICS.space_4))
+                    .right(px(METRICS.space_4))
+                    .bottom(px(METRICS.space_4))
+                    .child(Notice::new("canvas-error", Tone::Danger, error).on_dismiss(
+                        move |_, cx| {
+                            entity.update(cx, |shell, cx| {
+                                shell.canvas.error = None;
+                                shell.notify_player(cx);
+                            });
+                        },
+                    )),
+            );
+        } else if let Some(toast) = self.canvas_toast.borrow().host.current() {
+            let entity = cx.entity();
             stage = stage.child(
                 div()
                     .absolute()
@@ -1032,19 +1112,75 @@ impl StudioShell {
                     .flex()
                     .justify_center()
                     .child(
-                        text_style(div(), TextStyle::Small)
-                            .px(px(METRICS.space_3))
-                            .py(px(METRICS.space_1))
-                            .rounded(px(METRICS.radius_control))
-                            .border_1()
-                            .border_color(palette.line)
-                            .bg(palette.card)
-                            .text_color(palette.text_2)
-                            .child(message.clone()),
+                        Toast::new(&theme, "canvas-message", toast.message.clone()).on_hover(
+                            move |hovered, _, cx| {
+                                entity.update(cx, |shell, cx| {
+                                    shell
+                                        .canvas_toast
+                                        .borrow_mut()
+                                        .host
+                                        .set_hovered(*hovered, Instant::now());
+                                    shell.schedule_canvas_toast(cx);
+                                });
+                            },
+                        ),
                     ),
             );
         }
         stage.into_any_element()
+    }
+
+    /// Shows the canvas message as a toast when it changes.
+    fn sync_canvas_toast(&self, cx: &mut Context<Self>) {
+        let message = self.canvas.message.clone();
+        {
+            let mut toast = self.canvas_toast.borrow_mut();
+            if toast.seen == message {
+                return;
+            }
+            toast.seen = message.clone();
+            match message {
+                Some(message) => {
+                    toast.host.show(message, Instant::now());
+                }
+                None => return,
+            }
+        }
+        self.schedule_canvas_toast(cx);
+    }
+
+    /// Removes the canvas toast when it expires; nothing while it is hovered.
+    fn schedule_canvas_toast(&self, cx: &mut Context<Self>) {
+        let pending = {
+            let toast = self.canvas_toast.borrow();
+            toast
+                .host
+                .current()
+                .map(|current| current.id)
+                .zip(toast.host.remaining(Instant::now()))
+        };
+        let Some((id, wait)) = pending else {
+            return;
+        };
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(wait).await;
+            let _ = this.update(cx, |shell, cx| {
+                let expired = {
+                    let mut toast = shell.canvas_toast.borrow_mut();
+                    // A newer toast runs its own timer.
+                    if toast.host.current().map(|current| current.id) != Some(id) {
+                        return;
+                    }
+                    toast.host.tick(Instant::now())
+                };
+                if expired {
+                    shell.notify_player(cx);
+                } else {
+                    shell.schedule_canvas_toast(cx);
+                }
+            });
+        })
+        .detach();
     }
 }
 

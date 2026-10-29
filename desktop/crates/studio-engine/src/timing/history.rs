@@ -1,10 +1,29 @@
 //! Snapshot undo and redo of the timing document (Cap's editor history): every step
 //! stores the whole document, and a gesture (a drag) collects its changes into one step.
-//! The props document uses the same history.
+//! The props document uses the same history. The timing and slides documents share one
+//! history of [`RunTimeDoc`] steps, so undo goes back through the latest gesture of
+//! either in order.
 use super::doc::TimingDoc;
+use crate::slides::SlidesDoc;
 
 /// Undo steps kept; the oldest go first.
 pub const MAX_HISTORY: usize = 100;
+
+/// A step of the shared timing and slides history: the whole document it restores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RunTimeDoc {
+    Timing(TimingDoc),
+    Slides(SlidesDoc),
+}
+
+impl RunTimeDoc {
+    pub fn is_timing(&self) -> bool {
+        matches!(self, Self::Timing(_))
+    }
+    pub fn is_slides(&self) -> bool {
+        matches!(self, Self::Slides(_))
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Gesture<D> {
@@ -12,8 +31,8 @@ enum Gesture<D> {
     /// The document when the gesture began.
     Active(D),
     /// The document changed outside the studio during the gesture: its remaining
-    /// edits are refused until it ends.
-    Aborted,
+    /// edits are refused until it ends. Keeps the document it began with.
+    Aborted(D),
 }
 
 #[derive(Debug, Clone)]
@@ -44,7 +63,22 @@ impl<D: Clone + PartialEq> History<D> {
         self.gesture != Gesture::None
     }
     pub fn gesture_aborted(&self) -> bool {
-        self.gesture == Gesture::Aborted
+        matches!(self.gesture, Gesture::Aborted(_))
+    }
+    /// The document the running gesture (active or aborted) began with.
+    pub fn gesture(&self) -> Option<&D> {
+        match &self.gesture {
+            Gesture::None => None,
+            Gesture::Active(start) | Gesture::Aborted(start) => Some(start),
+        }
+    }
+    /// The document the next undo goes back to.
+    pub fn peek_undo(&self) -> Option<&D> {
+        self.undo.last()
+    }
+    /// The document the next redo goes forward to.
+    pub fn peek_redo(&self) -> Option<&D> {
+        self.redo.last()
     }
 
     /// Starts collecting changes into one step. A second begin keeps the first start.
@@ -95,10 +129,21 @@ impl<D: Clone + PartialEq> History<D> {
 
     /// Forgets every step; a running gesture is aborted, not ended.
     pub fn clear(&mut self) {
-        self.undo.clear();
-        self.redo.clear();
-        if self.gesture != Gesture::None {
-            self.gesture = Gesture::Aborted;
+        self.clear_where(|_| true);
+    }
+
+    /// Forgets the steps `matches` selects, keeping the others in order; a running
+    /// gesture that began on a selected document is aborted, not ended.
+    pub fn clear_where(&mut self, matches: impl Fn(&D) -> bool) {
+        self.undo.retain(|step| !matches(step));
+        self.redo.retain(|step| !matches(step));
+        if let Gesture::Active(start) = &self.gesture
+            && matches(start)
+        {
+            let Gesture::Active(start) = std::mem::replace(&mut self.gesture, Gesture::None) else {
+                unreachable!("just matched");
+            };
+            self.gesture = Gesture::Aborted(start);
         }
     }
 }
@@ -156,6 +201,47 @@ mod tests {
         assert!(history.gesture_aborted());
         assert!(!history.end_gesture(&doc(5)));
         assert!(!history.in_gesture());
+    }
+
+    #[test]
+    fn a_shared_history_keeps_both_documents_in_order_and_clears_one() {
+        let slides = |stops: usize| {
+            RunTimeDoc::Slides(SlidesDoc {
+                version: 1,
+                stops: vec![
+                    crate::slides::SlideStop {
+                        scene: "intro".into(),
+                        at: crate::slides::StopAt::End,
+                        title: None,
+                        notes: None,
+                    };
+                    stops
+                ],
+            })
+        };
+        let mut history = History::default();
+        history.record(&RunTimeDoc::Timing(doc(0)));
+        history.record(&slides(0));
+        history.record(&RunTimeDoc::Timing(doc(1)));
+        assert_eq!(history.peek_undo(), Some(&RunTimeDoc::Timing(doc(1))));
+
+        // A slides drag that an outside write interrupts: the timing steps stay.
+        history.begin_gesture(&slides(1));
+        history.clear_where(RunTimeDoc::is_slides);
+        assert!(history.gesture_aborted());
+        assert_eq!(history.gesture(), Some(&slides(1)));
+        assert!(!history.end_gesture(&slides(3)));
+        assert_eq!(
+            history.undo(&RunTimeDoc::Timing(doc(2))),
+            Some(RunTimeDoc::Timing(doc(1)))
+        );
+        assert_eq!(history.peek_undo(), Some(&RunTimeDoc::Timing(doc(0))));
+        assert_eq!(history.peek_redo(), Some(&RunTimeDoc::Timing(doc(2))));
+
+        // A timing gesture is not aborted by clearing the slides.
+        history.begin_gesture(&RunTimeDoc::Timing(doc(5)));
+        history.clear_where(RunTimeDoc::is_slides);
+        assert!(!history.gesture_aborted());
     }
 
     #[test]

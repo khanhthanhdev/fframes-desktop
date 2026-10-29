@@ -1,42 +1,29 @@
 //! `Select`'s trigger -- the closed half of the control [`crate::kit::Menu`]
-//! opens. `KSelect.Trigger` in the Solid app is `flex h-8 rounded-lg bg-gray-3
-//! px-2` plus a chevron that rotates on `data-expanded`; the settings window's
-//! `SelectSettingItem` is the same shape at `px-2.5 py-1.5` with a border.
+//! opens: a borderless `ctl` pill with the value and a chevron.
 //!
-//! The chevron does not rotate: this gpui rev has no transform (the same gap
-//! that leaves the camera bubble's mirror button disabled).
+//! The chevron does not rotate: this gpui rev has no transform.
 
 use gpui::{
-    App, Bounds, ClickEvent, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement,
-    ParentElement, Pixels, RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled,
-    Window, div, prelude::FluentBuilder, px, svg,
+    App, Bounds, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels,
+    RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    prelude::FluentBuilder, px, svg,
 };
 
-use super::interact::focusable;
+use super::interact::{States, dim_disabled, focusable};
 use super::menu::OpenHandler;
-use studio_theme::Theme;
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
+
+/// The trigger's horizontal padding and its chevron.
+const PAD_X: f32 = 10.;
+const CHEVRON: f32 = 12.;
 
 #[derive(IntoElement)]
 pub struct Select {
     id: ElementId,
+    theme: Theme,
     label: SharedString,
-    padding_x: Pixels,
-    padding_y: Pixels,
-    height: Option<Pixels>,
-    radius: Pixels,
-    text_size: Pixels,
-    /// The two triggers disagree: `SelectSettingItem`'s button names no
-    /// `font-*` class and so inherits `body`'s Medium, while the editor's
-    /// `KSelect.Value` says `font-normal` explicitly (`ConfigSidebar.tsx:740`
-    /// and friends) and drops back to Regular.
-    weight: FontWeight,
-    bg: Option<Hsla>,
-    border: Option<Hsla>,
-    text: Hsla,
-    chevron: Hsla,
-    chevron_size: Pixels,
-    /// `gap-1.5` on the settings row, `gap-2` on the editor's trigger.
-    gap: Pixels,
+    /// No fill until hovered: the composer's model picker.
+    ghost: bool,
     stretch: bool,
     disabled: bool,
     on_click: Option<crate::kit::button::ClickHandler>,
@@ -44,30 +31,12 @@ pub struct Select {
 }
 
 impl Select {
-    /// `SelectSettingItem`'s button: `flex flex-row gap-1.5 text-xs items-center
-    /// px-2.5 py-1.5 rounded-lg border bg-gray-3 text-gray-12 border-gray-4`,
-    /// radius 8 under the settings material.
-    pub fn settings(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        label: impl Into<SharedString>,
-    ) -> Self {
+    pub fn new(theme: &Theme, id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
+            theme: *theme,
             label: label.into(),
-            padding_x: px(10.),
-            padding_y: px(6.),
-            height: None,
-            radius: px(8.),
-            text_size: px(12.),
-            // No `font-*` class on the button, so it keeps `body`'s Medium.
-            weight: FontWeight::MEDIUM,
-            bg: Some(theme.settings_fill()),
-            border: Some(theme.settings_border()),
-            text: theme.settings_text(),
-            chevron: theme.settings_muted(),
-            chevron_size: px(14.),
-            gap: px(6.),
+            ghost: false,
             stretch: false,
             disabled: false,
             on_click: None,
@@ -75,30 +44,13 @@ impl Select {
         }
     }
 
-    /// The editor's `KSelect.Trigger`: a borderless `ed-ctl` pill.
-    pub fn plain(theme: &Theme, id: impl Into<ElementId>, label: impl Into<SharedString>) -> Self {
-        Self {
-            padding_x: px(10.),
-            padding_y: px(0.),
-            height: Some(px(30.)),
-            radius: px(7.),
-            text_size: px(13.),
-            // `KSelect.Value` is `text-sm ... font-normal`, which opts out of
-            // `body`'s Medium (`ConfigSidebar.tsx:740`, `:3121`, `:3173`,
-            // `:3369`, `:5283`, `:5380`).
-            weight: FontWeight::NORMAL,
-            bg: Some(Hsla::from(theme.editor.ctl)),
-            border: None,
-            text: Hsla::from(theme.editor.text_1),
-            chevron: Hsla::from(theme.editor.text_3),
-            chevron_size: px(12.),
-            gap: px(8.),
-            ..Self::settings(theme, id, label)
-        }
+    /// No resting fill: a trigger inside a toolbar.
+    pub fn ghost(mut self) -> Self {
+        self.ghost = true;
+        self
     }
 
-    /// The label takes the remaining width and the chevron is pushed to the
-    /// end -- `EditorButton`'s `rightIconEnd`.
+    /// The label takes the remaining width and the chevron is pushed to the end.
     pub fn stretch_label(mut self) -> Self {
         self.stretch = true;
         self
@@ -127,51 +79,40 @@ impl Select {
 }
 
 impl RenderOnce for Select {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = Theme::for_window(window, cx);
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let Select {
             id,
+            theme,
             label,
-            padding_x,
-            padding_y,
-            height,
-            radius,
-            text_size,
-            weight,
-            bg,
-            border,
-            text,
-            chevron,
-            chevron_size,
-            gap,
+            ghost,
             stretch,
             disabled,
             on_click,
             on_open,
         } = self;
+        let colors = theme.colors;
+        let states = States::of(&theme);
 
-        focusable(div().id(id), &theme, disabled)
+        let element = focusable(div().id(id), &theme, disabled)
             .role(Role::ComboBox)
             .aria_label(label.clone())
             .flex()
             .flex_row()
             .items_center()
-            .gap(gap)
-            .px(padding_x)
-            .when(f32::from(padding_y) > 0., |this| this.py(padding_y))
-            .when_some(height, |this, height| this.h(height))
-            .rounded(radius)
-            .when_some(border, |this, border| this.border_1().border_color(border))
-            .when_some(bg, |this, bg| this.bg(bg))
-            .when(!disabled, |this| this.cursor_pointer())
-            .text_size(text_size)
-            // The label is the only text under here -- the chevron is an svg.
-            .font_weight(weight)
-            .text_color(text)
-            .when(disabled, |this| this.opacity(0.5))
+            .gap(px(METRICS.space_2))
+            .px(px(PAD_X))
+            .h(px(METRICS.size.select_h))
+            .rounded(px(METRICS.radius.control))
+            .when(!ghost, |this| this.bg(states.rest))
+            .when(!disabled, |this| {
+                this.cursor_pointer()
+                    .hover(move |style| style.bg(states.hover))
+            });
+        dim_disabled(text_style(element, TextStyle::Body), disabled)
+            .text_color(colors.text_1)
             .map(|this| {
                 if stretch {
-                    this.child(div().flex_1().child(label))
+                    this.child(div().flex_1().truncate().child(label))
                 } else {
                     this.child(label)
                 }
@@ -179,9 +120,9 @@ impl RenderOnce for Select {
             .child(
                 svg()
                     .path("icons/chevron-down.svg")
-                    .size(chevron_size)
+                    .size(px(CHEVRON))
                     .flex_shrink_0()
-                    .text_color(chevron),
+                    .text_color(colors.text_3),
             )
             .when_some(on_click.filter(|_| !disabled), |this, handler| {
                 this.on_click(move |event, window, cx| handler(event, window, cx))
@@ -189,7 +130,6 @@ impl RenderOnce for Select {
             .when_some(on_open.filter(|_| !disabled), crate::kit::Menu::trigger)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use gpui::{Context, ParentElement, Render, TestAppContext};
@@ -210,11 +150,11 @@ mod tests {
             };
             div()
                 .child(
-                    Select::plain(&theme, "locked", "Locked")
+                    Select::new(&theme, "locked", "Locked")
                         .disabled(true)
                         .on_click(open("locked")),
                 )
-                .child(Select::plain(&theme, "fps", "30 fps").on_click(open("fps")))
+                .child(Select::new(&theme, "fps", "30 fps").on_click(open("fps")))
         }
     }
 

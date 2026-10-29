@@ -1,4 +1,4 @@
-//! Inline notice: a message with a tone bar, optional actions, collapsible
+//! Inline notice: a message with a tone icon and surface, optional actions, collapsible
 //! details and a dismiss button. Screen readers announce it as an alert.
 
 use std::{rc::Rc, time::Instant};
@@ -11,10 +11,11 @@ use gpui::{
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::badge::{Tone, tone_color, tone_surface};
-use super::button::IconButton;
+use super::button::{IconButton, IconButtonSize};
 use super::collapsible::{Collapsible, CollapsibleState, Disclosure};
 use super::icon::{Icon, icon};
 use super::selectable;
+use super::surface::Card;
 
 /// Tallest the expanded details grow before they scroll, so a long error
 /// never pushes the rest of the window down.
@@ -32,7 +33,7 @@ pub fn tone_icon(tone: Tone) -> Icon {
 /// Fill of the notice card: the status surfaces, the plain card otherwise.
 pub fn notice_surface(theme: &Theme, tone: Tone) -> Rgba {
     match tone {
-        Tone::Neutral | Tone::Info => theme.editor.card,
+        Tone::Neutral | Tone::Info => theme.colors.card,
         tone => tone_surface(theme, tone),
     }
 }
@@ -88,7 +89,7 @@ impl Notice {
 impl RenderOnce for Notice {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let theme = Theme::for_window(window, cx);
-        let editor = theme.editor;
+        let colors = theme.colors;
         let accent = tone_color(&theme, self.tone);
 
         let details = self.details.map(|text| {
@@ -111,7 +112,7 @@ impl RenderOnce for Notice {
                     Disclosure::new((self.id.clone(), "details-header".to_string()), open)
                         .child(
                             text_style(div(), TextStyle::Label)
-                                .text_color(editor.text_2)
+                                .text_color(colors.text_2)
                                 .child("Details"),
                         )
                         .on_toggle(move |open, window, cx| {
@@ -129,7 +130,7 @@ impl RenderOnce for Notice {
                             .mt(px(METRICS.space_1))
                             .max_h(px(DETAILS_MAX_H))
                             .overflow_y_scroll()
-                            .text_color(editor.text_2)
+                            .text_color(colors.text_2)
                             .child(selectable(text)),
                         ),
                     ),
@@ -137,11 +138,12 @@ impl RenderOnce for Notice {
         });
 
         let dismiss = self.on_dismiss.map(|handler| {
-            IconButton::body(
+            IconButton::new(
                 &theme,
                 (self.id.clone(), "dismiss".to_string()),
                 Icon::X.path(),
             )
+            .size(IconButtonSize::Sm)
             .label("Dismiss")
             .on_click(move |_, window, cx| handler(window, cx))
         });
@@ -154,12 +156,12 @@ impl RenderOnce for Notice {
             .gap(px(METRICS.space_1))
             .child(
                 text_style(div(), TextStyle::BodyStrong)
-                    .text_color(editor.text_1)
+                    .text_color(colors.text_1)
                     .child(selectable(self.title)),
             )
             .children(self.body.map(|body| {
                 text_style(div(), TextStyle::Body)
-                    .text_color(editor.text_2)
+                    .text_color(colors.text_2)
                     .child(selectable(body))
             }))
             .children(details)
@@ -167,32 +169,28 @@ impl RenderOnce for Notice {
                 div()
                     .flex()
                     .flex_wrap()
-                    .gap(px(8.))
+                    .gap(px(METRICS.space_2))
                     .pt(px(METRICS.space_1))
                     .children(self.actions)
             }));
 
-        div()
+        Card::raised(&theme)
             .id(self.id)
             .role(Role::Alert)
             .flex()
             .w_full()
             .overflow_hidden()
-            .rounded(px(METRICS.radius_card))
-            .border_1()
-            .border_color(editor.line)
             .bg(notice_surface(&theme, self.tone))
-            .child(div().w(px(3.)).flex_none().bg(accent))
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .min_w_0()
-                    .gap(px(8.))
-                    .p(px(12.))
+                    .gap(px(METRICS.space_2))
+                    .p(px(METRICS.space_3))
                     .child(icon(
                         tone_icon(self.tone),
-                        METRICS.icon_md,
+                        METRICS.size.icon_md,
                         Hsla::from(accent),
                     ))
                     .child(body)
@@ -212,10 +210,13 @@ mod tests {
     #[test]
     fn surfaces_and_icons_follow_tone() {
         let theme = Theme::new(Appearance::Light);
-        assert_eq!(notice_surface(&theme, Tone::Info), theme.editor.card);
-        assert_eq!(notice_surface(&theme, Tone::Neutral), theme.editor.card);
-        assert_eq!(notice_surface(&theme, Tone::Success), theme.green_3);
-        assert_eq!(notice_surface(&theme, Tone::Danger), theme.red_3);
+        assert_eq!(notice_surface(&theme, Tone::Info), theme.colors.card);
+        assert_eq!(notice_surface(&theme, Tone::Neutral), theme.colors.card);
+        assert_eq!(
+            notice_surface(&theme, Tone::Success),
+            theme.colors.success_bg
+        );
+        assert_eq!(notice_surface(&theme, Tone::Danger), theme.colors.danger_bg);
         assert_eq!(tone_icon(Tone::Info), Icon::Info);
         assert_eq!(tone_icon(Tone::Success), Icon::CircleCheck);
         assert_eq!(tone_icon(Tone::Warning), Icon::AlertTriangle);

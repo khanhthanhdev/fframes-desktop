@@ -3,12 +3,9 @@
 //! `settings/hotkeys.tsx`'s `HotkeyText` squares. All three re-implement the
 //! macOS-glyph-versus-Windows-label mapping; that lives here once.
 
-use gpui::{
-    App, Hsla, IntoElement, ParentElement, Pixels, RenderOnce, SharedString, Styled, Window, div,
-    prelude::FluentBuilder, px,
-};
+use gpui::{App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px};
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 /// `kbdSymbolModifier(key, os)`: macOS renders the glyphs, every other OS
 /// renders the word. Non-modifier keys pass through with the `Key` prefix
@@ -53,80 +50,71 @@ pub fn kbd_symbol(key: &str) -> SharedString {
     SharedString::from(symbol)
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum KbdSize {
-    /// Inside a tooltip bubble: `py-0.5 px-[5px] text-[10px] rounded-md`.
-    Sm,
-    /// Standalone in a settings row: `size-6` square, `text-[11px]`.
-    Md,
-}
-
+/// A keycap: a square chip on `ctl` behind a `line_strong` hairline, or, inside a
+/// tooltip, a small chip in the tooltip's inverse colours.
 #[derive(IntoElement)]
 pub struct KbdChip {
+    theme: Theme,
     key: SharedString,
-    size: KbdSize,
-    bg: Hsla,
-    text: Hsla,
-    border: Option<Hsla>,
+    in_tooltip: bool,
 }
 
+/// The standalone chip's least side, and the paddings of both looks.
+const CHIP_MIN: f32 = 24.;
+const CHIP_PAD_X: f32 = 4.;
+const TOOLTIP_PAD_X: f32 = 5.;
+const PAD_Y: f32 = 2.;
+
 impl KbdChip {
-    /// The tooltip variant: a light chip on the tooltip's dark bubble.
-    pub fn tooltip(theme: &Theme, key: impl AsRef<str>) -> Self {
+    pub fn new(theme: &Theme, key: impl AsRef<str>) -> Self {
         Self {
+            theme: *theme,
             key: kbd_symbol(key.as_ref()),
-            size: KbdSize::Sm,
-            bg: theme.gray(1),
-            text: theme.gray(12),
-            border: None,
+            in_tooltip: false,
         }
     }
 
-    /// `HotkeyText`'s square: `bg-gray-5 border-gray-6`, the most tactile of
-    /// the three and the one meant to be legible on its own.
-    pub fn row(theme: &Theme, key: impl AsRef<str>) -> Self {
-        Self {
-            key: kbd_symbol(key.as_ref()),
-            size: KbdSize::Md,
-            bg: theme.gray(5),
-            text: theme.gray(12),
-            border: Some(theme.gray(6)),
-        }
+    /// The small chip inside a tooltip bubble.
+    pub fn in_tooltip(mut self) -> Self {
+        self.in_tooltip = true;
+        self
     }
 }
 
 impl RenderOnce for KbdChip {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let KbdChip {
+            theme,
             key,
-            size,
-            bg,
-            text,
-            border,
+            in_tooltip,
         } = self;
-        let (padding_x, padding_y, text_size, min_size): (Pixels, Pixels, Pixels, Option<Pixels>) =
-            match size {
-                KbdSize::Sm => (px(5.), px(2.), px(10.), None),
-                KbdSize::Md => (px(4.), px(2.), px(11.), Some(px(24.))),
-            };
-
-        div()
+        let colors = theme.colors;
+        let chip = div()
             .flex()
             .items_center()
             .justify_center()
             .flex_shrink_0()
-            .px(padding_x)
-            .py(padding_y)
-            .when_some(min_size, |this, size| this.min_w(size).h(size))
-            .rounded(px(6.))
-            .bg(bg)
-            .text_size(text_size)
-            .text_color(text)
-            .when_some(border, |this, border| this.border_1().border_color(border))
-            .child(key)
+            .py(px(PAD_Y))
+            .rounded(px(METRICS.radius.item));
+        if in_tooltip {
+            text_style(chip, TextStyle::Caption)
+                .px(px(TOOLTIP_PAD_X))
+                .bg(colors.tooltip_text)
+                .text_color(colors.tooltip_bg)
+                .child(key)
+        } else {
+            text_style(chip, TextStyle::Small)
+                .px(px(CHIP_PAD_X))
+                .min_w(px(CHIP_MIN))
+                .h(px(CHIP_MIN))
+                .bg(colors.ctl)
+                .border_1()
+                .border_color(colors.line_strong)
+                .text_color(colors.text_1)
+                .child(key)
+        }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

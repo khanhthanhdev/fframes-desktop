@@ -9,17 +9,16 @@ use gpui::{
     AppContext, Context, ElementId, Entity, EventEmitter, InteractiveElement, IntoElement,
     ParentElement, Render, SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
-use std::rc::Rc;
 use studio_engine::PresetMutation;
 use studio_engine::presets::{
-    CssView, MAX_CSS_LINES, Outcome, PresetCommand, PresetReport, PresetView,
+    CssView, EntryView, MAX_CSS_LINES, Outcome, PresetCommand, PresetReport, PresetView,
 };
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use crate::kit::{
-    CollapsibleSection, EditorButton, Handler, Icon, IconButton, IconButtonSize, Notice, TextInput,
-    TextInputEvent, TextInputState, Tone, divider, focusable, icon, on_activate, section_title,
-    selectable, with_tooltip,
+    Badge, Button, CollapsibleSection, Emphasis, EmptyState, FormField, Icon, IconButton,
+    IconButtonSize, List, ListRow, Notice, PanelSection, TextInput, TextInputEvent, TextInputState,
+    Tone, selectable,
 };
 
 // ---- GPUI panel ------------------------------------------------------------------------
@@ -167,88 +166,55 @@ impl PresetPanel {
 
     // ---- building blocks ---------------------------------------------------------------
 
+    /// A button at its natural width that runs `action` on this panel.
     #[allow(clippy::too_many_arguments)]
-    /// A stacked, full-width button that runs `action` on this panel: the accent fill
-    /// when `primary`, otherwise the control fill.
     fn action_button(
         &self,
         id: impl Into<ElementId>,
         label: &'static str,
         enabled: bool,
-        primary: bool,
+        emphasis: Emphasis,
         glyph: Option<Icon>,
         cx: &mut Context<Self>,
         action: impl Fn(&mut Self, &mut Context<Self>) + 'static,
-    ) -> EditorButton {
-        let theme = self.theme;
+    ) -> Button {
         let entity = cx.entity();
-        let mut button = EditorButton::plain(&theme, id)
+        let mut button = Button::new(&self.theme, id)
             .label(label)
-            .full_width()
+            .emphasis(emphasis)
             .disabled(!enabled)
             .on_click(move |_, _, cx| {
                 entity.update(cx, |panel, cx| action(panel, cx));
             });
-        button = if primary {
-            button.accent(&theme)
-        } else {
-            button.filled(&theme)
-        };
         if let Some(glyph) = glyph {
             button = button.left_icon(glyph.path());
         }
         button
     }
 
-    /// One preset in the list: a radio-style row with a check on the selected one.
-    /// The accessible name and tooltip carry the full label.
-    fn preset_row(
-        &self,
-        key: String,
-        label: String,
-        shown: String,
-        selected: bool,
-        cx: &mut Context<Self>,
-    ) -> gpui::Stateful<gpui::Div> {
-        let theme = self.theme;
-        let hover = theme.editor.ctl_hover;
+    /// A row of buttons that wraps only when the page is too narrow for it.
+    fn button_row() -> gpui::Div {
+        div().flex().flex_wrap().gap(px(METRICS.space_2))
+    }
+
+    /// One preset in the list; Enter, Space or a click selects it.
+    fn preset_row(&self, entry: &EntryView, selected: bool, cx: &mut Context<Self>) -> ListRow {
         let entity = cx.entity();
-        let id = format!("preset-{key}");
-        let handler: Handler = Rc::new(move |_, cx| {
-            entity.update(cx, |panel, cx| {
-                panel.selected = Some(key.clone());
-                cx.notify();
+        let key = entry.key.clone();
+        let mut row = ListRow::new(&self.theme, SharedString::from(format!("preset-{key}")))
+            .title(format!("{} {}", entry.name, entry.version))
+            .meta(if entry.bundled { "bundled" } else { "imported" })
+            .selected(selected)
+            .on_click(move |_, cx| {
+                entity.update(cx, |panel, cx| {
+                    panel.selected = Some(key.clone());
+                    cx.notify();
+                });
             });
-        });
-        let check = if selected {
-            icon(Icon::Check, METRICS.icon_sm, theme.editor.accent)
-        } else {
-            icon(Icon::Check, METRICS.icon_sm, theme.editor.text_3).opacity(0.)
-        };
-        let mut row = div()
-            .id(id)
-            .role(gpui::Role::RadioButton)
-            .aria_label(label.clone())
-            .flex()
-            .flex_none()
-            .items_center()
-            .gap(px(METRICS.space_2))
-            .h(px(PRESET_ROW_H))
-            .px(px(METRICS.space_2))
-            .min_w_0()
-            .rounded(px(METRICS.radius_item))
-            .hover(move |style| style.bg(hover))
-            .child(check)
-            .child(
-                text_style(div().min_w_0().flex_1().truncate(), TextStyle::Body)
-                    .text_color(theme.editor.text_1)
-                    .child(shown),
-            );
-        if selected {
-            row = row.bg(theme.editor.ctl);
+        if entry.applied {
+            row = row.trailing(Badge::new("Applied").tone(Tone::Success));
         }
-        let row = on_activate(focusable(row, &theme, false), false, Some(handler));
-        with_tooltip(row, &theme, Some(label.into()))
+        row
     }
 
     fn small(text: impl Into<SharedString>, color: gpui::Rgba) -> gpui::Div {
@@ -279,6 +245,8 @@ impl PresetPanel {
         let field = input.clone();
         div()
             .id(id)
+            .flex_1()
+            .min_w_0()
             .on_key_down(
                 cx.listener(move |_, event: &gpui::KeyDownEvent, window, cx| {
                     if field.read(cx).is_composing() {
@@ -295,97 +263,74 @@ impl PresetPanel {
                     }
                 }),
             )
-            .child(TextInput::plain(
+            .child(TextInput::new(
                 &self.theme,
                 SharedString::from(format!("{id}-input")),
                 &input,
             ))
     }
-}
 
-impl Render for PresetPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.theme.refresh(window, cx);
+    /// The preset list, the selected preset and what to do with it.
+    fn presets_section(
+        &self,
+        view: &PresetView,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> PanelSection {
         let theme = self.theme;
-        let palette = theme.editor;
-        let mut root = div()
-            .id("preset-panel")
-            .flex()
-            .flex_col()
-            .gap(px(METRICS.space_3))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(METRICS.space_1))
-                    .child(section_title(&theme, "Style presets"))
-                    .child(Self::small(
-                        "Presets style the video only; Studio's own interface never changes.",
-                        palette.text_2,
-                    )),
-            );
-        let Some(view) = self.view.clone() else {
-            return root.child(Self::small(
-                "Open a project to choose a preset.",
-                palette.text_2,
-            ));
-        };
-        let enabled = view.mutation.is_enabled();
+        let palette = theme.colors;
+        let mut section = PanelSection::new(&theme, "Style presets")
+            .description("Presets style the video only; Studio's own interface never changes.");
         if let PresetMutation::Disabled(reason) = &view.mutation {
-            root = root.child(Notice::new(
+            section = section.child(Notice::new(
                 "preset-disabled",
                 Tone::Warning,
                 format!("Preset changes are disabled: {reason}"),
             ));
         }
-        match &view.applied {
-            Some(applied) => {
-                root = root.child(Self::small(
+        let applied = match &view.applied {
+            Some(applied) => FormField::row(
+                &theme,
+                "Applied",
+                Self::small(
                     format!(
-                        "Applied: {} {} ({})",
+                        "{} {} ({})",
                         applied.name,
                         applied.version,
-                        &applied.hash[..12]
+                        applied.hash.get(..12).unwrap_or(&applied.hash)
                     ),
-                    palette.text_1,
-                ));
-            }
-            None => {
-                root = root.child(Self::small(
-                    "No preset applied yet; this project keeps its own styles until you choose one.",
                     palette.text_2,
-                ));
-            }
-        }
-        let mut list = div().flex().flex_col();
-        for entry in &view.entries {
-            let detail = format!(
-                "{} {} · {}{}",
-                entry.name,
-                entry.version,
-                if entry.bundled { "bundled" } else { "imported" },
-                if entry.applied { " · applied" } else { "" }
-            );
-            let label = format!("{}{detail}", if entry.applied { "✓ " } else { "" });
-            list = list.child(self.preset_row(
-                entry.key.clone(),
-                label,
-                detail,
-                self.selected.as_deref() == Some(entry.key.as_str()),
-                cx,
+                ),
+            ),
+            None => FormField::row(&theme, "Applied", Self::small("None", palette.text_3))
+                .hint("This project keeps its own styles until you choose a preset."),
+        };
+        section = section.child(applied);
+        let rows = view
+            .entries
+            .iter()
+            .map(|entry| {
+                let selected = self.selected.as_deref() == Some(entry.key.as_str());
+                self.preset_row(entry, selected, cx)
+            })
+            .collect::<Vec<_>>();
+        section = section.child(List::new().children(rows).empty(
+            EmptyState::new(&theme, "No presets").body("Import a preset folder to add one."),
+        ));
+        for (index, skipped) in view.skipped.iter().enumerate() {
+            section = section.child(Notice::new(
+                ElementId::from(("preset-skipped", index)),
+                Tone::Warning,
+                format!("Skipped: {skipped}"),
             ));
         }
-        for skipped in &view.skipped {
-            list = list.child(Self::small(format!("Skipped: {skipped}"), theme.red_11));
-        }
-        root = root.child(list);
         let selected = self
             .selected
             .as_ref()
             .and_then(|key| view.entries.iter().find(|e| &e.key == key))
             .cloned();
         if let Some(entry) = &selected {
-            root = root.child(Self::small(
+            section = section.child(Self::small(
                 format!("{} — {}", entry.id, entry.description),
                 palette.text_2,
             ));
@@ -394,74 +339,215 @@ impl Render for PresetPanel {
         let can_select = enabled && key.is_some();
         let reapply = enabled && selected.as_ref().is_some_and(|e| e.same_id_applied);
         let reset = enabled && view.applied.is_some() && key.is_some();
-        // At 216 px the buttons stack; a row would not fit their labels.
-        let mut actions = div().flex().flex_col().gap(px(METRICS.space_2));
-        let apply_key = key.clone();
-        actions = actions.child(self.action_button(
-            "preset-apply",
-            "Apply",
-            can_select,
-            true,
-            Some(Icon::Check),
-            cx,
-            move |this, cx| {
-                if let Some(key) = apply_key.clone() {
-                    this.run(PresetCommand::Apply { key }, cx);
-                }
-            },
-        ));
-        let reapply_key = key.clone();
-        actions = actions.child(self.action_button(
-            "preset-reapply",
-            "Reapply (keep overrides)",
-            reapply,
-            false,
-            Some(Icon::RefreshCw),
-            cx,
-            move |this, cx| {
-                if let Some(key) = reapply_key.clone() {
-                    this.run(PresetCommand::Reapply { key }, cx);
-                }
-            },
-        ));
-        let reset_key = key.clone();
-        actions = actions.child(self.action_button(
-            "preset-reset",
-            "Reset overrides",
-            reset,
-            false,
-            Some(Icon::History),
-            cx,
-            move |this, cx| {
-                if let Some(key) = reset_key.clone() {
-                    this.run(PresetCommand::Reset { key }, cx);
-                }
-            },
-        ));
-        root = root.child(actions);
+        let (apply_key, reapply_key, reset_key) = (key.clone(), key.clone(), key);
+        section.child(
+            Self::button_row()
+                .child(self.action_button(
+                    "preset-apply",
+                    "Apply",
+                    can_select,
+                    Emphasis::Primary,
+                    Some(Icon::Check),
+                    cx,
+                    move |this, cx| {
+                        if let Some(key) = apply_key.clone() {
+                            this.run(PresetCommand::Apply { key }, cx);
+                        }
+                    },
+                ))
+                .child(
+                    self.action_button(
+                        "preset-reapply",
+                        "Reapply",
+                        reapply,
+                        Emphasis::Neutral,
+                        Some(Icon::RefreshCw),
+                        cx,
+                        move |this, cx| {
+                            if let Some(key) = reapply_key.clone() {
+                                this.run(PresetCommand::Reapply { key }, cx);
+                            }
+                        },
+                    )
+                    .tooltip("Reapply, keeping the project overrides"),
+                )
+                .child(self.action_button(
+                    "preset-reset",
+                    "Reset overrides",
+                    reset,
+                    Emphasis::Neutral,
+                    Some(Icon::History),
+                    cx,
+                    move |this, cx| {
+                        if let Some(key) = reset_key.clone() {
+                            this.run(PresetCommand::Reset { key }, cx);
+                        }
+                    },
+                )),
+        )
+    }
 
-        let export_key = key.clone();
-        root = root.child(divider(&theme)).child(
-            div()
-                .flex()
-                .flex_col()
-                .gap(px(METRICS.space_2))
+    /// Project overrides: the user's layer, kept across Reapply and reopen.
+    fn overrides_section(
+        &self,
+        view: &PresetView,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> PanelSection {
+        let theme = self.theme;
+        let section = PanelSection::new(&theme, "Project overrides");
+        let Some(applied) = &view.applied else {
+            return section.child(
+                EmptyState::new(&theme, "No preset applied")
+                    .body("Apply a preset to override its tokens for this project."),
+            );
+        };
+        let rows = applied
+            .overridden
+            .iter()
+            .map(|(token, layer, value)| {
+                let clear = token.clone();
+                let entity = cx.entity();
+                ListRow::new(&theme, SharedString::from(format!("override-{token}")))
+                    .title(token.clone())
+                    .meta(format!("{layer} · {value}"))
+                    .trailing(
+                        IconButton::new(&theme, format!("clear-{token}"), Icon::X.path())
+                            .size(IconButtonSize::Sm)
+                            .label("Clear")
+                            .tooltip("Clear")
+                            .disabled(!enabled)
+                            .on_click(move |_, _, cx| {
+                                entity.update(cx, |this, cx| {
+                                    this.run(
+                                        PresetCommand::ClearOverride {
+                                            token: clear.clone(),
+                                        },
+                                        cx,
+                                    );
+                                });
+                            }),
+                    )
+            })
+            .collect::<Vec<_>>();
+        let mut section = section.child(
+            List::new()
+                .children(rows)
+                .empty(EmptyState::new(&theme, "No project overrides")),
+        );
+        for (index, diagnostic) in applied.diagnostics.iter().enumerate() {
+            section = section.child(Notice::new(
+                ElementId::from(("preset-diagnostic", index)),
+                Tone::Warning,
+                format!("Kept, not applied: {diagnostic}"),
+            ));
+        }
+        let token = self.field("override-token", self.token.clone(), cx);
+        let value = self.field("override-value", self.value.clone(), cx);
+        section
+            .child(FormField::row(&theme, "Token", token))
+            .child(FormField::row(&theme, "Value", value))
+            .child(Self::button_row().child(self.action_button(
+                "override-set",
+                "Set override",
+                enabled,
+                Emphasis::Neutral,
+                Some(Icon::Plus),
+                cx,
+                |this, cx| this.set_override(cx),
+            )))
+    }
+
+    /// The CSS import report, collapsible, its declarations scrolling.
+    fn css_report(&self, css: &CssView, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme;
+        let palette = theme.colors;
+        let mut lines = div()
+            .id("css-lines")
+            .max_h(px(METRICS.layout.css_report_max_h))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_1))
+            .pt(px(METRICS.space_1))
+            .child(Self::small(
+                format!(
+                    "CSS report · {}: {} accepted · {} unsupported · {} rejected",
+                    css.file, css.accepted, css.unsupported, css.rejected
+                ),
+                palette.text_1,
+            ));
+        for line in &css.lines {
+            lines = lines.child(Self::small(line.clone(), palette.text_2));
+        }
+        if css.truncated {
+            lines = lines.child(Self::small(
+                format!("Showing the first {MAX_CSS_LINES} declarations."),
+                palette.text_2,
+            ));
+        }
+        let entity = cx.entity();
+        div()
+            .id("css-report")
+            .child(
+                CollapsibleSection::new("css-report-section", self.css_open)
+                    .header(
+                        text_style(div(), TextStyle::Label)
+                            .text_color(palette.text_2)
+                            .child("CSS import report"),
+                    )
+                    .content(lines)
+                    .on_toggle(move |open, _, cx| {
+                        entity.update(cx, |panel, cx| {
+                            panel.css_open = *open;
+                            cx.notify();
+                        });
+                    }),
+            )
+            .into_any_element()
+    }
+}
+
+impl Render for PresetPanel {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.theme.refresh(window, cx);
+        let theme = self.theme;
+        let root = PanelSection::column().id("preset-panel");
+        let Some(view) = self.view.clone() else {
+            return root.child(
+                PanelSection::new(&theme, "Style presets")
+                    .description(
+                        "Presets style the video only; Studio's own interface never changes.",
+                    )
+                    .child(
+                        EmptyState::new(&theme, "No project open")
+                            .body("Open a project to choose a preset."),
+                    ),
+            );
+        };
+        let enabled = view.mutation.is_enabled();
+        let export_key = self
+            .selected
+            .as_ref()
+            .filter(|key| view.entries.iter().any(|e| &e.key == *key))
+            .cloned();
+        let can_export = export_key.is_some();
+        let files = PanelSection::new(&theme, "Import and export").child(
+            Self::button_row()
                 .child(self.action_button(
                     "preset-import",
                     "Import preset folder…",
                     true,
-                    false,
+                    Emphasis::Neutral,
                     Some(Icon::Upload),
                     cx,
-                    |_, cx| {
-                        cx.emit(PresetEvent::Pick(PresetPick::ImportFolder));
-                    },
+                    |_, cx| cx.emit(PresetEvent::Pick(PresetPick::ImportFolder)),
                 ))
                 .child(self.action_button(
                     "preset-export",
                     "Export selected…",
-                    key.is_some(),
-                    false,
+                    can_export,
+                    Emphasis::Neutral,
                     Some(Icon::Download),
                     cx,
                     move |_, cx| {
@@ -474,98 +560,16 @@ impl Render for PresetPanel {
                     "preset-css",
                     "CSS import report…",
                     true,
-                    false,
+                    Emphasis::Neutral,
                     Some(Icon::File),
                     cx,
-                    |_, cx| {
-                        cx.emit(PresetEvent::Pick(PresetPick::ImportCss));
-                    },
+                    |_, cx| cx.emit(PresetEvent::Pick(PresetPick::ImportCss)),
                 )),
         );
-
-        // Project overrides: the user's layer, kept across Reapply and reopen.
-        root = root
-            .child(divider(&theme))
-            .child(section_title(&theme, "Project overrides"));
-        if let Some(applied) = &view.applied {
-            let mut overrides = div().flex().flex_col();
-            if applied.overridden.is_empty() {
-                overrides = overrides.child(Self::small("No project overrides.", palette.text_2));
-            }
-            for (token, layer, value) in &applied.overridden {
-                let clear = token.clone();
-                let entity = cx.entity();
-                overrides = overrides.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(METRICS.space_2))
-                        .min_h(px(METRICS.field_row_h))
-                        .child(
-                            div()
-                                .flex()
-                                .flex_col()
-                                .flex_1()
-                                .min_w_0()
-                                .child(
-                                    text_style(div().truncate(), TextStyle::Body)
-                                        .text_color(palette.text_1)
-                                        .child(selectable(token.clone())),
-                                )
-                                .child(
-                                    text_style(div().truncate(), TextStyle::Small)
-                                        .text_color(palette.text_3)
-                                        .child(selectable(format!("{layer} · {value}"))),
-                                ),
-                        )
-                        .child(
-                            IconButton::editor(&theme, format!("clear-{token}"), Icon::X.path())
-                                .editor_size(IconButtonSize::Small)
-                                .label("Clear")
-                                .tooltip(&theme, "Clear")
-                                .disabled(!enabled)
-                                .on_click(move |_, _, cx| {
-                                    entity.update(cx, |this, cx| {
-                                        this.run(
-                                            PresetCommand::ClearOverride {
-                                                token: clear.clone(),
-                                            },
-                                            cx,
-                                        );
-                                    });
-                                }),
-                        ),
-                );
-            }
-            root = root.child(overrides);
-            for (index, diagnostic) in applied.diagnostics.iter().enumerate() {
-                root = root.child(Notice::new(
-                    ElementId::from(("preset-diagnostic", index)),
-                    Tone::Warning,
-                    format!("Kept, not applied: {diagnostic}"),
-                ));
-            }
-            let token = self.field("override-token", self.token.clone(), cx);
-            let value = self.field("override-value", self.value.clone(), cx);
-            root = root.child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(METRICS.space_2))
-                    .child(token)
-                    .child(value)
-                    .child(self.action_button(
-                        "override-set",
-                        "Set override",
-                        enabled,
-                        false,
-                        Some(Icon::Plus),
-                        cx,
-                        |this, cx| this.set_override(cx),
-                    )),
-            );
-        }
-
+        let mut root = root
+            .child(self.presets_section(&view, enabled, cx))
+            .child(files)
+            .child(self.overrides_section(&view, enabled, cx));
         if let Some(last) = &self.last {
             let tone = match &last.outcome {
                 Outcome::Committed { .. } | Outcome::Unchanged { .. } | Outcome::Done(_) => {
@@ -581,51 +585,11 @@ impl Render for PresetPanel {
             root = root.child(status);
         }
         if let Some(css) = &self.css {
-            let mut lines = div()
-                .id("css-lines")
-                .max_h(px(200.))
-                .overflow_y_scroll()
-                .flex()
-                .flex_col()
-                .gap(px(METRICS.space_1))
-                .pt(px(METRICS.space_1))
-                .child(Self::small(
-                    format!(
-                        "CSS report · {}: {} accepted · {} unsupported · {} rejected",
-                        css.file, css.accepted, css.unsupported, css.rejected
-                    ),
-                    palette.text_1,
-                ));
-            for line in &css.lines {
-                lines = lines.child(Self::small(line.clone(), palette.text_2));
-            }
-            if css.truncated {
-                lines = lines.child(Self::small(
-                    format!("Showing the first {MAX_CSS_LINES} declarations."),
-                    palette.text_2,
-                ));
-            }
-            let entity = cx.entity();
-            root = root.child(
-                div().id("css-report").child(
-                    CollapsibleSection::new("css-report-section", self.css_open)
-                        .header(section_title(&theme, "CSS import report"))
-                        .content(lines)
-                        .on_toggle(move |open, _, cx| {
-                            entity.update(cx, |panel, cx| {
-                                panel.css_open = *open;
-                                cx.notify();
-                            });
-                        }),
-                ),
-            );
+            root = root.child(self.css_report(css, cx));
         }
         root
     }
 }
-
-/// Height of a preset list row.
-const PRESET_ROW_H: f32 = 34.;
 
 /// The first status line as the notice title and the remaining lines as its body.
 fn status_text(lines: Vec<String>) -> (String, Option<String>) {

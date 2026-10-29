@@ -4,7 +4,7 @@ use super::*;
 
 impl Render for ComposerInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
+        studio_theme::text_style(div(), studio_theme::TextStyle::Body)
             .id(("composer-input", cx.entity_id()))
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
@@ -58,9 +58,8 @@ impl Render for ComposerInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .w_full()
-            .text_size(px(INPUT_TEXT_SIZE))
             .line_height(px(INPUT_LINE_HEIGHT))
-            .text_color(self.theme.gray(12))
+            .text_color(self.theme.colors.text_1)
             .child(ComposerTextElement {
                 input: cx.entity(),
                 max_content_height: self.viewport_height,

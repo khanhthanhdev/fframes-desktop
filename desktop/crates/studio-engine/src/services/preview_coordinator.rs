@@ -39,6 +39,40 @@ pub struct PreviewProps {
 /// The props of the selected object, or why the preview cannot tell them.
 pub type PropsInfoEvent = (EditorObjectIdentity, Result<Option<PropsInfo>, String>);
 
+/// Read-only scan state for the Slides tab; absent for workers without the capability.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StopScan {
+    pub timeline: PreviewTimelineResponse,
+    /// Props used while collecting these proposals; acceptance fences this generation too.
+    pub props_generation: u64,
+    pub running: bool,
+    pub completed: usize,
+    pub total: usize,
+    pub sample_limit: bool,
+    pub suggestions: StopSuggestions,
+    pub notice: Option<String>,
+    serial: u64,
+    frames: Vec<usize>,
+}
+
+impl StopScan {
+    /// Empty scan state for a capable preview, also usable by UI fixtures.
+    pub fn new(timeline: PreviewTimelineResponse, props_generation: u64) -> Self {
+        Self {
+            timeline,
+            props_generation,
+            running: false,
+            completed: 0,
+            total: 0,
+            sample_limit: false,
+            suggestions: StopSuggestions::default(),
+            notice: None,
+            serial: 0,
+            frames: Vec::new(),
+        }
+    }
+}
+
 pub struct BuildSpec {
     pub project: studio_project::OpenProject,
     pub sdk: PathBuf,
@@ -175,6 +209,8 @@ pub struct PreviewEvents {
     pub props_applied: Option<Result<u64, String>>,
     /// The props of the object [`PreviewCoordinator::want_props_info`] asked for.
     pub props_info: Option<PropsInfoEvent>,
+    /// Scan availability or progress changed; query [`PreviewCoordinator::stop_scan`].
+    pub stop_scan_changed: bool,
 }
 #[derive(Default, Clone, serde::Serialize)]
 pub struct PumpMetrics {
@@ -288,6 +324,8 @@ struct Mailbox {
     /// The object whose props the shell shows, with a serial that changes with every ask.
     props_wanted: Option<(EditorObjectIdentity, u64)>,
     props_info: Option<PropsInfoEvent>,
+    stop_scan: Option<StopScan>,
+    stop_scan_changed: bool,
     closed: bool,
     /// The listener was told about the news now waiting; it is told again only after
     /// [`PreviewCoordinator::events`] took it.
@@ -304,6 +342,7 @@ impl Mailbox {
             || self.retimed.is_some()
             || self.props_applied.is_some()
             || self.props_info.is_some()
+            || self.stop_scan_changed
     }
 }
 
@@ -433,6 +472,10 @@ impl PreviewCoordinator {
     pub fn set_timing(&self, timing: PreviewTiming) {
         let mut s = self.shared.lock();
         if !s.closed {
+            if s.timing.as_ref() != Some(&timing) {
+                s.stop_scan = None;
+                s.stop_scan_changed = true;
+            }
             s.timing = Some(timing);
         }
     }
@@ -442,6 +485,13 @@ impl PreviewCoordinator {
     pub fn set_props(&self, props: PreviewProps) {
         let mut s = self.shared.lock();
         if !s.closed {
+            if let Some(scan) = &mut s.stop_scan {
+                scan.running = false;
+                scan.serial += 1;
+                scan.suggestions = StopSuggestions::default();
+                scan.notice = Some("Props changed; scan again".into());
+                s.stop_scan_changed = true;
+            }
             s.props = Some(props);
         }
     }
@@ -476,6 +526,44 @@ impl PreviewCoordinator {
             retimed: s.retimed.take(),
             props_applied: s.props_applied.take(),
             props_info: s.props_info.take(),
+            stop_scan_changed: std::mem::take(&mut s.stop_scan_changed),
+        }
+    }
+
+    /// Current bounded scan state, never the worker itself.
+    pub fn stop_scan(&self) -> Option<StopScan> {
+        self.shared.lock().stop_scan.clone()
+    }
+
+    /// Starts a fresh explicit scan; calling again supersedes any in-flight batch.
+    pub fn scan_stops(&self) {
+        let mut s = self.shared.lock();
+        if s.closed {
+            return;
+        }
+        if let Some(scan) = &mut s.stop_scan {
+            let (frames, limited) = crate::slides::suggest::sample_frames(&scan.timeline);
+            scan.serial += 1;
+            scan.total = frames.len();
+            scan.frames = frames;
+            scan.sample_limit = limited;
+            scan.completed = 0;
+            scan.running = scan.total > 0;
+            scan.suggestions = StopSuggestions::default();
+            scan.notice = None;
+            s.stop_scan_changed = true;
+        }
+    }
+
+    /// Cancels immediately and discards partial results, including an in-flight reply.
+    pub fn cancel_stop_scan(&self) {
+        let mut s = self.shared.lock();
+        if let Some(scan) = &mut s.stop_scan {
+            scan.serial += 1;
+            scan.running = false;
+            scan.suggestions = StopSuggestions::default();
+            scan.notice = Some("Scan cancelled; no slides changed".into());
+            s.stop_scan_changed = true;
         }
     }
     pub fn metrics(&self) -> PumpMetrics {
@@ -520,6 +608,8 @@ impl PreviewCoordinator {
             return false;
         }
         s.install = s.staged.take();
+        s.stop_scan = None;
+        s.stop_scan_changed = true;
         s.thumbnails.clear();
         s.thumbnail = None;
         if let Some(c) = &s.install {
@@ -545,6 +635,7 @@ impl PreviewCoordinator {
         let displayed = {
             let mut s = self.shared.lock();
             s.closed = true;
+            s.stop_scan = None;
             s.thumbnails.clear();
             s.thumbnail = None;
             s.retimed = None;
@@ -1031,6 +1122,7 @@ fn pump(shared: Arc<Mutex<Mailbox>>, listener: Listener) {
             }
         }
         if let Some(c) = displayed.as_deref_mut() {
+            scan_batch(c, &shared, rendered.as_ref());
             let key = {
                 let mut s = shared.lock();
                 if s.install.is_none()
@@ -1089,6 +1181,88 @@ fn pump(shared: Arc<Mutex<Mailbox>>, listener: Listener) {
     if let Some(displayed) = displayed {
         let _ = displayed.teardown_now();
     }
+}
+
+/// One synchronous bounded batch per pump turn, after seeks and before background thumbnails.
+fn scan_batch(c: &mut StagedParts, shared: &Arc<Mutex<Mailbox>>, rendered: Option<&SeekIntent>) {
+    let batch = {
+        let mut s = shared.lock();
+        if s.closed
+            || s.install.is_some()
+            || c.worker.has_stopped()
+            || s.timing
+                .as_ref()
+                .is_some_and(|timing| timing.generation != c.ready.timeline.timing_generation)
+            || s.props
+                .as_ref()
+                .is_some_and(|props| c.props_attempt != Some(props.generation))
+        {
+            return;
+        }
+        if !c.worker.supports_suggested_stops() {
+            return;
+        }
+        if s.stop_scan.as_ref().is_none_or(|scan| {
+            scan.timeline.envelope.identity != *c.ready.identity()
+                || scan.timeline.timing_generation != c.ready.timeline.timing_generation
+                || scan.props_generation != c.props_attempt.unwrap_or(0)
+        }) {
+            s.stop_scan = Some(StopScan::new(
+                c.ready.timeline.clone(),
+                c.props_attempt.unwrap_or(0),
+            ));
+            s.stop_scan_changed = true;
+        }
+        if s.desired.as_ref() != rendered {
+            return;
+        }
+        let scan = s
+            .stop_scan
+            .as_ref()
+            .expect("capable displayed worker has scan state");
+        if !scan.running {
+            return;
+        }
+        let end = (scan.completed + MAX_SUGGEST_FRAMES).min(scan.total);
+        (
+            scan.serial,
+            scan.completed,
+            end,
+            scan.frames[scan.completed..end].to_vec(),
+        )
+    };
+    let (serial, completed, end, frames) = batch;
+    let response =
+        c.worker
+            .suggest_stops(frames, c.ready.timeline.timing_generation, completed == 0);
+    let mut s = shared.lock();
+    if s.closed || s.install.is_some() {
+        return;
+    }
+    let Some(scan) = &mut s.stop_scan else {
+        return;
+    };
+    if scan.serial != serial
+        || !scan.running
+        || scan.timeline.envelope.identity != *c.ready.identity()
+        || scan.timeline.timing_generation != c.ready.timeline.timing_generation
+        || scan.props_generation != c.props_attempt.unwrap_or(0)
+    {
+        return;
+    }
+    match response {
+        Ok(suggestions) => {
+            scan.suggestions = suggestions;
+            scan.completed = end;
+            scan.running = end < scan.total;
+        }
+        Err(error) => {
+            scan.running = false;
+            scan.suggestions = StopSuggestions::default();
+            scan.notice = Some(format!("Scan failed: {error}"));
+        }
+    }
+    s.stop_scan_changed = true;
 }
 
 /// The error of a frame the displayed worker did not deliver. A worker that rendered on the

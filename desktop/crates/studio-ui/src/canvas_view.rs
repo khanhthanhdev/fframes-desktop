@@ -33,6 +33,9 @@ pub struct CanvasViewState {
     pub selection: Option<CanvasSelection>,
     pub rectangle_scope: Option<VideoRect>,
     pub message: Option<String>,
+    /// Why the last canvas action failed. Unlike message it stays until dismissed or the
+    /// selection is cleared.
+    pub error: Option<String>,
     rectangle_start: Option<(f64, f64)>,
     last_click: Option<(f64, f64)>,
 }
@@ -107,6 +110,7 @@ impl CanvasViewState {
         self.rectangle_start = None;
         self.last_click = None;
         self.message = None;
+        self.error = None;
     }
 
     pub fn resize(
@@ -245,6 +249,7 @@ impl CanvasViewState {
         self.rectangle_scope = None;
         self.rectangle_start = None;
         self.message = None;
+        self.error = None;
     }
 
     pub fn selection_identity(&self) -> Option<&EditorObjectIdentity> {

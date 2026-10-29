@@ -9,7 +9,7 @@
 //! studio's own surfaces. A view resolves a [`Theme`] once per render with
 //! [`Theme::for_window`] and passes it down.
 
-use gpui::{BoxShadow, Hsla, Rgba, WindowAppearance, point, px};
+use gpui::{Hsla, Rgba, WindowAppearance};
 
 mod appearance;
 #[cfg(test)]
@@ -18,16 +18,29 @@ mod elevation;
 mod metrics;
 mod motion;
 mod palette;
+mod radix;
 mod typography;
 
-pub use appearance::{bind_window, current_preference, init, resolve_appearance, set_preference};
+pub use appearance::{
+    UiPrefs, bind_window, current_motion, current_preference, current_prefs, init, init_prefs,
+    prefers_reduced_motion, resolve_appearance, resolve_reduced_motion, set_motion, set_preference,
+    set_prefs,
+};
 pub use elevation::{Shadow, shadow_for};
-pub use metrics::{METRICS, Metrics};
-pub use motion::{FAST_MS, NORMAL_MS, reduced_motion};
-pub use palette::{SegmentColors, TrackKind, hex, hexa, segment_colors_for, track_color};
-pub use studio_proto::AppTheme;
-pub use typography::{TextStyle, UI_FONT, text_style};
+pub use metrics::{Layout, METRICS, Metrics, Opacity, Radius, Size};
+pub use motion::{MOTION, Motion, ease_out, reduced_motion};
+pub use palette::{SegmentColors, TrackKind, segment_colors_for, track_color};
+pub use studio_proto::{AppTheme, MotionPreference};
+pub use typography::{MONO_FAMILY, TextStyle, UI_FONT, text_style};
 
+// Still public until their last callers move (not `#[deprecated]`: `just clippy` denies
+// warnings):
+// - the raw Radix steps on `Theme` (`gray_*`, `blue_*`, `red_*`, `amber_*`, `green_*`) and
+//   `Theme::gray` (agent composer, cards, todo panel, setup view, preset panel, player);
+// - `Metrics::radius_frame` and the flat `radius_*`/size/layout fields once callers read
+//   `METRICS.radius/size/layout`;
+// - `reduced_motion()` (use `prefers_reduced_motion`), `Theme::with_alpha`;
+// - `init(cx, AppTheme)` becomes `init_prefs(cx, UiPrefs)`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Appearance {
     Light,
@@ -95,32 +108,16 @@ pub struct Theme {
     /// Success text and glyphs.
     pub green_11: Rgba,
 
-    /// `--blue-100`, a legacy step distinct from Radix blue.
-    pub blue_100: Rgba,
-    /// `--blue-500`: selection fills and rings. Not interchangeable with `blue_9`.
-    pub blue_500: Rgba,
-    /// `--red-300`. Same value in both themes.
-    pub red_300: Rgba,
-
-    /// The legacy gray scale (`--gray-200 … --gray-500`), which is *not*
-    /// numerically aligned with Radix: legacy `gray-500` is the darkest text,
-    /// Radix `gray-1` the lightest surface.
-    pub gray_200_legacy: Rgba,
-    pub gray_300_legacy: Rgba,
-    pub gray_400_legacy: Rgba,
-    pub gray_500_legacy: Rgba,
-
-    /// `--text-primary`, the root text colour. Slightly translucent by design.
-    pub text_primary: Rgba,
-
-    /// The editor's layered surface system (`--ed-*`).
-    pub editor: EditorPalette,
+    /// The colour roles: the editor's layered surface system (`--ed-*`).
+    pub colors: Colors,
+    /// Code colours.
+    pub syntax: Syntax,
 }
 
 /// Editor surfaces: a layered, low-contrast system (window < card < control)
 /// with one accent.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct EditorPalette {
+pub struct Colors {
     pub window: Rgba,
     pub card: Rgba,
     pub card_2: Rgba,
@@ -152,114 +149,78 @@ pub struct EditorPalette {
     pub pop_shadow_alpha: f32,
     pub pop_shadow_offset: f32,
     pub pop_shadow_blur: f32,
+
+    /// The present-mode stage behind the letterboxed frame: black in both appearances.
+    pub present_bg: Rgba,
+    /// Text and glyphs on an `accent` fill.
+    pub on_accent: Rgba,
+    /// The keyboard focus ring: `accent`.
+    pub focus: Rgba,
+    /// Canvas and text selection: `accent` at 25 %.
+    pub selection: Rgba,
+    /// Tooltip surface and text: Radix gray 12 on gray 1, the inverse of the window.
+    pub tooltip_bg: Rgba,
+    pub tooltip_text: Rgba,
+    /// Status foregrounds (Radix step 11) and their surfaces (step 3).
+    pub success: Rgba,
+    pub success_bg: Rgba,
+    pub warning: Rgba,
+    pub warning_bg: Rgba,
+    pub danger: Rgba,
+    pub danger_bg: Rgba,
+    /// The soft-red washes of a hovered and pressed destructive control:
+    /// `danger` mixed into `danger_bg` by 12 % and 22 %.
+    pub danger_hover: Rgba,
+    pub danger_active: Rgba,
+    /// Informational notices: `accent` on `ctl`.
+    pub info: Rgba,
+    pub info_bg: Rgba,
+    /// The player's video-scope rectangle: Radix amber 11.
+    pub scope: Rgba,
+    /// The dimming layer under present-mode overlays: black at 55 %.
+    pub scrim: Rgba,
+    /// Track base colours, the same as [`track_color`].
+    pub track_clip: Rgba,
+    pub track_overlay: Rgba,
+    pub track_audio: Rgba,
+    /// The selected item of a segmented control: a raised `card` pill in light, a white
+    /// 12 % wash in dark, where a lifted card would read as a hole.
+    pub segment_selected: Rgba,
+    /// The Windows caption buttons (Cap's values): glyph, hovered and pressed washes, and
+    /// the close button's red at rest-hover and pressed. Its glyph turns `on_accent`.
+    pub caption_glyph: Rgba,
+    pub caption_hover: Rgba,
+    pub caption_pressed: Rgba,
+    pub caption_close: Rgba,
+    pub caption_close_pressed: Rgba,
 }
 
-impl EditorPalette {
-    /// `color-mix(in srgb, color <tint>, card)`: the segment fill.
-    pub fn seg_fill(&self, color: Rgba) -> Rgba {
-        mix(self.card, color, self.seg_tint)
-    }
-
-    /// A selected segment: the tint plus ten points.
-    pub fn seg_fill_selected(&self, color: Rgba) -> Rgba {
-        mix(self.card, color, self.seg_tint + 0.10)
-    }
-
-    /// The segment's 1px inset border.
-    pub fn seg_border(&self, color: Rgba) -> Rgba {
-        rgba_alpha(color, self.seg_line)
-    }
-
-    /// Segment label text.
-    pub fn seg_label(&self, color: Rgba) -> Rgba {
-        mix(self.seg_label_base, color, self.seg_label_mix)
-    }
-
-    /// Segment secondary text: the label colour at 45% toward `text_3`.
-    pub fn seg_muted(&self, color: Rgba) -> Rgba {
-        mix(self.text_3, color, 0.45)
-    }
-
-    /// A track gutter's icon tile: `color 16%` over transparent.
-    pub fn tile_bg(&self, color: Rgba) -> Rgba {
-        rgba_alpha(color, 0.16)
-    }
-
-    /// The tile's glyph: the track colour pulled 62% toward the label base.
-    pub fn tile_fg(&self, color: Rgba) -> Rgba {
-        mix(self.seg_label_base, color, 0.62)
-    }
-
-    /// Trim handles: the colour at 70% toward the label base.
-    pub fn seg_handle(&self, color: Rgba) -> Rgba {
-        mix(self.seg_label_base, color, 0.70)
-    }
-
-    /// `--ed-card-shadow`: `0 1px 2px` under every editor card.
-    pub fn card_shadow(&self) -> Vec<BoxShadow> {
-        vec![BoxShadow {
-            color: gpui::hsla(0., 0., 0., self.card_shadow_alpha),
-            offset: point(px(0.), px(1.)),
-            blur_radius: px(2.),
-            spread_radius: px(0.),
-            inset: false,
-        }]
-    }
-
-    /// `--ed-pop-shadow`: the lift under a menu, popover or dialog.
-    pub fn pop_shadow(&self) -> Vec<BoxShadow> {
-        vec![BoxShadow {
-            color: gpui::hsla(0., 0., 0., self.pop_shadow_alpha),
-            offset: point(px(0.), px(self.pop_shadow_offset)),
-            blur_radius: px(self.pop_shadow_blur),
-            spread_radius: px(-12.),
-            inset: false,
-        }]
-    }
-}
-
-/// The drop shadow under the stage's letterboxed preview. The stage is nearly
-/// black in both themes, so this one does not vary with the appearance.
-pub fn preview_shadow() -> Vec<BoxShadow> {
-    vec![BoxShadow {
-        color: gpui::hsla(0., 0., 0., 0.35),
-        offset: point(px(0.), px(12.)),
-        blur_radius: px(32.),
-        spread_radius: px(-8.),
-        inset: false,
-    }]
-}
-
-/// The lift under a selected segmented-control pill on the light editor
-/// surface.
-pub fn raised_pill_shadow() -> Vec<BoxShadow> {
-    vec![
-        BoxShadow {
-            color: gpui::hsla(0., 0., 0., 0.12),
-            offset: point(px(0.), px(1.)),
-            blur_radius: px(2.),
-            spread_radius: px(0.),
-            inset: false,
-        },
-        BoxShadow {
-            color: gpui::hsla(0., 0., 0., 0.06),
-            offset: point(px(0.), px(0.)),
-            blur_radius: px(0.),
-            spread_radius: px(0.5),
-            inset: false,
-        },
-    ]
-}
-
-/// The drop shadow under a slider knob.
-pub fn thumb_shadow() -> Vec<BoxShadow> {
-    vec![BoxShadow {
-        color: gpui::hsla(0., 0., 0., 0.25),
-        offset: point(px(0.), px(1.)),
-        blur_radius: px(3.),
-        spread_radius: px(0.),
-        inset: false,
-    }]
+/// The code colours (`agent/syntax`, diffs). The only place Radix steps stay visible
+/// once phase 1 makes the raw steps private.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Syntax {
+    /// gray 10.
+    pub comment: Rgba,
+    /// Keywords, operators and tags: red 11.
+    pub keyword: Rgba,
+    /// Strings, escapes: green 11.
+    pub string: Rgba,
+    /// Numbers, booleans, constants and attributes: amber 11.
+    pub number: Rgba,
+    /// Types, constructors, labels and links: blue 11.
+    pub type_name: Rgba,
+    /// Functions, macros and markup headings: blue 10.
+    pub function: Rgba,
+    /// Variables, properties and parameters: gray 12.
+    pub variable: Rgba,
+    /// gray 11.
+    pub punctuation: Rgba,
+    /// red 10.
+    pub invalid: Rgba,
+    /// Added diff lines: green 11.
+    pub added: Rgba,
+    /// Removed diff lines: red 11.
+    pub removed: Rgba,
 }
 
 /// `color-mix(in srgb, b <t>, a)`: straight sRGB interpolation, which is what
@@ -274,7 +235,7 @@ pub fn mix(a: Rgba, b: Rgba, t: f32) -> Rgba {
     }
 }
 
-pub fn rgba_alpha(color: Rgba, alpha: f32) -> Rgba {
+pub(crate) fn rgba_alpha(color: Rgba, alpha: f32) -> Rgba {
     Rgba { a: alpha, ..color }
 }
 
@@ -305,135 +266,8 @@ impl Theme {
         .into()
     }
 
-    /// The window shell's background.
-    pub fn shell_bg(&self) -> Hsla {
-        self.gray_1.into()
-    }
-
-    /// A header's background.
-    pub fn header_bg(&self) -> Hsla {
-        self.gray_2.into()
-    }
-
-    /// The hairline under a header.
-    pub fn header_border(&self) -> Hsla {
-        self.gray_5.into()
-    }
-
-    /// The body's inherited text colour.
-    pub fn body_text(&self) -> Hsla {
-        self.text_primary.into()
-    }
-
-    /// A `bg-gray-N` fill in the window body.
-    pub fn body_fill(&self, step: u8) -> Hsla {
-        self.gray(step)
-    }
-
-    /// A `hover:bg-gray-N` fill in the window body.
-    pub fn body_hover_fill(&self, step: u8) -> Hsla {
-        self.gray(step)
-    }
-
-    /// A `border-gray-N` in the window body.
-    pub fn body_border(&self, step: u8) -> Hsla {
-        self.gray(step)
-    }
-
-    /// `ring-offset-gray-1`, the gap between a selected control and its ring.
-    pub fn ring_offset(&self) -> Hsla {
-        self.gray_1.into()
-    }
-
-    /// A settings window's corner radius.
-    pub fn settings_window_radius(&self) -> f32 {
-        16.
-    }
-
-    /// A settings sidebar's background.
-    pub fn settings_sidebar_bg(&self) -> Hsla {
-        self.gray_2.into()
-    }
-
-    /// A settings content pane's background.
-    pub fn settings_content_bg(&self) -> Hsla {
-        self.gray_1.into()
-    }
-
-    /// A settings card's background.
-    pub fn settings_card_bg(&self) -> Hsla {
-        self.gray_2.into()
-    }
-
-    /// Selects, inline code chips and summary boxes on a settings page.
-    pub fn settings_fill(&self) -> Hsla {
-        self.gray_3.into()
-    }
-
-    /// A hovered settings row.
-    pub fn settings_hover(&self) -> Hsla {
-        self.gray_3.into()
-    }
-
-    /// The selected settings sidebar row.
-    pub fn settings_selection(&self) -> Hsla {
-        self.gray_5.into()
-    }
-
-    /// Settings row dividers.
-    pub fn settings_border(&self) -> Hsla {
-        self.gray_3.into()
-    }
-
-    /// The divider between a settings sidebar and its content.
-    pub fn settings_divider(&self) -> Hsla {
-        self.gray_3.into()
-    }
-
-    /// Settings page text.
-    pub fn settings_text(&self) -> Hsla {
-        self.gray_12.into()
-    }
-
-    /// Settings description lines.
-    pub fn settings_muted(&self) -> Hsla {
-        self.gray_10.into()
-    }
-
     pub fn is_dark(&self) -> bool {
         self.appearance == Appearance::Dark
-    }
-
-    /// The selected-tile fill. Dark mode uses `blue-3/30` rather than solid
-    /// `blue-3`, so it reads as a tint over `gray-1` instead of a slab.
-    pub fn tile_selected_bg(&self) -> Hsla {
-        if self.is_dark() {
-            let mut color: Hsla = self.blue_3.into();
-            color.a = 0.3;
-            color
-        } else {
-            self.blue_3.into()
-        }
-    }
-
-    /// Text and glyphs on the accent fill.
-    pub fn on_accent(&self) -> Rgba {
-        hex(0xffffff)
-    }
-
-    /// Canvas and text selection: the accent at 25 %.
-    pub fn selection(&self) -> Rgba {
-        rgba_alpha(self.editor.accent, 0x40 as f32 / 255.)
-    }
-
-    /// Tooltip background: the inverse of the window, in both appearances.
-    pub fn tooltip_bg(&self) -> Rgba {
-        self.gray_12
-    }
-
-    /// Tooltip text.
-    pub fn tooltip_text(&self) -> Rgba {
-        self.gray_1
     }
 
     /// A colour at an alpha, for Tailwind's `/N` overlay fills.
@@ -442,9 +276,6 @@ impl Theme {
         color.a = alpha;
         color
     }
-
-    /// The default macOS accent, which gpui offers no query for.
-    pub const SETTINGS_ACCENT: u32 = 0x007aff;
 }
 
 #[cfg(test)]
@@ -452,6 +283,7 @@ mod tests {
     use gpui::Rgba;
 
     use super::contrast::ratio;
+    use super::palette::hex;
     use super::*;
 
     /// `0xRRGGBBAA`, rounded from the stored floats.
@@ -462,7 +294,7 @@ mod tests {
 
     /// The editor's colour roles, in the order of the spec table.
     fn roles(theme: &Theme) -> [(&'static str, Rgba); 26] {
-        let e = theme.editor;
+        let e = theme.colors;
         [
             ("window", e.window),
             ("card", e.card),
@@ -478,7 +310,7 @@ mod tests {
             ("ctl_active", e.ctl_active),
             ("accent", e.accent),
             ("accent_2", e.accent_2),
-            ("on_accent", theme.on_accent()),
+            ("on_accent", theme.colors.on_accent),
             ("playhead", e.playhead),
             ("thumb", e.thumb),
             ("success", theme.green_11),
@@ -487,9 +319,9 @@ mod tests {
             ("warning_surface", theme.amber_3),
             ("danger", theme.red_11),
             ("danger_surface", theme.red_3),
-            ("selection", theme.selection()),
-            ("tooltip_bg", theme.tooltip_bg()),
-            ("tooltip_text", theme.tooltip_text()),
+            ("selection", theme.colors.selection),
+            ("tooltip_bg", theme.colors.tooltip_bg),
+            ("tooltip_text", theme.colors.tooltip_text),
         ]
     }
 
@@ -505,9 +337,9 @@ mod tests {
             Appearance::Light,
             [
                 0xf1f1f3ff, 0xffffffff, 0xf6f6f7ff, 0xe9e9ecff, 0x00000013, 0x0000001f, 0x1c1c1eff,
-                0x6e6e75ff, 0xa0a0a8ff, 0x0000000b, 0x00000013, 0x0000001c, 0x007affff, 0x2b8cffff,
+                0x66666dff, 0x7a7a82ff, 0x0000000b, 0x00000013, 0x0000001c, 0x0066e0ff, 0x0b6fe6ff,
                 0xffffffff, 0xff3b30ff, 0xffffffff, 0x218358ff, 0xe6f6ebff, 0xab6400ff, 0xfff7c2ff,
-                0xce2c31ff, 0xfeebecff, 0x007aff40, 0x202020ff, 0xfcfcfcff,
+                0xce2c31ff, 0xfeebecff, 0x0066e040, 0x202020ff, 0xfcfcfcff,
             ],
         );
     }
@@ -518,9 +350,9 @@ mod tests {
             Appearance::Dark,
             [
                 0x131315ff, 0x1b1b1eff, 0x202024ff, 0x121214ff, 0xffffff14, 0xffffff21, 0xf4f4f5ff,
-                0x9a9aa3ff, 0x62626aff, 0xffffff0f, 0xffffff17, 0xffffff21, 0x0a84ffff, 0x3d9bffff,
+                0x9a9aa3ff, 0x7c7c86ff, 0xffffff0f, 0xffffff17, 0xffffff21, 0x0866d8ff, 0x1272e4ff,
                 0xffffffff, 0xff453aff, 0xe8e8eaff, 0x3dd68cff, 0x132d21ff, 0xffca16ff, 0x302008ff,
-                0xff9592ff, 0x3b1219ff, 0x0a84ff40, 0xeeeeeeff, 0x111111ff,
+                0xff9592ff, 0x3b1219ff, 0x0866d840, 0xeeeeeeff, 0x111111ff,
             ],
         );
     }
@@ -566,22 +398,6 @@ mod tests {
     }
 
     #[test]
-    fn body_surfaces_are_the_plain_radix_steps() {
-        for theme in [Theme::light(), Theme::dark()] {
-            assert_eq!(theme.shell_bg(), Hsla::from(theme.gray_1));
-            assert_eq!(theme.header_bg(), Hsla::from(theme.gray_2));
-            assert_eq!(theme.header_border(), Hsla::from(theme.gray_5));
-            assert_eq!(theme.body_text(), Hsla::from(theme.text_primary));
-            assert_eq!(theme.ring_offset(), Hsla::from(theme.gray_1));
-            for step in 1..=12 {
-                assert_eq!(theme.body_fill(step), theme.gray(step));
-                assert_eq!(theme.body_hover_fill(step), theme.gray(step));
-                assert_eq!(theme.body_border(step), theme.gray(step));
-            }
-        }
-    }
-
-    #[test]
     fn status_roles_match_radix() {
         let (light, dark) = (Theme::light(), Theme::dark());
         let roles = |t: &Theme| {
@@ -602,14 +418,14 @@ mod tests {
                 0x3dd68cff, 0x132d21ff, 0xffca16ff, 0x302008ff, 0xff9592ff, 0x3b1219ff
             ]
         );
-        assert_eq!(bytes(light.selection()), 0x007aff40);
-        assert_eq!(bytes(dark.selection()), 0x0a84ff40);
+        assert_eq!(bytes(light.colors.selection), 0x0066e040);
+        assert_eq!(bytes(dark.colors.selection), 0x0866d840);
         assert_eq!(
-            [light.tooltip_bg(), light.tooltip_text()].map(bytes),
+            [light.colors.tooltip_bg, light.colors.tooltip_text].map(bytes),
             [0x202020ff, 0xfcfcfcff]
         );
         assert_eq!(
-            [dark.tooltip_bg(), dark.tooltip_text()].map(bytes),
+            [dark.colors.tooltip_bg, dark.colors.tooltip_text].map(bytes),
             [0xeeeeeeff, 0x111111ff]
         );
     }
@@ -617,7 +433,7 @@ mod tests {
     #[test]
     fn translucent_roles_keep_alpha() {
         for theme in [Theme::light(), Theme::dark()] {
-            let p = theme.editor;
+            let p = theme.colors;
             for color in [p.line, p.line_strong, p.ctl, p.ctl_hover, p.ctl_active] {
                 assert!(
                     color.a > 0. && color.a < 1.,
@@ -631,7 +447,7 @@ mod tests {
     #[test]
     fn body_text_contrast() {
         for theme in [Theme::light(), Theme::dark()] {
-            let p = theme.editor;
+            let p = theme.colors;
             for background in [p.window, p.card, p.card_2] {
                 let value = ratio(p.text_1, background);
                 assert!(value >= 4.5, "{:?} text_1 {value}", theme.appearance);
@@ -644,31 +460,195 @@ mod tests {
     }
 
     #[test]
-    fn accepted_contrast_shortfalls_are_recorded() {
-        let (light, dark) = (Theme::light(), Theme::dark());
-        let cases = [
+    fn secondary_text_and_on_accent_meet_their_contrast_targets() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let p = theme.colors;
+            let name = format!("{:?}", theme.appearance);
+            assert!(ratio(p.text_2, p.window) >= 4.5, "{name} text_2 on window");
+            for background in [p.card, p.card_2] {
+                let value = ratio(p.text_3, background);
+                assert!(value >= 3., "{name} text_3 {value}");
+            }
+            for fill in [p.accent, p.accent_2] {
+                let value = ratio(p.on_accent, fill);
+                assert!(value >= 4.5, "{name} on_accent {value}");
+            }
+        }
+    }
+
+    #[test]
+    fn semantic_status_surfaces_are_distinct_from_the_neutral_surface() {
+        for theme in [Theme::light(), Theme::dark()] {
+            for surface in [theme.green_3, theme.amber_3, theme.red_3] {
+                assert_ne!(surface, theme.colors.card);
+            }
+        }
+    }
+
+    /// The roles phase 1 adds, in the order of its table.
+    fn new_roles(theme: &Theme) -> [(&'static str, Rgba); 21] {
+        let c = theme.colors;
+        [
+            ("present_bg", c.present_bg),
+            ("on_accent", c.on_accent),
+            ("focus", c.focus),
+            ("selection", c.selection),
+            ("tooltip_bg", c.tooltip_bg),
+            ("tooltip_text", c.tooltip_text),
+            ("success", c.success),
+            ("success_bg", c.success_bg),
+            ("warning", c.warning),
+            ("warning_bg", c.warning_bg),
+            ("danger", c.danger),
+            ("danger_bg", c.danger_bg),
+            ("danger_hover", c.danger_hover),
+            ("danger_active", c.danger_active),
+            ("info", c.info),
+            ("info_bg", c.info_bg),
+            ("scope", c.scope),
+            ("scrim", c.scrim),
+            ("track_clip", c.track_clip),
+            ("track_overlay", c.track_overlay),
+            ("track_audio", c.track_audio),
+        ]
+    }
+
+    /// Each new role is the value its call sites compute today.
+    fn sources(theme: &Theme) -> [Rgba; 21] {
+        let e = theme.colors;
+        [
+            hex(0x000000),
+            theme.colors.on_accent,
+            e.accent,
+            theme.colors.selection,
+            theme.colors.tooltip_bg,
+            theme.colors.tooltip_text,
+            theme.green_11,
+            theme.green_3,
+            theme.amber_11,
+            theme.amber_3,
+            theme.red_11,
+            theme.red_3,
+            mix(theme.red_3, theme.red_11, 0.12),
+            mix(theme.red_3, theme.red_11, 0.22),
+            e.accent,
+            e.ctl,
+            theme.amber_11,
+            Rgba::from(gpui::black().opacity(0.55)),
+            track_color(TrackKind::Clip),
+            track_color(TrackKind::Overlay),
+            track_color(TrackKind::Audio),
+        ]
+    }
+
+    #[test]
+    fn new_roles_equal_what_call_sites_use_today() {
+        for theme in [Theme::light(), Theme::dark()] {
+            for ((name, role), source) in new_roles(&theme).into_iter().zip(sources(&theme)) {
+                assert_eq!(bytes(role), bytes(source), "{:?} {name}", theme.appearance);
+            }
+        }
+    }
+
+    #[test]
+    fn new_roles_match_the_spec_values() {
+        let light = new_roles(&Theme::light()).map(|(_, c)| bytes(c));
+        assert_eq!(
+            light,
+            [
+                0x000000ff, 0xffffffff, 0x0066e0ff, 0x0066e040, 0x202020ff, 0xfcfcfcff, 0x218358ff,
+                0xe6f6ebff, 0xab6400ff, 0xfff7c2ff, 0xce2c31ff, 0xfeebecff, 0xf8d4d6ff, 0xf3c1c3ff,
+                0x0066e0ff, 0x0000000b, 0xab6400ff, 0x0000008c, 0x3b82f6ff, 0x8b5cf6ff, 0x22c55eff,
+            ]
+        );
+        let dark = new_roles(&Theme::dark()).map(|(_, c)| bytes(c));
+        assert_eq!(
+            dark,
+            [
+                0x000000ff, 0xffffffff, 0x0866d8ff, 0x0866d840, 0xeeeeeeff, 0x111111ff, 0x3dd68cff,
+                0x132d21ff, 0xffca16ff, 0x302008ff, 0xff9592ff, 0x3b1219ff, 0x532228ff, 0x662f34ff,
+                0x0866d8ff, 0xffffff0f, 0xffca16ff, 0x0000008c, 0x3b82f6ff, 0x8b5cf6ff, 0x22c55eff,
+            ]
+        );
+    }
+
+    #[test]
+    fn syntax_matches_the_agent_highlighter() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let s = theme.syntax;
+            assert_eq!(
+                [
+                    s.comment,
+                    s.keyword,
+                    s.string,
+                    s.number,
+                    s.type_name,
+                    s.function,
+                    s.variable,
+                    s.punctuation,
+                    s.invalid,
+                    s.added,
+                    s.removed,
+                ],
+                [
+                    theme.gray_10,
+                    theme.red_11,
+                    theme.green_11,
+                    theme.amber_11,
+                    theme.blue_11,
+                    theme.blue_10,
+                    theme.gray_12,
+                    theme.gray_11,
+                    theme.red_10,
+                    theme.green_11,
+                    theme.red_11,
+                ],
+                "{:?}",
+                theme.appearance
+            );
+        }
+    }
+
+    #[test]
+    fn status_foregrounds_read_on_their_surfaces() {
+        // Phase 1 asks for 4.5:1. Dark meets it everywhere; light success, warning and danger
+        // on its hover wash fall short with Radix's step 11 on step 3 and are recorded.
+        for theme in [Theme::light(), Theme::dark()] {
+            let c = theme.colors;
+            let mut pairs = vec![
+                ("danger", c.danger, c.danger_bg),
+                ("tooltip", c.tooltip_text, c.tooltip_bg),
+            ];
+            if theme.is_dark() {
+                pairs.extend([
+                    ("success", c.success, c.success_bg),
+                    ("warning", c.warning, c.warning_bg),
+                    ("danger on hover", c.danger, c.danger_hover),
+                ]);
+            }
+            for (name, fg, bg) in pairs {
+                let value = ratio(fg, bg);
+                assert!(value >= 4.5, "{:?} {name} {value}", theme.appearance);
+            }
+        }
+        let light = Theme::light().colors;
+        for (name, measured, recorded) in [
             (
-                "white on accent, light",
-                ratio(light.on_accent(), light.editor.accent),
-                4.02,
+                "light success",
+                ratio(light.success, light.success_bg),
+                4.21,
             ),
             (
-                "white on accent, dark",
-                ratio(dark.on_accent(), dark.editor.accent),
-                3.65,
+                "light warning",
+                ratio(light.warning, light.warning_bg),
+                4.25,
             ),
             (
-                "text_2 on window, light",
-                ratio(light.editor.text_2, light.editor.window),
-                4.49,
+                "light danger on hover",
+                ratio(light.danger, light.danger_hover),
+                3.82,
             ),
-            (
-                "text_3 on card, light",
-                ratio(light.editor.text_3, light.editor.card),
-                2.60,
-            ),
-        ];
-        for (name, measured, recorded) in cases {
+        ] {
             assert!(
                 (measured - recorded).abs() <= 0.01,
                 "{name}: measured {measured}, recorded {recorded}"
@@ -677,11 +657,17 @@ mod tests {
     }
 
     #[test]
-    fn semantic_status_surfaces_are_distinct_from_the_neutral_surface() {
+    fn hovered_controls_are_visibly_lighter_or_darker_than_the_card() {
         for theme in [Theme::light(), Theme::dark()] {
-            for surface in [theme.green_3, theme.amber_3, theme.red_3] {
-                assert_ne!(surface, theme.editor.card);
-            }
+            let c = theme.colors;
+            let card = super::contrast::lightness(c.card, c.card);
+            let hover = super::contrast::lightness(c.ctl_hover, c.card);
+            assert!(
+                (card - hover).abs() >= 2.,
+                "{:?} delta-L {}",
+                theme.appearance,
+                (card - hover).abs()
+            );
         }
     }
 }

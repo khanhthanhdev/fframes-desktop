@@ -14,7 +14,7 @@ Documents:
 
 ## Setup
 
-For a Windows-only preview release dry run, dispatch [Desktop Release](../../.github/workflows/desktop-release.yml) on the source branch with `preview_release=true`, `windows_only=true`, `dry_run=true` and `consumer_release=false`. Set `tag` to `v` plus the app version. It prepares the ZIP, installer, checksums and install manifests as the `studio-preview-dry-run` artifact and publishes nothing. Consumer publishing retains its separate signing and eligibility gates.
+Desktop releases build Windows only. For a preview release dry run, dispatch [Desktop Release](../../.github/workflows/desktop-release.yml) on the source branch with `preview_release=true`, `dry_run=true` and `consumer_release=false`. Set `tag` to `v` plus the app version. It prepares the ZIP, installer, checksums and install manifests as the `studio-preview-dry-run` artifact and publishes nothing. Consumer publishing retains its separate signing and eligibility gates.
 
 Run Studio from a checkout:
 
@@ -83,6 +83,27 @@ original examples are unchanged. Edit the copied video under `examples/<name>/sr
 its embedded assets under `examples/<name>/media`. The intro also keeps the runtime
 media in its original `examples/*/dynamic_media` folders. Other examples needing
 external footage or extra dependencies are not yet adapted by this command.
+
+### Use fframes-kit in a project
+
+The managed SDK vendors one [fframes-kit](https://github.com/khanhthanhdev/fframes-kit) release (its `kit_version` in `compatibility.json`) with every feature except `skia`, and `fframes-studio-kit`, Studio's props store for kit components. The slide-stop suggestions release requires kit 0.3.0 and a rebuilt SDK; older installed SDKs do not gain it automatically. A Studio project adds them to its `Cargo.toml` with exact versions, like the framework crates:
+
+```toml
+[dependencies]
+fframes-kit = { version = "=0.3.0", features = ["studio"] }  # plus "latex", "3d", "physics", ... as needed
+fframes-studio-kit = "=0.2.0"                                 # the fframes-studio-runtime version
+```
+
+The build copy binds `fframes-studio-kit` to the SDK like `fframes-studio-runtime` and adds `[patch.crates-io] fframes = { path = <SDK framework>/fframes }` to its root manifest only, so the kit builds against the SDK's `fframes` and the graph has one `fframes`. The project's own `Cargo.toml` keeps no `[patch]` (one is still refused). Another kit version, or a git or path dependency on the kit, fails the build with a message naming the SDK's exact kit version; a newer kit comes with a newer SDK.
+
+For the **Props** tab, give the video an `Arc<fframes_studio_kit::PropsStore>`, draw with `Ui::new(frame, ctx, &theme).with_props(store.view())` (or `Ui::for_scene(..).with_props(store.scene_view(self))` in a scene), and in `src/bin/studio_worker.rs` call `store.listen()`, pass `store.hooks()` to `PreviewWorkerConfig::with_props_args(&args).with_props(hooks)`, export with `run_export_with_props` and answer the capabilities flag with `print_export_capabilities_with_props`. [`desktop/fixtures/kit-props`](../../desktop/fixtures/kit-props/src/main.rs) is a complete worker.
+
+The same hooks enable **Suggested** stops in the **Slides** tab. Scan the preview, review the
+labels and notes, then accept individual suggestions or all of them. Only acceptance writes
+`slides.json`, through the normal undoable slide edit. Scans sample clip starts and every
+half second, up to 2000 frames, in batches of 16 so seeks can run between batches; short-lived
+components can be missed. Cancel a scan to discard its result. Timing, props or preview changes
+invalidate old results. Older workers without `suggested_stops_v1` show no scan controls.
 
 ## Editing
 

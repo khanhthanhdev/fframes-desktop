@@ -17,15 +17,10 @@ use gpui::{
     App, Bounds, ClipboardItem, CursorStyle, DispatchPhase, Element, ElementId, EntityId,
     GlobalElementId, HighlightStyle, Hitbox, HitboxBehavior, Hsla, InspectorElementId, IntoElement,
     KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
-    SharedString, StyledText, TextLayout, Window, actions, hsla,
+    SharedString, StyledText, TextLayout, Window, actions,
 };
 
 actions!(selectable_text, [CopySelection]);
-
-/// The selection's highlight, readable on the light and the dark editor surfaces.
-fn highlight() -> Hsla {
-    hsla(211. / 360., 0.9, 0.55, 0.32)
-}
 
 /// The app's one text selection.
 #[derive(Default)]
@@ -159,7 +154,9 @@ impl Element for SelectableText {
                 styled = styled.with_highlights([(
                     range,
                     HighlightStyle {
-                        background_color: Some(highlight()),
+                        background_color: Some(Hsla::from(
+                            studio_theme::Theme::for_window(window, cx).colors.selection,
+                        )),
                         ..Default::default()
                     },
                 )]);
@@ -377,7 +374,7 @@ mod tests {
                 .flex()
                 .flex_col()
                 .w(px(400.))
-                .child(TextInput::plain(&theme, "field", &self.field))
+                .child(TextInput::new(&theme, "field", &self.field))
                 .child(
                     div()
                         .debug_selector(|| "selectable-line".into())

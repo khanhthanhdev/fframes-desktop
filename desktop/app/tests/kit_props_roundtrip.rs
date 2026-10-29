@@ -100,7 +100,8 @@ fn real_kit_worker_answers_props_info_and_redraws_with_a_props_document() {
     let mut worker = PreviewWorkerClient::new(transport, identity);
     worker.negotiate().unwrap();
     assert!(worker.supports_props());
-    worker.timeline().unwrap();
+    assert!(worker.supports_suggested_stops());
+    let timeline = worker.timeline().unwrap();
 
     // The frame names the editable circle; the store recorded it while drawing.
     let before = worker.frame(0, 1, 1.0).unwrap();
@@ -148,6 +149,42 @@ fn real_kit_worker_answers_props_info_and_redraws_with_a_props_document() {
     worker.set_props(None, 2).unwrap();
     let restored = worker.frame(0, 3, 1.0).unwrap();
     assert_eq!(lit(&restored.pixels), lit(&before.pixels));
+
+    // Sample twice with an ordinary seek between batches. Observations replace the
+    // same origin, carry notes, and do not duplicate on another render or a fresh scan.
+    let first = worker.suggest_stops(vec![0, 15], 0, true).unwrap();
+    assert_eq!(first.stops.len(), 2);
+    assert!(!first.truncated);
+    assert_eq!(first.stops[0].scene, "video");
+    assert_eq!(first.stops[0].seconds, 0.5);
+    assert_eq!(first.stops[1].seconds, 1.25);
+    assert_eq!(first.stops[0].label.as_deref(), Some("Introduce the dot"));
+    assert_eq!(
+        first.stops[0].notes.as_deref(),
+        Some("The Props panel changes its radius.")
+    );
+    let seek = worker.frame(37, 4, 1.0).unwrap();
+    assert_eq!(seek.response.frame_index, 37);
+    assert_eq!(worker.suggest_stops(vec![30, 45], 0, false).unwrap(), first);
+    assert_eq!(worker.suggest_stops(vec![0], 0, true).unwrap(), first);
+
+    // This fixture has no scenes: its root-video suggestions must still become usable
+    // slide stops, with fractional reveals rounded up and their speaker notes retained.
+    use studio_engine::slides::{SlidesDoc, resolve, suggest};
+    assert!(timeline.scenes.is_empty());
+    let proposals = suggest::proposals(&first, &timeline, &SlidesDoc::default());
+    let accepted = suggest::accepting(&SlidesDoc::default(), &proposals).unwrap();
+    let (stops, problems) = resolve::resolve(&accepted, &timeline);
+    assert!(problems.is_empty(), "{problems:?}");
+    assert_eq!(
+        proposals.iter().map(|p| p.video_frame).collect::<Vec<_>>(),
+        [15, 38]
+    );
+    assert_eq!(
+        stops[0].notes.as_deref(),
+        Some("The Props panel changes its radius.")
+    );
+    assert!(suggest::proposals(&first, &timeline, &accepted).is_empty());
 
     drop(worker);
     manager.terminate_all(Duration::from_millis(300));

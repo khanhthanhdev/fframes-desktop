@@ -15,7 +15,7 @@ const CELL_PAD_X: f32 = 10.0;
 const CELL_PAD_Y: f32 = 5.0;
 const MIN_COL: f32 = 48.0;
 const MAX_COL: f32 = 360.0;
-const BODY_SIZE: f32 = 13.0;
+const BODY_SIZE: f32 = studio_theme::TextStyle::Body.size();
 
 /// Column widths measured with a font, kept in the prepared table so the cells are shaped once
 /// per font rather than on every frame. A clone starts empty and every cache compares equal:
@@ -99,14 +99,14 @@ pub fn build(
         *cache.0.borrow_mut() = Some((font, widths.clone()));
         widths
     });
-    let total = widths.iter().fold(px(0.), |a, w| a + *w);
-    let (line, header_bg, id) = (cx.style.rule, cx.style.code_bg, cx.row_id);
+    let total = widths.iter().fold(Pixels::ZERO, |a, w| a + *w);
+    let (line, head_fill, id) = (cx.style.rule, cx.style.code_bg, cx.row_id);
     let table_ix = cx.peek_ix();
 
     let mut line_element = |cells: &[Flat], is_header: bool, last: bool| {
         let mut row = div().flex().flex_row().w(total);
         if is_header {
-            row = row.bg(header_bg);
+            row = row.bg(head_fill);
         }
         if !last {
             row = row.border_b_1().border_color(line);
@@ -139,8 +139,8 @@ pub fn build(
         .id(SharedString::from(format!("md-table-{id}-{}", table_ix)))
         .overflow_x_scroll()
         // The frame hugs the columns (plus its border) and scrolls when the row is narrower.
-        .max_w(total + px(2.))
-        .rounded(px(8.))
+        .max_w(total + px(studio_theme::METRICS.size.divider * 2.))
+        .rounded(crate::agent::ui::CARD_RADIUS)
         .border_1()
         .border_color(line)
         .child(table)

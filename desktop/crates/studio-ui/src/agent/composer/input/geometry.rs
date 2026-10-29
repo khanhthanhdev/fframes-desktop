@@ -40,7 +40,7 @@ impl ComposerInput {
                             line.runs()[boundary.run_ix].glyphs[boundary.glyph_ix].index
                                 == relative_index
                         })
-                        .map(|row| point(px(0.0), self.line_height * (row + 1)))
+                        .map(|row| point(Pixels::ZERO, self.line_height * (row + 1)))
                         .or_else(|| line.position_for_index(relative_index, self.line_height))?
                 } else {
                     line.position_for_index(relative_index, self.line_height)?

@@ -1,7 +1,8 @@
-//! The Project tab: the review policy (chosen in Settings → Agent), Apply, Undo, accepted
-//! edits and recovery.
+//! The Changes tab: the review policy (chosen in Settings → Agent), Undo, recovery and the
+//! accepted edits, as panel sections.
 
 use super::*;
+use crate::kit::{FormField, List, ListRow, PanelSection};
 
 impl ConversationPanel {
     pub(super) fn project_tab(
@@ -10,19 +11,12 @@ impl ConversationPanel {
         controls: &Controls,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let mut column = div()
-            .id("agent-project-tab")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .flex()
-            .flex_col()
-            .gap(px(8.))
-            .p(px(12.));
+        let theme = self.theme;
+        let mut column = PanelSection::column();
 
         // Review policy: read here, chosen in Settings → Agent.
-        let mut review = self
-            .section("Review")
+        let mut review = PanelSection::new(&theme, "Review")
+            .description("Change it in Settings → Agent.")
             .child(label_text(match snapshot.review_policy {
                 ReviewPolicy::AutoApply => "Validated changes are applied automatically.",
                 ReviewPolicy::ManualReview => "Validated changes wait for your Apply or Discard.",
@@ -36,48 +30,32 @@ impl ConversationPanel {
                 }
             )));
         }
-        review = review.child(self.line("Change it in Settings → Agent."));
         column = column.child(review);
 
         // Undo and the accepted-awaiting-preview state.
-        let mut undo = self.section("Undo");
-        match &controls.undo {
-            UndoControl::Enabled { summary, .. } => {
-                undo = undo
-                    .child(self.line(format!("Newest agent edit: {summary}")))
-                    .child(field_row(
-                        &self.theme,
-                        "Undo",
-                        self.action_button(
-                            "agent-undo",
-                            "Undo last agent edit",
-                            true,
-                            Tone::Normal,
-                            cx,
-                            |this, _, cx| {
-                                if let Some(w) = this.workflow().cloned() {
-                                    let r = w.undo(None);
-                                    this.command(r, cx);
-                                }
-                            },
-                        ),
-                    ));
-            }
-            UndoControl::Disabled(reason) => {
-                undo = undo.child(self.line(reason.clone())).child(field_row(
-                    &self.theme,
-                    "Undo",
-                    self.action_button(
-                        "agent-undo",
-                        "Undo last agent edit",
-                        false,
-                        Tone::Normal,
-                        cx,
-                        |_, _, _| (),
-                    ),
-                ));
-            }
-        }
+        let (undo_line, undo_enabled) = match &controls.undo {
+            UndoControl::Enabled { summary, .. } => (format!("Newest agent edit: {summary}"), true),
+            UndoControl::Disabled(reason) => (reason.clone(), false),
+        };
+        let mut undo = PanelSection::new(&theme, "Undo")
+            .child(self.line(undo_line))
+            .child(FormField::row(
+                &theme,
+                "Undo",
+                self.action_button(
+                    "agent-undo",
+                    "Undo last agent edit",
+                    undo_enabled,
+                    Emphasis::Neutral,
+                    cx,
+                    |this, _, cx| {
+                        if let Some(w) = this.workflow().cloned() {
+                            let r = w.undo(None);
+                            this.command(r, cx);
+                        }
+                    },
+                ),
+            ));
         if let Some(handoff) = &snapshot.handoff {
             undo = undo.child(label_text(match &handoff.state {
                 HandoffState::AwaitingPreview { reason } => format!(
@@ -106,7 +84,7 @@ impl ConversationPanel {
             || recovery.notice.is_some()
             || controls.export_draft
         {
-            let mut section = self.section("Recovery");
+            let mut section = PanelSection::new(&theme, "Recovery");
             if let Some(reason) = &recovery.suspended {
                 section = section.child(label_text(format!(
                     "Source changes are suspended until the project is reopened: {reason}"
@@ -145,18 +123,15 @@ impl ConversationPanel {
                     ),
                 );
                 if controls.acknowledge_writer_gone {
-                    section = section
-                        .child(self.line(
-                            "Confirm only if you are sure no agent process is still writing there.",
-                        ))
-                        .child(field_row(
-                            &self.theme,
+                    section = section.child(
+                        FormField::row(
+                            &theme,
                             "Writer",
                             self.action_button(
                                 "agent-ack-writer",
                                 "Nothing is writing; unlock the working copy",
                                 true,
-                                Tone::Normal,
+                                Emphasis::Neutral,
                                 cx,
                                 |this, _, cx| {
                                     if let Some(w) = this.workflow().cloned() {
@@ -165,43 +140,67 @@ impl ConversationPanel {
                                     }
                                 },
                             ),
-                        ));
+                        )
+                        .hint(
+                            "Confirm only if you are sure no agent process is still writing there.",
+                        ),
+                    );
                 }
             }
             if controls.export_draft {
-                section = section.child(self.action_button(
+                section = section.child(div().child(self.action_button(
                     "agent-export-draft",
                     "Export the retained draft…",
                     true,
-                    Tone::Normal,
+                    Emphasis::Neutral,
                     cx,
                     |this, _, cx| this.export(Export::Draft, cx),
-                ));
+                )));
             }
             column = column.child(section);
         }
 
-        // History.
-        let mut history = self.section(&format!(
-            "Accepted agent edits ({})",
-            snapshot.history.len()
-        ));
-        if snapshot.history.is_empty() {
-            history =
-                history.child(self.line("No agent edit has been accepted in this project yet."));
-        }
+        // Accepted edits, as History-style rows.
+        let mut rows = Vec::new();
         for entry in snapshot.history.iter().rev().take(10) {
-            let mut line = history_line(&self.theme, entry);
+            let mut row = ListRow::new(
+                &theme,
+                SharedString::from(format!("agent-edit-{}", entry.id)),
+            )
+            .title(format!(
+                "{} · {} file{} · {}{}",
+                entry.kind,
+                entry.files,
+                if entry.files == 1 { "" } else { "s" },
+                &entry.published[..entry.published.len().min(12)],
+                entry
+                    .undoes
+                    .as_ref()
+                    .map(|u| format!(" · undoes {}", &u[..u.len().min(8)]))
+                    .unwrap_or_default()
+            ))
+            .meta(entry.summary.clone());
             if entry.kind == "Apply" {
-                line = line.child(self.revision_review_button(&entry.id, cx));
+                row = row.trailing(self.revision_review_button(&entry.id, cx));
             }
-            history = history.child(line);
+            rows.push(row);
         }
-        column = column.child(history);
+        column = column.child(
+            PanelSection::new(
+                &theme,
+                format!("Accepted agent edits ({})", snapshot.history.len()),
+            )
+            .child(
+                List::new().children(rows).empty(
+                    EmptyState::new(&theme, "No accepted edits")
+                        .body("No agent edit has been accepted in this project yet."),
+                ),
+            ),
+        );
 
         // Resources.
         let r = snapshot.resources;
-        column = column.child(self.line(format!(
+        column = column.child(self.caption(&format!(
             "Resident messages {}/{} · {} KiB of {} KiB · {} processes · {} tool grants · {} tool workers",
             r.resident_rows,
             r.max_resident_rows,
@@ -211,6 +210,13 @@ impl ConversationPanel {
             r.broker_grants,
             r.tool_workers
         )));
-        column.into_any_element()
+        div()
+            .id("agent-project-tab")
+            .flex_1()
+            .min_h_0()
+            .overflow_y_scroll()
+            .p(px(METRICS.space_3))
+            .child(column)
+            .into_any_element()
     }
 }

@@ -88,7 +88,7 @@ Process separation is crash isolation, not a security sandbox. Agent subprocesse
 | `crates/studio-harness` | Agent drivers (ACP, Claude stream-json, Codex app-server), adapter discovery, detection and install |
 | `crates/studio-proto` | Identities shared by the engine and the UI: `SessionId`, `CommandId`, `AppTheme` |
 | `crates/studio-theme` | Colour tokens, metrics, type and shadows of the Studio chrome |
-| `crates/studio-ui` | The component kit, the shell, the timeline, the agent panel, the review window and the parity tests |
+| `crates/studio-ui` | The component kit, the shell, the timeline, the agent panel and the review window |
 | `crates/studio-markdown` | UI-free block markdown parsing with incremental reparse for streamed text |
 | `crates/studio-test-support` | Test-only helpers shared by the crates' tests (dev-dependency only) |
 
@@ -161,7 +161,7 @@ Project import preserves pre-existing dirty files and Git history. Checkpoints u
 
 ### Timing document and revision
 
-`timeline.json` is a `fframes::TimingDoc` (see the root [`AGENTS.md`](../../AGENTS.md), section "Scenes"). The engine mirrors the format without linking fframes ([`timing/doc.rs`](../../desktop/crates/studio-engine/src/timing/doc.rs)); the worker checks trims against scene lengths when it applies a document.
+`timeline.json` is a `fframes::TimingDoc` (see [`docs/creating-a-video.md`](../creating-a-video.md), section "Scenes"). The engine mirrors the format without linking fframes ([`timing/doc.rs`](../../desktop/crates/studio-engine/src/timing/doc.rs)); the worker checks trims against scene lengths when it applies a document.
 
 The inventory classifies the file as `FileKind::Timing`. It is part of the source revision but not of the build revision (`SourceInventory::build_revision`), so a timing-only change keeps the build, its preview and its export binding.
 
@@ -424,8 +424,6 @@ Every durable format is versioned. A file of a newer format is refused with "upd
 - **Unit tests** sit next to the code. Pure decisions (panel controls, steering, keymaps, timeline geometry, fences) are written as functions so they are tested without a window.
 - **Engine integration tests** ([`studio-engine/tests/`](../../desktop/crates/studio-engine/tests)) run the real controller, journals and services against a fake compiler and a fake preview worker ([`support/`](../../desktop/crates/studio-engine/tests/support)). Refusal tests write an old format, open it through the real code path, check the "older Studio" message and check that the file is unchanged afterwards: see [`studio-project/tests/manifest.rs`](../../desktop/crates/studio-project/tests/manifest.rs), [`studio-project/tests/revision.rs`](../../desktop/crates/studio-project/tests/revision.rs), [`session_history.rs`](../../desktop/crates/studio-engine/tests/session_history.rs), [`task_recovery.rs`](../../desktop/crates/studio-engine/tests/task_recovery.rs), [`provider_profiles.rs`](../../desktop/crates/studio-engine/tests/provider_profiles.rs) and the unit tests in [`store.rs`](../../desktop/crates/studio-engine/src/store.rs) and [`journal.rs`](../../desktop/crates/studio-engine/src/journal.rs).
 - **Driver tests** ([`studio-harness/tests/`](../../desktop/crates/studio-harness/tests)) drive each wire against a scripted peer: `acp-peer.py` and the `acp_v1` suite, `fake-claude.py`, `fake-codex.py`, and `cross_driver.rs` for behavior every wire must share.
-- **Workflow tests** ([`app/tests/agent_workflow/`](../../desktop/app/tests/agent_workflow/main.rs)) run the agent workflow against real subprocesses: the scripted ACP agent, the fake Claude and Codex CLIs and the fake worker. A scripted peer proves transport and workflow, never a provider.
-- **Parity tests** ([`studio-ui/tests/parity/`](../../desktop/crates/studio-ui/tests/parity/main.rs)) drive the whole shell headless in GPUI's test context through its actions and observe telemetry, the engine and files on disk; only `harness.rs` names the root view.
 - **Real SDK and native tests** are ignored by default and run in the full self-hosted CI run: the real worker round trip, managed and portable workers, preview coordination, timeline controls, audio parity and the X11 shell test ([`x11_shell.rs`](../../desktop/app/tests/x11_shell.rs)), which runs the real binary on Xvfb with xdotool.
 - **Scripts.** [`test-packaging.py`](../../desktop/scripts/test-packaging.py) and [`test-release-gate.py`](../../desktop/scripts/test-release-gate.py) test packaging and the release gate.
 

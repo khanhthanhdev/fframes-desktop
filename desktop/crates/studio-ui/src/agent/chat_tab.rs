@@ -1,6 +1,65 @@
-//! The Chat tab: the options bar and its menu, the transcript and the prompt.
+//! The Chat tab: the status line and its details, the transcript with its empty state,
+//! working trailer and jump pill, then the dock and the options bar.
 
+use super::ui::{ActionCard, JumpPill, StatusLine, WorkingTrailer, elapsed_label, panel_empty};
 use super::*;
+use studio_harness::AdapterStatus;
+use studio_harness::driver::ConfigOption;
+
+/// What a new chat suggests when the agent is ready.
+const SUGGESTIONS: [&str; 3] = [
+    "Make the intro faster",
+    "Add a title card",
+    "Tighten the pacing",
+];
+
+/// Whether `option` is the agent's model choice, which the composer shows beside Send.
+pub(super) fn is_model_option(option: &ConfigOption) -> bool {
+    matches!(option.kind, ConfigKind::Select { .. })
+        && (option.id.eq_ignore_ascii_case("model") || option.name.eq_ignore_ascii_case("model"))
+}
+
+/// The status line without a task: who the agent is and whether it can take a task.
+fn adapter_status(
+    provider: Option<&str>,
+    readiness: &AdapterReadiness,
+    g: &controls::Guidance,
+) -> (String, UiTone) {
+    let Some(provider) = provider else {
+        return ("No agent set up".to_owned(), UiTone::Warning);
+    };
+    match readiness {
+        AdapterReadiness::NotConfigured => ("No agent set up".to_owned(), UiTone::Warning),
+        AdapterReadiness::Unchecked => (format!("{provider} · not checked"), UiTone::Neutral),
+        AdapterReadiness::Checking => (format!("{provider} · checking…"), UiTone::Info),
+        AdapterReadiness::Checked { report, .. } => match &report.status {
+            AdapterStatus::Ready { agent, version } => {
+                (format!("{agent} {version} · ready"), UiTone::Success)
+            }
+            AdapterStatus::AuthUnknown { .. } => (
+                format!("{provider} · ready, sign-in not verified"),
+                UiTone::Success,
+            ),
+            _ => (format!("{provider} · {}", g.headline), UiTone::Danger),
+        },
+    }
+}
+
+/// What the working trailer says in a phase, or `None` when nothing runs (the agent waits
+/// for the user, or the task ended).
+fn working_label(phase: TaskPhase) -> Option<&'static str> {
+    match phase {
+        TaskPhase::Queued | TaskPhase::Starting => Some("Sending"),
+        TaskPhase::Editing | TaskPhase::Repairing => Some("Working"),
+        TaskPhase::WaitingBackground
+        | TaskPhase::Quiescing
+        | TaskPhase::Capturing
+        | TaskPhase::Validating
+        | TaskPhase::AwaitingEvidence
+        | TaskPhase::Promoting => Some(phase.label()),
+        _ => None,
+    }
+}
 
 impl ConversationPanel {
     pub(super) fn options_bar(
@@ -9,95 +68,107 @@ impl ConversationPanel {
         controls: &Controls,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
-        if !controls.modes && !controls.config_options {
+        // The model sits beside Send; the bar holds what is left.
+        let others: Vec<&ConfigOption> = if controls.config_options {
+            snapshot
+                .options
+                .config
+                .iter()
+                .filter(|option| !is_model_option(option))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if !controls.modes && others.is_empty() {
             return controls
                 .options_note
                 .as_ref()
                 .map(|note| div().child(self.caption(note)));
         }
-        // One wrapping toolbar under the composer, like the mode and model pickers of other
-        // agent chats: it configures the next message, so it sits next to the prompt.
-        let mut bar = div().flex().flex_wrap().items_center().gap(px(6.));
+        let mut bar = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(METRICS.space_2));
         if controls.modes {
-            let mut rail = self.segment_rail();
-            for mode in &snapshot.options.modes {
-                let selected = snapshot.options.current_mode.as_deref() == Some(mode.id.as_str());
-                let id = mode.id.clone();
-                rail = rail.child(self.segment_item(
-                    format!("mode-{}", mode.id),
-                    mode.name.clone(),
-                    selected,
-                    cx,
-                    move |this, _, cx| {
-                        if let Some(w) = this.workflow().cloned() {
-                            let r = w.set_mode(&id);
-                            this.command(r, cx);
-                        }
+            let modes = &snapshot.options.modes;
+            let options = modes
+                .iter()
+                .map(|mode| {
+                    SegmentOption::new(
+                        mode.name.clone(),
+                        snapshot.options.current_mode.as_deref() == Some(mode.id.as_str()),
+                    )
+                    .id(format!("mode-{}", mode.id))
+                })
+                .collect();
+            let ids: Vec<String> = modes.iter().map(|mode| mode.id.clone()).collect();
+            let entity = cx.entity();
+            bar = bar.child(
+                SegmentedControl::new(&self.theme, "agent-modes", options).on_select(
+                    move |index, _, cx| {
+                        let Some(id) = ids.get(*index).cloned() else {
+                            return;
+                        };
+                        entity.update(cx, |this, cx| {
+                            if let Some(w) = this.workflow().cloned() {
+                                let r = w.set_mode(&id);
+                                this.command(r, cx);
+                            }
+                        });
                     },
-                ));
-            }
-            bar = bar.child(rail);
+                ),
+            );
         }
-        if controls.config_options {
-            for option in &snapshot.options.config {
-                let option_id = option.id.clone();
-                let id = format!("config-{}", option.id);
-                match &option.kind {
-                    ConfigKind::Boolean { current } => {
-                        let next = OptionValue::Boolean(!current);
-                        let label =
-                            format!("{}: {}", option.name, if *current { "on" } else { "off" });
-                        let entity = cx.entity();
-                        bar = bar.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(4.))
-                                .child(self.caption(&option.name))
-                                .child(
-                                    Toggle::plain(&self.theme, id, *current)
-                                        .label(label)
-                                        .on_change(move |_, _, app| {
-                                            entity.update(app, |this, cx| {
-                                                if let Some(w) = this.workflow().cloned() {
-                                                    let r = w.set_config_option(
-                                                        &option_id,
-                                                        next.clone(),
-                                                    );
-                                                    this.command(r, cx);
-                                                }
-                                            });
-                                        }),
-                                ),
-                        );
-                    }
-                    ConfigKind::Select { current, values } => {
-                        let name = values
-                            .iter()
-                            .find(|v| &v.value == current)
-                            .map_or(current.as_str(), |v| v.name.as_str());
-                        let entity = cx.entity();
-                        bar = bar.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .gap(px(4.))
-                                .child(self.caption(&option.name))
-                                .child(
-                                    div().min_w(px(120.)).child(
-                                        Select::plain(&self.theme, id, name.to_owned())
-                                            .stretch_label()
-                                            .on_open(move |bounds, window, app| {
-                                                entity.update(app, |this, cx| {
-                                                    this.toggle_config_menu(
-                                                        &option_id, *bounds, window, cx,
-                                                    );
-                                                });
-                                            }),
-                                    ),
-                                ),
-                        );
-                    }
+        for option in others {
+            let option_id = option.id.clone();
+            let id = format!("config-{}", option.id);
+            match &option.kind {
+                ConfigKind::Boolean { current } => {
+                    let next = OptionValue::Boolean(!current);
+                    let label = format!("{}: {}", option.name, if *current { "on" } else { "off" });
+                    let entity = cx.entity();
+                    bar = bar.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(METRICS.space_1))
+                            .child(self.caption(&option.name))
+                            .child(
+                                Toggle::new(&self.theme, id, *current)
+                                    .label(label)
+                                    .on_change(move |_, _, app| {
+                                        entity.update(app, |this, cx| {
+                                            if let Some(w) = this.workflow().cloned() {
+                                                let r =
+                                                    w.set_config_option(&option_id, next.clone());
+                                                this.command(r, cx);
+                                            }
+                                        });
+                                    }),
+                            ),
+                    );
+                }
+                ConfigKind::Select { current, values } => {
+                    let name = values
+                        .iter()
+                        .find(|v| &v.value == current)
+                        .map_or(current.as_str(), |v| v.name.as_str());
+                    let entity = cx.entity();
+                    bar = bar.child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(METRICS.space_1))
+                            .child(self.caption(&option.name))
+                            .child(Select::new(&self.theme, id, name.to_owned()).on_open(
+                                move |bounds, window, app| {
+                                    entity.update(app, |this, cx| {
+                                        this.toggle_config_menu(&option_id, *bounds, window, cx);
+                                    });
+                                },
+                            )),
+                    );
                 }
             }
         }
@@ -194,7 +265,7 @@ impl ConversationPanel {
         // The values of the rows as painted now: a click commits the one it hit.
         let shown = menu.values.clone();
         Some(
-            Menu::editor(
+            Menu::new(
                 &self.theme,
                 "agent-config-menu",
                 menu.items.clone(),
@@ -228,71 +299,39 @@ impl ConversationPanel {
         controls: &Controls,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        // Top to bottom: the task in one line, the transcript, then the dock (cards that
-        // wait for an answer, the composer and its toolbar). The transcript keeps a minimum
-        // height; the dock's cards scroll instead of pushing it out of the panel. The setup
-        // guidance opens the transcript area, where it scrolls in a short sidebar.
-        let theme = self.theme;
-        let g = guidance(
-            &snapshot.adapter.readiness,
-            snapshot.adapter.provider.is_some(),
-        );
+        // Top to bottom: the status line (and the task's details), the transcript, then the
+        // dock (cards that wait for an answer, the trays, the composer and its toolbar). The
+        // transcript keeps a minimum height; the dock's cards scroll instead of pushing it out
+        // of the panel.
+        let configured = snapshot.adapter.provider.is_some();
+        let g = guidance(&snapshot.adapter.readiness, configured);
         let mut top = div()
             .flex_none()
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .px(px(12.))
-            .pt(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(px(8.))
-                    .child(
-                        text_style(div().flex_1().min_w_0(), TextStyle::Small)
-                            .text_color(if g.usable {
-                                theme.editor.text_2
-                            } else {
-                                theme.editor.accent
-                            })
-                            .child(g.headline.clone()),
-                    )
-                    .child(super::policy_badge(self.permission_policy)),
-            );
-        let strip = self.status_strip(&snapshot, controls, cx);
-        let show_guidance = strip.is_none() && (!g.usable || snapshot.rows.is_empty());
-        top = top.children(strip);
+            .gap(px(METRICS.space_2))
+            .px(px(METRICS.space_3))
+            .pt(px(METRICS.space_2))
+            .child(self.status_line(&snapshot, controls, &g, cx));
+        top = top.children(self.task_well(&snapshot, controls, cx));
+        let setup = self.setup_notice(&snapshot, controls, &g, cx);
+        let needs_setup = setup.is_some();
+        top = top.children(setup);
         let answering =
             !snapshot.composer.questions.is_empty() || snapshot.resources.open_permissions > 0;
-        // An empty transcript (the setup guidance scrolls) needs no more room than one
-        // that gives way to an open question.
+        let empty = snapshot.rows.is_empty() && !self.log_has_older();
         let mut transcript = div()
             .flex_1()
-            .min_h(px(if answering || snapshot.rows.is_empty() {
+            .min_h(px(if answering || empty {
                 TRANSCRIPT_MIN_ANSWERING_H
             } else {
                 TRANSCRIPT_MIN_H
             }))
             .flex()
             .flex_col()
-            .gap(px(8.))
-            .px(px(12.))
-            .pt(px(8.));
-        if show_guidance {
-            transcript = transcript.child(
-                div()
-                    .id("agent-guidance")
-                    .flex_shrink(1.)
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .child(
-                        self.section(&g.headline)
-                            .children(g.steps.iter().take(3).map(|s| self.line(s.clone()))),
-                    ),
-            );
-        }
+            .gap(px(METRICS.space_2))
+            .px(px(METRICS.space_3))
+            .pt(px(METRICS.space_2));
         if self.log_has_older() {
             let loading = self.page.loading.load(Ordering::Acquire);
             transcript = transcript.child(div().flex_none().child(self.action_button(
@@ -303,7 +342,7 @@ impl ConversationPanel {
                     "Load earlier messages"
                 },
                 !loading,
-                Tone::Normal,
+                Emphasis::Ghost,
                 cx,
                 |this, _, cx| {
                     if let Some(first) = this.view_rows.first() {
@@ -314,11 +353,14 @@ impl ConversationPanel {
                 },
             )));
         }
+        if empty && !needs_setup {
+            transcript = transcript.child(self.new_chat_state(cx));
+        }
         let list = list(
             self.list.clone(),
             cx.processor(
                 |this, ix: usize, _window, cx| match this.view_rows.get(ix).cloned() {
-                    Some(row) => this.row_element(&row, cx),
+                    Some(row) => this.row_element(ix, &row, cx),
                     None => div().into_any_element(),
                 },
             ),
@@ -332,39 +374,29 @@ impl ConversationPanel {
             .flex_1()
             .min_h_0()
             .child(list);
-        if self.hidden_newer > 0 || !self.older.is_empty() {
+        let far = scroll::distance_from_bottom(&self.list) > scroll::JUMP_DISTANCE_PX;
+        self.far_from_end.set(far);
+        if self.hidden_newer > 0 || !self.older.is_empty() || far {
             // Floats over the newest rows while the reader is away from them.
+            let entity = cx.entity();
             rows = rows.child(
                 div()
                     .absolute()
-                    .bottom(px(8.))
+                    .bottom(px(METRICS.space_2))
                     .left_0()
                     .right_0()
                     .flex()
                     .justify_center()
                     .child(
-                        div()
-                            .rounded(px(METRICS.radius_control))
-                            .bg(self.theme.editor.card)
-                            .child(self.action_button(
-                                "agent-jump-latest",
-                                if self.hidden_newer > 0 {
-                                    format!(
-                                        "Jump to latest · {} newer messages hidden",
-                                        self.hidden_newer
-                                    )
-                                } else {
-                                    "Jump to latest".to_owned()
-                                },
-                                true,
-                                Tone::Normal,
-                                cx,
-                                |this, _, cx| this.jump_to_latest(cx),
-                            )),
+                        JumpPill::new(&self.theme, "agent-jump-latest", self.hidden_newer)
+                            .on_click(move |_, cx| {
+                                entity.update(cx, |this, cx| this.jump_to_latest(cx));
+                            }),
                     ),
             );
         }
         transcript = transcript.child(rows);
+        transcript = transcript.children(self.working_trailer(&snapshot));
         // A sidebar shorter than the transcript's minimum and the composer scrolls rather
         // than cutting off Send.
         div()
@@ -380,97 +412,241 @@ impl ConversationPanel {
             .into_any_element()
     }
 
-    /// The task in one line: its phase, why it is there, Stop and a Details toggle. Review
-    /// actions and a conflict stay in view; ids, repairs, scope and evidence wait behind
-    /// Details, so the strip never crowds out the transcript.
-    pub(super) fn status_strip(
+    /// The task, or the agent when there is none, in one line: a status dot, a summary,
+    /// the permission policy, Stop while a task waits, and the details chevron.
+    fn status_line(
+        &mut self,
+        snapshot: &WorkflowSnapshot,
+        controls: &Controls,
+        g: &controls::Guidance,
+        cx: &mut Context<Self>,
+    ) -> StatusLine {
+        let (summary, tone) = match &snapshot.task {
+            Some(task) => {
+                let what = task.reason.clone().unwrap_or_else(|| task.scope.label());
+                (
+                    format!(
+                        "{}{}: {what}",
+                        task.phase.label(),
+                        if task.stop_requested {
+                            " · stopping"
+                        } else {
+                            ""
+                        }
+                    ),
+                    banner_tone(task.phase),
+                )
+            }
+            None => adapter_status(
+                snapshot.adapter.provider.as_deref(),
+                &snapshot.adapter.readiness,
+                g,
+            ),
+        };
+        let mut line = StatusLine::new(&self.theme, tone, summary)
+            .trailing(policy_badge(self.permission_policy));
+        // The composer's own Stop covers a live turn; this one every other state a task can
+        // be in (waiting, reviewing, queued briefs).
+        if !snapshot.composer.turn_live
+            && let Some(note) = controls.stop.clone()
+        {
+            line = line.trailing(self.stop_button(note, cx));
+        }
+        if snapshot.task.is_some() {
+            let open = self.task_details_open;
+            line = line.trailing(self.icon_button(
+                "agent-task-details",
+                if open {
+                    Icon::ChevronDown
+                } else {
+                    Icon::ChevronRight
+                },
+                if open { "Hide details" } else { "Task details" },
+                Emphasis::Ghost,
+                cx,
+                |this, _, cx| {
+                    this.task_details_open = !this.task_details_open;
+                    cx.notify();
+                },
+            ));
+        }
+        line
+    }
+
+    /// The task's well under the status line: its details while open, a blocked Apply, a
+    /// conflict, and the review buttons, which stay in view whenever a candidate waits.
+    fn task_well(
         &mut self,
         snapshot: &WorkflowSnapshot,
         controls: &Controls,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
         let task = snapshot.task.as_ref()?;
-        let palette = self.theme.editor;
         let open = self.task_details_open;
-        let phase = format!(
-            "{}{}",
-            task.phase.label(),
-            if task.stop_requested {
-                " · stopping"
-            } else {
-                ""
-            }
-        );
-        let summary = task.reason.clone().unwrap_or_else(|| task.scope.label());
-        let mut head = div()
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .min_h(px(24.))
-            .child(Badge::new(phase).tone(banner_tone(task.phase)))
-            .child(
-                text_style(div().flex_1().min_w_0().truncate(), TextStyle::Small)
-                    .text_color(palette.text_2)
-                    .child(summary),
-            );
-        // The composer's own Stop covers a live turn; this one every other state a task
-        // can be in (waiting, reviewing, queued briefs).
-        if !snapshot.composer.turn_live && controls.stop.is_some() {
-            head = head.child(self.stop_button(cx));
+        if !open && controls.review.is_none() && task.conflict.is_none() {
+            return None;
         }
-        head = head.child(self.icon_button(
-            "agent-task-details",
-            if open {
-                Icon::ChevronDown
-            } else {
-                Icon::ChevronRight
-            },
-            if open { "Hide details" } else { "Task details" },
-            Tone::Normal,
-            cx,
-            |this, _, cx| {
-                this.task_details_open = !this.task_details_open;
-                cx.notify();
-            },
-        ));
-        let mut strip = Card::editor_nested(&self.theme)
+        let mut well = Card::nested(&self.theme)
             .flex()
             .flex_col()
-            .gap(px(6.))
-            .px(px(10.))
-            .py(px(6.))
-            .child(head);
+            .gap(px(METRICS.space_2))
+            .p(px(METRICS.space_3));
+        if open {
+            well = well.child(self.task_details(snapshot, controls));
+        }
+        if let Some(conflict) = &task.conflict {
+            well = well.child(self.conflict_block(conflict));
+        }
         if let Some(review) = &controls.review {
             if let Some(note) = &review.apply_note {
-                strip = strip.child(self.line(format!(
+                well = well.child(self.line(format!(
                     "Apply is blocked: {note}. The candidate is kept; retry after fixing it."
                 )));
             }
-            let mut buttons = div().flex().flex_wrap().gap(px(6.));
+            let mut buttons = div()
+                .flex()
+                .flex_wrap()
+                .justify_end()
+                .gap(px(METRICS.space_2))
+                .child(self.banner_review_button(cx));
             for button in self.review_buttons(review, cx) {
                 buttons = buttons.child(button);
             }
-            strip = strip.child(buttons.child(self.banner_review_button(cx)));
+            well = well.child(buttons);
         }
-        if let Some(conflict) = &task.conflict {
-            strip = strip.child(self.conflict_block(conflict));
-        }
-        if open {
-            strip = strip.child(self.task_details(snapshot, controls));
-        }
-        Some(strip)
+        Some(well)
     }
 
-    /// What the status strip keeps behind Details: the task's identity, its repair budget,
-    /// what Stop does now, the frozen scope and the before/after evidence.
-    fn task_details(&self, snapshot: &WorkflowSnapshot, controls: &Controls) -> gpui::Div {
-        let mut details = div()
+    /// One notice while the agent cannot take a task yet (or was never checked): what is
+    /// wrong in a line, Set up agent and Check now. The setup steps live on the settings page.
+    fn setup_notice(
+        &mut self,
+        snapshot: &WorkflowSnapshot,
+        controls: &Controls,
+        g: &controls::Guidance,
+        cx: &mut Context<Self>,
+    ) -> Option<ActionCard> {
+        let configured = snapshot.adapter.provider.is_some();
+        let (title, body) = match &snapshot.adapter.readiness {
+            _ if !configured => (
+                "Agent not set up",
+                "Choose an agent in Settings › Agent.".to_owned(),
+            ),
+            AdapterReadiness::NotConfigured => (
+                "Agent not set up",
+                "Choose an agent in Settings › Agent.".to_owned(),
+            ),
+            AdapterReadiness::Unchecked => (
+                "Agent not checked yet",
+                "Check it once to confirm it starts and is signed in.".to_owned(),
+            ),
+            _ if !g.usable => (
+                "Agent not ready",
+                g.steps.first().map_or_else(
+                    || g.headline.clone(),
+                    |step| format!("{}. {step}", g.headline),
+                ),
+            ),
+            _ => return None,
+        };
+        let mut card = ActionCard::new(&self.theme, "agent-setup-guide", UiTone::Warning, title)
+            .body(body)
+            .action(self.action_button(
+                "agent-setup-start",
+                "Set up agent",
+                true,
+                if configured {
+                    Emphasis::Neutral
+                } else {
+                    Emphasis::Primary
+                },
+                cx,
+                |_, _, cx| cx.emit(PanelEvent::OpenSetup),
+            ));
+        if configured {
+            card = card.action(self.action_button(
+                "agent-check-now",
+                "Check now",
+                controls.check_adapter,
+                Emphasis::Primary,
+                cx,
+                |this, _, cx| {
+                    if let Some(w) = this.workflow().cloned() {
+                        let r = w.check_adapter();
+                        this.command(r, cx);
+                    }
+                },
+            ));
+        }
+        Some(card)
+    }
+
+    /// A new chat with a ready agent: what to ask, and a few suggestions to start from.
+    fn new_chat_state(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let theme = self.theme;
+        let chips = SUGGESTIONS.iter().enumerate().map(|(ix, text)| {
+            let entity = cx.entity();
+            div()
+                .id(("agent-suggestion", ix))
+                .cursor_pointer()
+                .on_click(move |_, window, cx| {
+                    entity.update(cx, |this, cx| {
+                        this.host
+                            .composer
+                            .update(cx, |composer, cx| composer.set_text(*text, cx));
+                        this.focus_composer(window, cx);
+                    });
+                })
+                .child(Chip::new(&theme, ("agent-suggestion-chip", ix), *text))
+        });
+        div()
+            .flex_none()
             .flex()
             .flex_col()
-            .gap(px(4.))
-            .pt(px(6.))
-            .border_t_1()
-            .border_color(self.theme.editor.line);
+            .items_center()
+            .gap(px(METRICS.space_3))
+            .pt(px(METRICS.space_8))
+            .child(panel_empty(
+                &theme,
+                TextStyle::Title,
+                "What should we change?",
+                "Describe an edit; the agent changes the project and you review it.",
+            ))
+            .child(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .justify_center()
+                    .gap(px(METRICS.space_2))
+                    .children(chips),
+            )
+    }
+
+    /// Under the last row while the agent works: what it does and for how long.
+    fn working_trailer(&self, snapshot: &WorkflowSnapshot) -> Option<WorkingTrailer> {
+        let task = snapshot.task.as_ref()?;
+        let label = working_label(task.phase)?;
+        let started = self
+            .view_rows
+            .iter()
+            .rev()
+            .find(|row| matches!(row.kind, RowKind::User { .. }))
+            .map(|row| row.at_unix)
+            .filter(|at| *at > 0);
+        let mut trailer = WorkingTrailer::new(&self.theme, label);
+        if let Some(started) = started {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs());
+            trailer = trailer.elapsed(elapsed_label(now.saturating_sub(started)));
+        }
+        Some(trailer)
+    }
+
+    /// What the status line keeps behind its chevron: the task's identity, its repair budget,
+    /// what Stop does now, the frozen scope and the before/after evidence.
+    fn task_details(&self, snapshot: &WorkflowSnapshot, controls: &Controls) -> gpui::Div {
+        let mut details = div().flex().flex_col().gap(px(METRICS.space_1));
         let Some(task) = &snapshot.task else {
             return details;
         };
@@ -509,7 +685,8 @@ impl ConversationPanel {
             },
             task.scope.label()
         )));
-        let mut evidence_cards = div().flex().gap_1();
+        let thumb_radius = px(METRICS.radius.item);
+        let mut evidence_cards = div().flex().gap(px(METRICS.space_2));
         let mut has_evidence_card = false;
         for (name, view) in [("Before", &task.before), ("After", &task.after)] {
             let Some(view) = view else {
@@ -544,12 +721,17 @@ impl ConversationPanel {
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    .gap_1()
+                    .gap(px(METRICS.space_1))
                     .child(label_text(format!("{name} · revision {}", view.revision)))
-                    .child(gpui::img(image.clone()).w(px(128.)).h(px(72.)))
                     .child(
-                        text_style(div(), TextStyle::Label)
-                            .text_color(self.theme.editor.text_2)
+                        gpui::img(image.clone())
+                            .w(px(EVIDENCE_THUMB_W))
+                            .h(px(EVIDENCE_THUMB_H))
+                            .rounded(thumb_radius),
+                    )
+                    .child(
+                        text_style(div(), TextStyle::Small)
+                            .text_color(self.theme.colors.text_2)
                             .child(selectable(format!(
                                 "{} · {} frames{}",
                                 artifact.label,
@@ -581,66 +763,38 @@ impl ConversationPanel {
         details
     }
 
-    /// Briefs waiting for the running task, each with a remove button.
-    pub(super) fn queue_section(
-        &mut self,
-        snapshot: &WorkflowSnapshot,
-        cx: &mut Context<Self>,
-    ) -> Option<gpui::Div> {
-        if snapshot.queue.is_empty() {
-            return None;
+    /// Stop for a task that waits (no live turn): a round solid button; what Stop does now
+    /// is its tooltip.
+    pub(super) fn stop_button(&mut self, note: String, cx: &mut Context<Self>) -> IconButton {
+        let id: ElementId = "agent-stop".into();
+        let probe = Self::bounds_probe(&id, cx);
+        let button = IconButton::new(&self.theme, id, Icon::Square.path())
+            .size(IconButtonSize::Sm)
+            .inverted()
+            .label("Stop")
+            .tooltip(note)
+            .on_click(Self::click(cx, |this, _, cx| this.stop(cx)));
+        match probe {
+            Some(probe) => button.on_bounds(probe.into_bounds_handler()),
+            None => button,
         }
-        let mut queue = self.section(&format!("Queued ({})", snapshot.queue.len()));
-        for item in &snapshot.queue {
-            let id = item.id;
-            queue = queue.child(
-                div()
-                    .flex()
-                    .justify_between()
-                    .items_center()
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .child(label_text(item.summary.clone()))
-                            .children(item.scope.as_ref().map(|scope| {
-                                self.line(format!(
-                                    "{scope}{}",
-                                    if item.stale_scope {
-                                        " · stale — will be refused"
-                                    } else {
-                                        ""
-                                    }
-                                ))
-                            })),
-                    )
-                    .child(self.icon_button(
-                        format!("queue-remove-{id}"),
-                        Icon::X,
-                        "Remove",
-                        Tone::Normal,
-                        cx,
-                        move |this, _, cx| {
-                            if let Some(w) = this.workflow().cloned() {
-                                let r = w.cancel_queued(id);
-                                this.command(r, cx);
-                            }
-                        },
-                    )),
-            );
-        }
-        Some(queue)
     }
+}
 
-    pub(super) fn stop_button(&mut self, cx: &mut Context<Self>) -> IconButton {
-        self.icon_button(
-            "agent-stop",
-            Icon::Square,
-            "Stop",
-            Tone::Danger,
-            cx,
-            |this, _, cx| this.stop(cx),
-        )
-        .rounded(px(999.))
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_trailer_shows_only_while_the_agent_works() {
+        assert_eq!(working_label(TaskPhase::Starting), Some("Sending"));
+        assert_eq!(working_label(TaskPhase::Editing), Some("Working"));
+        assert_eq!(
+            working_label(TaskPhase::Validating),
+            Some(TaskPhase::Validating.label())
+        );
+        assert_eq!(working_label(TaskPhase::WaitingPermission), None);
+        assert_eq!(working_label(TaskPhase::AwaitingReview), None);
+        assert_eq!(working_label(TaskPhase::Accepted), None);
     }
 }

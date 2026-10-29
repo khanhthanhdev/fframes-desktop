@@ -50,6 +50,8 @@ pub struct PlaybackClock {
     position: usize,
     epoch: u64,
     playing: bool,
+    /// Where playback stops before `total_frames` (a slide stop while presenting).
+    play_until: Option<usize>,
     source: Source,
     epoch_start_position: usize,
     fallback_anchor: f64,
@@ -82,6 +84,7 @@ impl PlaybackClock {
         self.position = position.min(total_frames);
         self.epoch_start_position = self.position;
         self.playing &= self.position < total_frames;
+        self.play_until = None;
         self.fallback_anchor = now;
         self.source = Source::Waiting;
         self.output = None;
@@ -105,6 +108,7 @@ impl PlaybackClock {
             position,
             epoch: 1,
             playing: false,
+            play_until: None,
             source: Source::Waiting,
             epoch_start_position: position,
             fallback_anchor: now,
@@ -128,9 +132,31 @@ impl PlaybackClock {
         self.playing
     }
 
+    pub fn total_frames(&self) -> usize {
+        self.total_frames
+    }
+
+    /// The frame playback stops at before the end, if any.
+    pub fn play_until(&self) -> Option<usize> {
+        self.play_until
+    }
+
+    /// Where playback stops: the bound, or `total_frames`.
+    pub fn end_frame(&self) -> usize {
+        self.play_until
+            .map_or(self.total_frames, |until| until.min(self.total_frames))
+    }
+
+    /// Stops playback at `frame` (inclusive end cursor, like `total_frames`) instead of the
+    /// end. A seek or a reinstall clears it.
+    pub fn set_play_until(&mut self, frame: Option<usize>) {
+        self.play_until = frame;
+    }
+
     pub fn seek(&mut self, frame: usize, now: f64) -> Result<(), PlaybackClockError> {
         validate_time(now)?;
         self.advance_epoch()?;
+        self.play_until = None;
         self.position = frame.min(self.total_frames);
         self.playing &= self.position < self.total_frames;
         self.epoch_start_position = self.position;
@@ -147,6 +173,10 @@ impl PlaybackClock {
             validate_time(now)?;
             if self.position == self.total_frames && self.total_frames != 0 {
                 self.seek(0, now)?;
+            }
+            // A bound already reached plays on past it; one ahead still stops playback.
+            if self.play_until.is_some_and(|until| self.position >= until) {
+                self.play_until = None;
             }
             self.playing = self.total_frames != 0;
             self.fallback_anchor = now;
@@ -182,8 +212,9 @@ impl PlaybackClock {
             }
             Source::Output => self.output_position(now),
         };
-        self.position = self.position.max(next.min(self.total_frames));
-        if self.position == self.total_frames {
+        let end = self.end_frame();
+        self.position = self.position.max(next.min(end));
+        if self.position >= end {
             self.playing = false;
         }
         self.position

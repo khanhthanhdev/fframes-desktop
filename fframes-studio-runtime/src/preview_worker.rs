@@ -385,6 +385,11 @@ pub fn serve_preview_worker<V: Video>(
         PREVIEW_CAPABILITIES.contains(&capability)
             || OPTIONAL_PREVIEW_CAPABILITIES.contains(&capability)
             || (capability == SET_PROPS_CAPABILITY && config.props.is_some())
+            || (capability == SUGGESTED_STOPS_CAPABILITY
+                && config
+                    .props
+                    .as_ref()
+                    .is_some_and(crate::PropsHooks::supports_suggestions))
     };
     // Selected before Hello so it reports the backend that actually renders. Skia contexts
     // are made at the size of a full-window playback frame.
@@ -522,6 +527,13 @@ pub fn serve_preview_worker<V: Video>(
                         .iter()
                         .chain(OPTIONAL_PREVIEW_CAPABILITIES)
                         .chain(config.props.as_ref().map(|_| &SET_PROPS_CAPABILITY))
+                        .chain(
+                            config
+                                .props
+                                .as_ref()
+                                .filter(|hooks| hooks.supports_suggestions())
+                                .map(|_| &SUGGESTED_STOPS_CAPABILITY),
+                        )
                         .map(|s| (*s).into())
                         .collect(),
                     capability_gaps: renderer.choice().capability_gaps(),
@@ -659,6 +671,71 @@ pub fn serve_preview_worker<V: Video>(
                         "RENDER_ERROR",
                         e,
                     ))?,
+                }
+            }
+            PreviewRequest::SuggestStops(req) => {
+                let total = previewer.timeline().duration_in_frames;
+                if req.envelope.validate(&config.identity).is_err()
+                    || req.frames.len() > MAX_SUGGEST_FRAMES
+                    || req.frames.iter().any(|frame| *frame >= total)
+                    || req.timing_generation != timing_generation
+                {
+                    transport.write_control_message(&error(
+                        Some(req.envelope),
+                        "INVALID_SUGGEST_REQUEST",
+                        "invalid envelope, frames, or stale timing generation",
+                    ))?;
+                    continue;
+                }
+                let Some(hooks) = config
+                    .props
+                    .as_ref()
+                    .filter(|hooks| hooks.supports_suggestions())
+                else {
+                    transport.write_control_message(&error(
+                        Some(req.envelope),
+                        "SUGGESTIONS_UNSUPPORTED",
+                        "this video has no stop suggestion hooks",
+                    ))?;
+                    continue;
+                };
+                if req.reset {
+                    hooks.clear_suggestions();
+                }
+                // Inspection evaluates the same SVG tree without rasterization or transferring
+                // pixels. Kit hooks report while constructing it, even for offscreen objects.
+                let mut failure = None;
+                for frame in req.frames {
+                    if let Err(err) = previewer.inspect(frame) {
+                        failure = Some(err.to_string());
+                        break;
+                    }
+                }
+                if let Some(reason) = failure {
+                    transport.write_control_message(&error(
+                        Some(req.envelope),
+                        "SUGGEST_RENDER_FAILED",
+                        reason,
+                    ))?;
+                    continue;
+                }
+                let mut suggestions = hooks.suggested_stops();
+                suggestions.bound();
+                let response = PreviewResponse::SuggestedStops(SuggestStopsResponse {
+                    envelope: req.envelope.clone(),
+                    timing_generation,
+                    suggestions,
+                });
+                // Notes can contain JSON escapes, so field limits alone cannot bound the
+                // encoded message. An error response keeps the worker and preview alive.
+                if serde_json::to_vec(&response)?.len() > crate::worker::MAX_CONTROL_MESSAGE_SIZE {
+                    transport.write_control_message(&error(
+                        Some(req.envelope),
+                        "SUGGESTIONS_TOO_LARGE",
+                        "suggestions exceed the control message limit",
+                    ))?;
+                } else {
+                    transport.write_control_message(&response)?;
                 }
             }
             PreviewRequest::Inspect(req) => {
@@ -1046,6 +1123,7 @@ fn request_identity(request: &PreviewRequest) -> (u64, Option<&PreviewEnvelope>)
         PreviewRequest::Timeline(e) | PreviewRequest::Shutdown(e) => e,
         PreviewRequest::ScaledFrame(r) => &r.envelope,
         PreviewRequest::Inspect(r) => &r.envelope,
+        PreviewRequest::SuggestStops(r) => &r.envelope,
         PreviewRequest::PrepareAudio(r) => &r.envelope,
         PreviewRequest::ReadAudio(r) => &r.envelope,
         PreviewRequest::CancelAudio(r) | PreviewRequest::ReleaseAudio(r) => &r.envelope,
@@ -1158,7 +1236,7 @@ mod tests {
         AudioData, AudioMap, AudioTimestamp::Second, AudioTrack, Duration, DynamicMediaProvider,
         Frame, Svgr,
     };
-    use std::{borrow::Cow, collections::HashMap};
+    use std::borrow::Cow;
 
     struct MixedVideo;
     impl Video for MixedVideo {
@@ -1195,22 +1273,15 @@ mod tests {
                 right: Some(Cow::Owned(right)),
             })
         };
-        let media = DynamicMediaProvider::new(
-            HashMap::from([
-                (
-                    "tone".into(),
-                    stereo(
-                        (0..44100).map(|i| (i as f32 * 0.07).sin() * 0.8).collect(),
-                        vec![-0.37; 44100],
-                    ),
+        let media = DynamicMediaProvider::default()
+            .with_audio(
+                "tone",
+                stereo(
+                    (0..44100).map(|i| (i as f32 * 0.07).sin() * 0.8).collect(),
+                    vec![-0.37; 44100],
                 ),
-                ("voice".into(), stereo(vec![0.61; 22050], vec![0.19; 22050])),
-            ]),
-            HashMap::new(),
-            HashMap::new(),
-            HashMap::new(),
-            vec![],
-        );
+            )
+            .with_audio("voice", stereo(vec![0.61; 22050], vec![0.19; 22050]));
         let options = RenderOptions {
             media: Some(&media),
             ..Default::default()

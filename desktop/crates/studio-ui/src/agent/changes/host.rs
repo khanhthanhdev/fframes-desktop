@@ -14,7 +14,7 @@ use gpui::{
 };
 use studio_engine::agent::{TaskPhase, WorkflowSnapshot};
 use studio_engine::candidate_validation::FileDiff as EngineDiff;
-use studio_theme::{TextStyle, Theme, text_style};
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::paint::Colors;
 use super::source::{Facts, Read, ReviewBackend, facts};
@@ -418,9 +418,9 @@ impl Render for ReviewHost {
                 .debug_selector(|| "review-status".into())
                 .w_full()
                 .flex_none()
-                .px(px(12.))
-                .py(px(6.))
-                .bg(colors.header_bg)
+                .px(px(METRICS.space_3))
+                .py(px(METRICS.space_2))
+                .bg(colors.header)
                 .border_b_1()
                 .border_color(colors.line)
                 .text_color(colors.text)

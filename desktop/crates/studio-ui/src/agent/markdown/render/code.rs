@@ -5,13 +5,13 @@ use gpui::{
     AnyElement, ClipboardItem, InteractiveElement, IntoElement, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, div, px,
 };
-use studio_theme::{TextStyle, text_style};
+use studio_theme::{METRICS, TextStyle, text_style};
 
 use super::super::inline::{Flat, Seg};
-use super::super::style::{CODE_SIZE, MdStyle};
+use super::super::style::MdStyle;
 use super::blocks::BuildCx;
 use crate::agent::syntax::{self, HighlightSpan};
-use crate::kit::{Button, ButtonSize, ButtonVariant};
+use crate::kit::{Button, ButtonSize, Emphasis};
 
 /// The only place code gets its colours: the coloured byte ranges of `code` for the fence tag
 /// `language`, or none when the language is unknown, the grammars are not built in, or the block
@@ -66,7 +66,7 @@ pub fn build(language: Option<&str>, raw: &str, flat: &Flat, cx: &mut BuildCx) -
     div()
         .flex()
         .flex_col()
-        .rounded(px(8.))
+        .rounded(crate::agent::ui::CARD_RADIUS)
         .border_1()
         .border_color(style.code_border)
         .bg(style.code_bg)
@@ -77,15 +77,18 @@ pub fn build(language: Option<&str>, raw: &str, flat: &Flat, cx: &mut BuildCx) -
                 .flex_row()
                 .items_center()
                 .justify_between()
-                .px(px(10.))
-                .py(px(3.))
+                .h(px(METRICS.size.control_h))
+                .pl(px(METRICS.space_3))
+                .pr(px(METRICS.space_1))
                 .child(
                     text_style(div(), TextStyle::Small)
-                        .text_color(style.muted)
+                        .text_color(style.theme.colors.text_3)
                         .child(SharedString::from(language.unwrap_or("text").to_owned())),
                 )
                 .child(
-                    Button::plain(&style.theme, copy_id, ButtonVariant::Gray, ButtonSize::Xs)
+                    Button::new(&style.theme, copy_id)
+                        .emphasis(Emphasis::Ghost)
+                        .size(ButtonSize::Sm)
                         .label("Copy")
                         .on_click(move |_, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(copy.to_string()));
@@ -93,13 +96,11 @@ pub fn build(language: Option<&str>, raw: &str, flat: &Flat, cx: &mut BuildCx) -
                 ),
         )
         .child(
-            div()
+            text_style(div(), TextStyle::Code)
                 .id(scroll_id)
                 .overflow_x_scroll()
-                .px(px(10.))
-                .pb(px(8.))
-                .text_size(px(CODE_SIZE))
-                .line_height(px(17.))
+                .px(px(METRICS.space_3))
+                .pb(px(METRICS.space_2))
                 .text_color(style.text)
                 .child(div().whitespace_nowrap().child(text)),
         )

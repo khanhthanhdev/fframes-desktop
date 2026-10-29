@@ -1,5 +1,0 @@
-# VinUniversity footage (site + official YouTube channel), photos and logo:
-# fetched by tools/fetch-media.py, not committed
-/dynamic_media/
-/.cache/
-*.mp4

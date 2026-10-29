@@ -1,13 +1,8 @@
-//! Where an export is, as the panel shows it, and the linear bar that draws it.
+//! Where an export is, as the panel shows it; the panel draws it with `kit::Progress`.
 
 use std::path::PathBuf;
 
-use gpui::{
-    IntoElement, ParentElement, RenderOnce, Styled, Window, div, prelude::FluentBuilder, px,
-    relative,
-};
 use studio_engine::services::export_service::ExportProgress;
-use studio_theme::Theme;
 
 /// The stage of the export, folded from the engine's progress events.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +17,13 @@ pub enum ExportPhase {
     },
     /// The frames are written; the audio and the file are being checked.
     Finishing,
+    /// A slide deck's stop frames are decoded into posters.
+    Posters {
+        done: usize,
+        total: usize,
+    },
+    /// A slide deck's page is written and its folder published.
+    WritingDeck,
     Complete {
         destination: PathBuf,
     },
@@ -39,6 +41,11 @@ impl ExportPhase {
                 total: *total,
             },
             Some(ExportProgress::Audio | ExportProgress::Verifying) => Self::Finishing,
+            Some(ExportProgress::Posters { done, total }) => Self::Posters {
+                done: *done,
+                total: *total,
+            },
+            Some(ExportProgress::WritingDeck) => Self::WritingDeck,
             Some(ExportProgress::Complete { destination, .. }) => Self::Complete {
                 destination: destination.clone(),
             },
@@ -51,23 +58,30 @@ impl ExportPhase {
     pub fn is_busy(&self) -> bool {
         matches!(
             self,
-            Self::Preparing | Self::Rendering { .. } | Self::Finishing
+            Self::Preparing
+                | Self::Rendering { .. }
+                | Self::Finishing
+                | Self::Posters { .. }
+                | Self::WritingDeck
         )
     }
 
     /// The bar has a position to show.
     pub fn shows_progress(&self) -> bool {
-        matches!(self, Self::Rendering { .. } | Self::Finishing)
+        matches!(
+            self,
+            Self::Rendering { .. } | Self::Finishing | Self::Posters { .. } | Self::WritingDeck
+        )
     }
 
     /// How far along the export is, in `0..=1`; `None` before there is a position.
     pub fn fraction(&self) -> Option<f32> {
         match self {
-            Self::Rendering { done, total } if *total > 0 => {
+            Self::Rendering { done, total } | Self::Posters { done, total } if *total > 0 => {
                 Some((*done as f32 / *total as f32).clamp(0., 1.))
             }
-            Self::Rendering { .. } => Some(0.),
-            Self::Finishing => Some(1.),
+            Self::Rendering { .. } | Self::Posters { .. } => Some(0.),
+            Self::Finishing | Self::WritingDeck => Some(1.),
             _ => None,
         }
     }
@@ -79,6 +93,8 @@ impl ExportPhase {
             Self::Preparing => "Preparing the export".into(),
             Self::Rendering { done, total } => format!("Rendering · {done}/{total} frames"),
             Self::Finishing => "Writing and verifying the file".into(),
+            Self::Posters { done, total } => format!("Slide posters · {done}/{total}"),
+            Self::WritingDeck => "Writing and publishing the deck folder".into(),
             Self::Complete { destination } => format!(
                 "Exported {}",
                 studio_bootstrap::external_path(destination).display()
@@ -86,42 +102,6 @@ impl ExportPhase {
             Self::Failed(reason) => format!("Export failed · {reason}"),
             Self::Cancelled => "Export cancelled · partial output removed".into(),
         })
-    }
-}
-
-/// A thin horizontal bar: a track with a rounded fill up to `fraction`.
-#[derive(IntoElement)]
-pub struct LinearProgress {
-    fraction: f32,
-    track: gpui::Hsla,
-    fill: gpui::Hsla,
-}
-
-impl LinearProgress {
-    pub fn new(theme: &Theme, fraction: f32) -> Self {
-        Self {
-            fraction: fraction.clamp(0., 1.),
-            track: theme.settings_border(),
-            fill: gpui::rgb(Theme::SETTINGS_ACCENT).into(),
-        }
-    }
-}
-
-impl RenderOnce for LinearProgress {
-    fn render(self, _: &mut Window, _: &mut gpui::App) -> impl IntoElement {
-        div()
-            .h(px(6.))
-            .w_full()
-            .rounded(px(3.))
-            .overflow_hidden()
-            .bg(self.track)
-            .child(
-                div()
-                    .h_full()
-                    .rounded(px(3.))
-                    .bg(self.fill)
-                    .when(self.fraction > 0., |bar| bar.w(relative(self.fraction))),
-            )
     }
 }
 
@@ -193,6 +173,17 @@ mod tests {
             Some(0.)
         );
         assert_eq!(ExportPhase::Finishing.fraction(), Some(1.));
+    }
+
+    #[test]
+    fn a_deck_export_stays_busy_through_its_posters_and_publication() {
+        let posters = ExportPhase::of(Some(&ExportProgress::Posters { done: 1, total: 4 }));
+        assert_eq!(posters, ExportPhase::Posters { done: 1, total: 4 });
+        assert!(posters.is_busy() && posters.shows_progress());
+        assert_eq!(posters.fraction(), Some(0.25));
+        let writing = ExportPhase::of(Some(&ExportProgress::WritingDeck));
+        assert!(writing.is_busy());
+        assert!(writing.message().unwrap().contains("deck"));
     }
 
     #[test]

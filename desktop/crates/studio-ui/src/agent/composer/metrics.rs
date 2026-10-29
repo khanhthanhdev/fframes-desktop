@@ -6,14 +6,24 @@ use std::ops::Range;
 
 use unicode_segmentation::UnicodeSegmentation;
 
-/// Input text size in pixels.
-pub const INPUT_TEXT_SIZE: f32 = 13.0;
+/// Input text size in pixels: the `Body` style.
+pub const INPUT_TEXT_SIZE: f32 = studio_theme::TextStyle::Body.size();
 /// Input line height in pixels.
 pub const INPUT_LINE_HEIGHT: f32 = 20.0;
+/// The most lines the text area grows to before it scrolls.
+pub const INPUT_MAX_LINES: usize = 8;
 /// The tallest the text area grows before it scrolls, in pixels.
-pub const INPUT_MAX_HEIGHT: f32 = 200.0;
+pub const INPUT_MAX_HEIGHT: f32 = INPUT_MAX_LINES as f32 * INPUT_LINE_HEIGHT;
 /// Caret blink half-period: about 500 ms on, 500 ms off.
 pub const CARET_BLINK_MS: u64 = 500;
+/// The caret's width.
+pub const CARET_WIDTH: f32 = 2.0;
+/// The narrowest width text is wrapped at.
+pub const MIN_WRAP_WIDTH: f32 = 20.0;
+/// The width text is measured at while the layout offers no definite one.
+pub const FALLBACK_WIDTH: f32 = 320.0;
+/// How far inside the text bounds a pointer outside them is clamped.
+pub const HIT_INSET: f32 = 0.5;
 /// Drag-selection autoscroll runs at a 60 fps cadence.
 pub const DRAG_SCROLL_FRAME_MS: u64 = 16;
 
@@ -24,7 +34,7 @@ pub const STRIP_GAP: f32 = 8.0;
 /// Space above the strip.
 pub const STRIP_PAD_TOP: f32 = 12.0;
 /// Space left and right of the strip.
-pub const STRIP_PAD_X: f32 = 16.0;
+pub const STRIP_PAD_X: f32 = 12.0;
 
 /// Caret blink phase for the time since the last keystroke or caret move.
 ///

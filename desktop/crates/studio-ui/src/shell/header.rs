@@ -16,17 +16,7 @@ use studio_theme::{METRICS, TextStyle, text_style};
 
 use super::sections::{Section, section_probe};
 use super::{Picker, StudioShell};
-use crate::kit::{CAPTION_BUTTON_W, Icon, IconButtonSize, selectable};
-
-/// Room for the macOS traffic lights, inset to (20, 20) like Cap's editor.
-const TRAFFIC_LIGHTS_W: f32 = 82.;
-/// The title keeps at least this much before the actions lose their labels.
-const TITLE_MIN_W: f32 = 200.;
-/// The action cluster's width with labels, Settings included, with a project open and
-/// without one: 652 px (undo, redo and the divider included) and about 282 px in the test
-/// platform, plus a margin for other systems' fonts.
-const ACTIONS_W: f32 = 680.;
-const ACTIONS_CLOSED_W: f32 = 300.;
+use crate::kit::{CAPTION_BUTTON_W, Divider, Icon, IconButtonSize, selectable};
 
 impl StudioShell {
     pub(super) fn render_header(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -64,13 +54,13 @@ impl StudioShell {
                         },
                         if undo { "Undo" } else { "Redo" },
                         if undo { Icon::Undo } else { Icon::Redo },
-                        IconButtonSize::Medium,
+                        IconButtonSize::Md,
                         enabled && timeline.editable && can,
                         cx,
                         move |s, cx| s.timeline_history(command.clone(), cx),
                     ));
                     if !undo {
-                        actions = actions.child(div().w(px(1.)).h(px(16.)).bg(theme.editor.line));
+                        actions = actions.child(Divider::vertical(&theme));
                     }
                     continue;
                 }
@@ -81,7 +71,7 @@ impl StudioShell {
                         "settings",
                         "Settings",
                         Icon::Settings,
-                        IconButtonSize::Medium,
+                        IconButtonSize::Md,
                         true,
                         cx,
                         |s, cx| s.open_settings(cx),
@@ -95,7 +85,7 @@ impl StudioShell {
                     false,
                     Some(Icon::Plus),
                     cx,
-                    |s, cx| s.pick(Picker::Create, cx),
+                    |s, cx| s.open_create(cx),
                 ),
                 "open" => self.action_button(
                     "open",
@@ -136,7 +126,7 @@ impl StudioShell {
                 ),
             };
             let button = if compact && id != "close" {
-                button.icon_only(&theme)
+                button.icon_only()
             } else {
                 button
             };
@@ -164,7 +154,7 @@ impl StudioShell {
             // and a triple click selects the whole path however it is truncated.
             text = text.child(
                 text_style(div().id("project-path").truncate(), TextStyle::Small)
-                    .text_color(theme.editor.text_2)
+                    .text_color(theme.colors.text_2)
                     .child(selectable(path).over_drag_area()),
             );
         }
@@ -180,7 +170,12 @@ impl StudioShell {
                 METRICS.space_4
             }))
             .when(cfg!(target_os = "macos"), |header| {
-                header.child(div().h_full().w(px(TRAFFIC_LIGHTS_W)).flex_none())
+                header.child(
+                    div()
+                        .h_full()
+                        .w(px(METRICS.layout.traffic_lights_w))
+                        .flex_none(),
+                )
             })
             .child(
                 div()
@@ -190,8 +185,7 @@ impl StudioShell {
                     .gap(px(METRICS.space_3))
                     .child(
                         gpui::img("branding/studio-icon.png")
-                            .w(px(22.))
-                            .h(px(22.))
+                            .size(px(METRICS.layout.header_logo))
                             .flex_none(),
                     )
                     .child(text),
@@ -222,7 +216,7 @@ pub(super) fn chrome_width() -> f32 {
     if cfg!(target_os = "windows") {
         3. * CAPTION_BUTTON_W
     } else if cfg!(target_os = "macos") {
-        TRAFFIC_LIGHTS_W
+        METRICS.layout.traffic_lights_w
     } else {
         0.
     }
@@ -230,13 +224,18 @@ pub(super) fn chrome_width() -> f32 {
 
 /// Whether the header actions drop their labels, after Cap's `compact_header_controls`:
 /// when the title, the labelled actions and the window controls do not fit side by side.
+/// The title keeps at least `title_min_w`; `actions_w` and `actions_closed_w` are the action
+/// cluster's width with labels, Settings included, with a project open and without one:
+/// 652 px (undo, redo and the divider included) and about 282 px in the test platform, plus
+/// a margin for other systems' fonts.
 fn compact_header_controls(viewport_width: f32, chrome_width: f32, project_open: bool) -> bool {
+    let layout = METRICS.layout;
     let actions = if project_open {
-        ACTIONS_W
+        layout.actions_w
     } else {
-        ACTIONS_CLOSED_W
+        layout.actions_closed_w
     };
-    viewport_width < TITLE_MIN_W + actions + chrome_width + 2. * METRICS.space_4
+    viewport_width < layout.title_min_w + actions + chrome_width + 2. * METRICS.space_4
 }
 
 /// The header actions in Cap's order, Export last. Undo and redo edit the open project's
@@ -269,7 +268,7 @@ mod tests {
 
     #[test]
     fn the_default_window_keeps_the_labels() {
-        for chrome in [0., TRAFFIC_LIGHTS_W, 3. * CAPTION_BUTTON_W] {
+        for chrome in [0., METRICS.layout.traffic_lights_w, 3. * CAPTION_BUTTON_W] {
             for project_open in [false, true] {
                 assert!(!compact_header_controls(1275., chrome, project_open));
             }

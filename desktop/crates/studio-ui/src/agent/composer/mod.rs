@@ -31,10 +31,11 @@ mod tests;
 use std::{path::PathBuf, rc::Rc, sync::Arc};
 
 use gpui::{
-    App, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement, Render, SharedString, Styled, Subscription, Window, div, prelude::*, px,
+    App, Bounds, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
+    IntoElement, ParentElement, Pixels, Render, SharedString, Styled, Subscription, Window, div,
+    prelude::*, px,
 };
-use studio_theme::Theme;
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 pub use attachments::{
     Attachment, AttachmentDraft, AttachmentId, AttachmentKind, Attachments, ContextChip,
@@ -43,10 +44,28 @@ pub use input::{ComposerInput, ComposerInputEvent};
 pub use slash::SlashCommand;
 pub use steer::{SendAction, SteerMode};
 
-use crate::kit::{Button, ButtonSize, ButtonVariant, Icon, IconButton};
+use crate::kit::{
+    Emphasis, Icon, IconButton, IconButtonSize, Popover, Select, dim_disabled, focusable,
+};
 use crate::probe::{self, BoundsSink};
 use slash::SlashState;
 use steer::steer_actions;
+
+/// The tallest the slash menu grows before it scrolls.
+const SLASH_MAX_H: f32 = 240.;
+/// The composer's border while its input has focus: `accent` at this alpha.
+const FOCUS_BORDER_ALPHA: f32 = 0.6;
+
+/// Opens the agent's model menu under the trigger's bounds.
+pub type ModelMenuHandler = Rc<dyn Fn(&Bounds<Pixels>, &mut Window, &mut App)>;
+
+/// The model the next message goes to, shown as a quiet select beside Send when the agent
+/// advertises a model option.
+#[derive(Clone)]
+pub struct ModelChoice {
+    pub label: SharedString,
+    pub on_open: ModelMenuHandler,
+}
 
 /// What the user wants to send: the text and the chips that went with it.
 #[derive(Clone)]
@@ -122,6 +141,11 @@ pub struct Composer {
     file_disabled: Option<SharedString>,
     image_disabled: Option<SharedString>,
     bounds_sink: Option<BoundsSink>,
+    /// The model select beside Send, when the agent advertises one.
+    model: Option<ModelChoice>,
+    /// The send button's menu (Send now) is open.
+    send_menu_open: bool,
+    send_menu_focus: FocusHandle,
     _input_events: Subscription,
 }
 
@@ -152,8 +176,17 @@ impl Composer {
             file_disabled: None,
             image_disabled: None,
             bounds_sink: None,
+            model: None,
+            send_menu_open: false,
+            send_menu_focus: cx.focus_handle(),
             _input_events: subscription,
         }
+    }
+
+    /// Shows the model select beside Send, or hides it with `None`.
+    pub fn set_model(&mut self, model: Option<ModelChoice>, cx: &mut Context<Self>) {
+        self.model = model;
+        cx.notify();
     }
 
     pub fn set_theme(&mut self, theme: Theme, cx: &mut Context<Self>) {
@@ -402,6 +435,7 @@ impl Composer {
         if !self.can_send(cx) {
             return;
         }
+        self.send_menu_open = false;
         let text = self.text(cx).trim().to_string();
         self.input.update(cx, |input, cx| input.set_text("", cx));
         // A chip of a switched-off kind never travels, whatever put it there.
@@ -480,6 +514,7 @@ impl Composer {
             return None;
         }
         let theme = self.theme;
+        let colors = theme.colors;
         let active = self.slash.active_row();
         let rows = self
             .slash
@@ -491,33 +526,29 @@ impl Composer {
                 div()
                     .id(("slash-row", row))
                     .relative()
+                    .flex_none()
+                    .h(px(METRICS.size.control_h))
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(10.0))
-                    .px(px(10.0))
-                    .py(px(5.0))
-                    .rounded(px(6.0))
+                    .gap(px(METRICS.space_2))
+                    .px(px(METRICS.space_2))
+                    .rounded(crate::agent::ui::ITEM_RADIUS)
                     .cursor_pointer()
-                    .when(active == Some(row), |row| row.bg(theme.gray(4)))
-                    .hover(|style| style.bg(theme.gray(4)))
+                    .when(active == Some(row), |row| row.bg(colors.ctl_hover))
+                    .hover(move |style| style.bg(colors.ctl_hover))
                     .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                         this.slash.set_active_row(row);
                         this.accept_selected(cx);
                     }))
                     .child(
-                        div()
-                            .flex_none()
-                            .text_size(px(13.0))
-                            .text_color(theme.gray(12))
+                        text_style(div().flex_none(), TextStyle::Label)
+                            .text_color(colors.text_1)
                             .child(format!("/{}", command.name)),
                     )
                     .child(
-                        div()
-                            .min_w_0()
-                            .truncate()
-                            .text_size(px(12.0))
-                            .text_color(theme.gray(10))
+                        text_style(div().min_w_0().truncate(), TextStyle::Small)
+                            .text_color(colors.text_3)
                             .child(command.description.clone()),
                     )
                     .children(probe::probe_element(
@@ -526,22 +557,77 @@ impl Composer {
                     ))
             })
             .collect::<Vec<_>>();
+        // The kit `Menu`'s panel and rows. The menu itself takes the keyboard and closes on a
+        // click anywhere, which would steal the caret from the input that drives this one.
         Some(
-            div()
+            Popover::new(&theme)
                 .id("composer-slash-menu")
-                .absolute()
                 .left_0()
                 .right_0()
                 .bottom_full()
-                .mb(px(6.0))
-                .max_h(px(240.0))
+                .mb(px(METRICS.space_2))
+                .max_h(px(SLASH_MAX_H))
                 .overflow_y_scroll()
-                .p(px(4.0))
-                .rounded(px(8.0))
-                .border_1()
-                .border_color(theme.gray(6))
-                .bg(theme.gray(2))
+                .p(px(METRICS.space_1))
                 .children(rows),
+        )
+    }
+
+    fn close_send_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.send_menu_open = false;
+        self.focus(window, cx);
+        cx.notify();
+    }
+
+    /// The menu of the send button while a turn runs: Send now, which cancels the turn.
+    fn send_menu(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if !(self.send_menu_open && self.running) {
+            return None;
+        }
+        let theme = self.theme;
+        let colors = theme.colors;
+        let now = steer_actions(self.steer_mode, self.running).now;
+        let sendable = self.can_send(cx);
+        let row = focusable(div().id("composer-send-now"), &theme, !sendable)
+            .track_focus(&self.send_menu_focus)
+            .relative()
+            .h(px(METRICS.size.control_h))
+            .flex()
+            .items_center()
+            .px(px(METRICS.space_2))
+            .rounded(crate::agent::ui::ITEM_RADIUS)
+            .map(|row| {
+                if sendable {
+                    row.cursor_pointer()
+                        .hover(move |style| style.bg(colors.ctl_hover))
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            this.close_send_menu(window, cx);
+                            this.trigger(now, cx);
+                        }))
+                } else {
+                    dim_disabled(row, true)
+                }
+            })
+            .child(
+                text_style(div(), TextStyle::Label)
+                    .text_color(colors.text_1)
+                    .child(now.label()),
+            )
+            .children(probe::probe_element(&self.bounds_sink, "composer-send-now"));
+        Some(
+            Popover::new(&theme)
+                .id("composer-send-menu")
+                .right(px(METRICS.space_2))
+                .bottom_full()
+                .mb(px(METRICS.space_1))
+                .p(px(METRICS.space_1))
+                .on_key_down(cx.listener(|this, event: &gpui::KeyDownEvent, window, cx| {
+                    if event.keystroke.key == "escape" {
+                        this.close_send_menu(window, cx);
+                        cx.stop_propagation();
+                    }
+                }))
+                .child(row),
         )
     }
 
@@ -549,13 +635,11 @@ impl Composer {
         let theme = self.theme;
         let actions = steer_actions(self.steer_mode, self.running);
         let sendable = self.can_send(cx);
-        let file_button = IconButton::body(&theme, "composer-attach-file", Icon::File.path())
-            .size(px(24.0))
-            .icon_size(px(14.0))
-            .rounded(px(6.0))
+        let file_button = IconButton::new(&theme, "composer-attach-file", Icon::File.path())
+            .size(IconButtonSize::Sm)
+            .emphasis(Emphasis::Ghost)
             .label("Attach file")
             .tooltip(
-                &theme,
                 self.file_disabled
                     .clone()
                     .unwrap_or_else(|| "Attach file".into()),
@@ -568,13 +652,11 @@ impl Composer {
             Some(report) => file_button.on_bounds(report),
             None => file_button,
         };
-        let image_button = IconButton::body(&theme, "composer-attach-image", Icon::Image.path())
-            .size(px(24.0))
-            .icon_size(px(14.0))
-            .rounded(px(6.0))
+        let image_button = IconButton::new(&theme, "composer-attach-image", Icon::Image.path())
+            .size(IconButtonSize::Sm)
+            .emphasis(Emphasis::Ghost)
             .label("Attach image")
             .tooltip(
-                &theme,
                 self.image_disabled
                     .clone()
                     .unwrap_or_else(|| "Attach image".into()),
@@ -588,64 +670,67 @@ impl Composer {
             None => image_button,
         };
 
-        let mut right = div().flex().flex_row().items_center().gap(px(6.0));
+        let mut right = div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(METRICS.space_1));
+        if let Some(model) = &self.model {
+            let open = model.on_open.clone();
+            right = right.child(
+                Select::new(&theme, "composer-model", model.label.clone())
+                    .ghost()
+                    .on_open(move |bounds, window, cx| open(bounds, window, cx)),
+            );
+        }
         if self.running {
-            let stop = IconButton::body(&theme, "composer-stop", Icon::Square.path())
-                .size(px(24.0))
-                .icon_size(px(12.0))
-                .rounded(px(12.0))
+            right = right.child(
+                IconButton::new(
+                    &theme,
+                    "composer-send-menu-toggle",
+                    Icon::ChevronDown.path(),
+                )
+                .size(IconButtonSize::Sm)
+                .emphasis(Emphasis::Ghost)
+                .pressed(self.send_menu_open)
+                .label("More ways to send")
+                .tooltip("More ways to send")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if this.send_menu_open {
+                        this.close_send_menu(window, cx);
+                    } else {
+                        this.send_menu_open = true;
+                        window.focus(&this.send_menu_focus, cx);
+                        cx.notify();
+                    }
+                })),
+            );
+        }
+        if let Some(primary) = actions.primary {
+            let send = IconButton::new(&theme, "composer-send", Icon::ArrowUp.path())
+                .size(IconButtonSize::Md)
+                .round()
+                .emphasis(Emphasis::Primary)
+                .label(primary.label())
+                .tooltip(primary.label())
+                .disabled(!sendable)
+                .on_click(cx.listener(move |this, _, _, cx| this.trigger(primary, cx)));
+            right = right.child(match probe::report_to(&self.bounds_sink, "composer-send") {
+                Some(report) => send.on_bounds(report),
+                None => send,
+            });
+        }
+        if self.running {
+            let stop = IconButton::new(&theme, "composer-stop", Icon::Square.path())
+                .size(IconButtonSize::Md)
+                .inverted()
                 .label("Stop")
-                .tooltip(&theme, "Stop")
+                .tooltip("Stop")
                 .on_click(cx.listener(|this, _, _, cx| this.stop(cx)));
             right = right.child(match probe::report_to(&self.bounds_sink, "composer-stop") {
                 Some(report) => stop.on_bounds(report),
                 None => stop,
             });
-        }
-        if let Some(hint) = actions.hint {
-            right = right.child(
-                div()
-                    .text_size(px(12.0))
-                    .text_color(theme.gray(10))
-                    .child(hint),
-            );
-        }
-        if self.running {
-            let now = actions.now;
-            right = right.child(
-                div()
-                    .relative()
-                    .child(
-                        Button::plain(
-                            &theme,
-                            "composer-send-now",
-                            ButtonVariant::Outline,
-                            ButtonSize::Sm,
-                        )
-                        .label(now.label())
-                        .disabled(!sendable)
-                        .on_click(cx.listener(move |this, _, _, cx| this.trigger(now, cx))),
-                    )
-                    .children(probe::probe_element(&self.bounds_sink, "composer-send-now")),
-            );
-        }
-        if let Some(primary) = actions.primary {
-            right = right.child(
-                div()
-                    .relative()
-                    .child(
-                        Button::plain(
-                            &theme,
-                            "composer-send",
-                            ButtonVariant::Primary,
-                            ButtonSize::Sm,
-                        )
-                        .label(primary.label())
-                        .disabled(!sendable)
-                        .on_click(cx.listener(move |this, _, _, cx| this.trigger(primary, cx))),
-                    )
-                    .children(probe::probe_element(&self.bounds_sink, "composer-send")),
-            );
         }
 
         div()
@@ -653,54 +738,98 @@ impl Composer {
             .flex_row()
             .items_center()
             .justify_between()
-            .px(px(8.0))
-            .pb(px(8.0))
+            .px(px(METRICS.space_2))
+            .pb(px(METRICS.space_2))
             .child(
                 div()
                     .flex()
                     .flex_row()
                     .items_center()
-                    .gap(px(2.0))
+                    .gap(px(METRICS.space_1))
                     .child(file_button)
                     .child(image_button),
             )
             .child(right)
     }
+
+    /// What Send does while a turn runs, under the composer: only while there is something
+    /// to send, or when the agent cannot take a message at all.
+    fn running_hint(&self, cx: &App) -> Option<&'static str> {
+        if !self.running {
+            return None;
+        }
+        let actions = steer_actions(self.steer_mode, self.running);
+        match actions.primary {
+            None => actions.hint,
+            Some(_) if !self.can_send(cx) => None,
+            Some(SendAction::SendAtBoundary) => Some("Sends after this step"),
+            Some(SendAction::Steer) => Some("Steers the current step"),
+            Some(_) => None,
+        }
+    }
 }
 
 impl Render for Composer {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
+        let colors = theme.colors;
+        if !self.running && self.send_menu_open {
+            if self.send_menu_focus.is_focused(window) {
+                self.close_send_menu(window, cx);
+            } else {
+                self.send_menu_open = false;
+            }
+        }
         let weak = cx.entity().downgrade();
         let on_remove: attachments::RemoveHandler = Rc::new(move |id, _, cx| {
             weak.update(cx, |this, cx| this.remove_from_strip(id, cx))
                 .ok();
         });
+        let focused = self.input.focus_handle(cx).is_focused(window);
+        let border = if focused {
+            Hsla::from(colors.accent).opacity(FOCUS_BORDER_ALPHA)
+        } else {
+            colors.line.into()
+        };
+        let hint = self.running_hint(cx);
         div()
-            .id("composer")
-            .relative()
+            .w_full()
             .flex()
             .flex_col()
-            .w_full()
-            .rounded(px(12.0))
-            .border_1()
-            .border_color(theme.gray(6))
-            .bg(theme.gray(2))
-            .children(self.slash_menu(cx))
-            .children(attachments::strip(
-                &self.attachments,
-                self.context.as_ref(),
-                &theme,
-                on_remove,
-            ))
+            .gap(px(METRICS.space_1))
             .child(
                 div()
+                    .id("composer")
                     .relative()
-                    .px(px(14.0))
-                    .py(px(10.0))
-                    .child(self.input.clone())
-                    .children(probe::probe_element(&self.bounds_sink, "composer-input")),
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .rounded(crate::agent::ui::CARD_RADIUS)
+                    .border_1()
+                    .border_color(border)
+                    .bg(colors.card)
+                    .children(self.slash_menu(cx))
+                    .children(self.send_menu(cx))
+                    .children(attachments::strip(
+                        &self.attachments,
+                        self.context.as_ref(),
+                        &theme,
+                        on_remove,
+                    ))
+                    .child(
+                        div()
+                            .relative()
+                            .px(px(METRICS.space_3))
+                            .py(px(METRICS.space_2))
+                            .child(self.input.clone())
+                            .children(probe::probe_element(&self.bounds_sink, "composer-input")),
+                    )
+                    .child(self.controls(cx)),
             )
-            .child(self.controls(cx))
+            .children(hint.map(|hint| {
+                text_style(div().px(px(METRICS.space_3)), TextStyle::Small)
+                    .text_color(colors.text_3)
+                    .child(hint)
+            }))
     }
 }

@@ -39,6 +39,18 @@ pub enum AppTheme {
     Dark,
 }
 
+/// How much the studio animates, chosen by the user. `System` follows the operating system
+/// where the UI toolkit reports it, and is full motion otherwise.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MotionPreference {
+    #[default]
+    System,
+    /// Animations snap to their end state, spinners are static.
+    Reduced,
+    Full,
+}
+
 /// How agent permission requests are answered, chosen by the user (onboarding or Settings).
 /// Studio answers a request itself only when this policy covers it; everything else is a
 /// card the user answers.
@@ -106,5 +118,21 @@ mod tests {
             assert_eq!(serde_json::from_str::<AppTheme>(name).unwrap(), theme);
         }
         assert_eq!(AppTheme::default(), AppTheme::System);
+    }
+
+    #[test]
+    fn motion_preference_is_stored_by_lowercase_name() {
+        for (motion, name) in [
+            (MotionPreference::System, "\"system\""),
+            (MotionPreference::Reduced, "\"reduced\""),
+            (MotionPreference::Full, "\"full\""),
+        ] {
+            assert_eq!(serde_json::to_string(&motion).unwrap(), name);
+            assert_eq!(
+                serde_json::from_str::<MotionPreference>(name).unwrap(),
+                motion
+            );
+        }
+        assert_eq!(MotionPreference::default(), MotionPreference::System);
     }
 }

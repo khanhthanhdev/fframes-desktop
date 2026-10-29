@@ -13,6 +13,9 @@ const FFRAMES_GIT: &str = "https://github.com/dmtrKovalenko/fframes";
 
 const LIB_SINGLE_SCENE: &str = include_str!("../templates/lib_single_scene.rs.tmpl");
 const LIB_MULTI_SCENE: &str = include_str!("../templates/lib_multi_scene.rs.tmpl");
+const LIB_SLIDES: &str = include_str!("../templates/lib_slides.rs.tmpl");
+/// The fframes-kit release the `slides` template depends on, from crates.io.
+const KIT_VERSION: &str = "0.3";
 const MAIN_CPU: &str = include_str!("../templates/main_cpu.rs.tmpl");
 const MAIN_SKIA: &str = include_str!("../templates/main_skia.rs.tmpl");
 const CARGO_TOML: &str = include_str!("../templates/Cargo.toml.tmpl");
@@ -60,6 +63,8 @@ enum Template {
     SingleScene,
     /// Two scenes on a 16:9 grid: a product announcement and an animated chart.
     MultiScene,
+    /// A six-slide deck on a 16:9 grid, made with fframes-kit's slides: bullets come in one by one.
+    Slides,
 }
 
 impl Template {
@@ -67,6 +72,7 @@ impl Template {
         match self {
             Template::SingleScene => LIB_SINGLE_SCENE,
             Template::MultiScene => LIB_MULTI_SCENE,
+            Template::Slides => LIB_SLIDES,
         }
     }
 
@@ -75,6 +81,7 @@ impl Template {
         match self {
             Template::SingleScene => "0..2s",
             Template::MultiScene => "DataScene",
+            Template::Slides => "agenda",
         }
     }
 
@@ -82,7 +89,13 @@ impl Template {
         match self {
             Template::SingleScene => "0..1.5s",
             Template::MultiScene => "ProductScene@0..ProductScene@1.5s",
+            Template::Slides => "agenda@0..agenda@2.1s",
         }
+    }
+
+    /// Laid out on a 1920x1080 grid that scales to 16:9 sizes only.
+    fn needs_16_9(self) -> bool {
+        matches!(self, Template::MultiScene | Template::Slides)
     }
 }
 
@@ -116,7 +129,7 @@ struct NewArgs {
     /// Title shown in the video.
     #[arg(long)]
     title: Option<String>,
-    /// `single-scene` (any format) or `multi-scene` (two scenes, 16:9).
+    /// `single-scene` (any format), `multi-scene` (two scenes, 16:9) or `slides` (a deck, 16:9).
     #[arg(long, value_enum)]
     template: Option<Template>,
     #[arg(long, value_enum)]
@@ -247,6 +260,7 @@ fn ask(args: NewArgs) -> Result<Project, String> {
             let items = [
                 "single-scene  - one scene that adapts to any format",
                 "multi-scene   - two scenes: product announcement and animated chart (16:9)",
+                "slides        - a slide deck with fframes-kit, bullets one by one (16:9)",
             ];
             let choice = dialoguer::Select::with_theme(&theme)
                 .with_prompt("Template")
@@ -254,7 +268,11 @@ fn ask(args: NewArgs) -> Result<Project, String> {
                 .default(0)
                 .interact()
                 .map_err(prompt_err)?;
-            [Template::SingleScene, Template::MultiScene][choice]
+            [
+                Template::SingleScene,
+                Template::MultiScene,
+                Template::Slides,
+            ][choice]
         }
         None => Template::SingleScene,
     };
@@ -323,9 +341,14 @@ fn ask(args: NewArgs) -> Result<Project, String> {
     };
 
     let (width, height) = format.size();
-    if template == Template::MultiScene && width * 9 != height * 16 {
+    if template.needs_16_9() && width * 9 != height * 16 {
+        let name = template
+            .to_possible_value()
+            .expect("templates have names")
+            .get_name()
+            .to_owned();
         return Err(format!(
-            "the multi-scene template is laid out for 16:9 (landscape or uhd), not {width}x{height}; \
+            "the {name} template is laid out for 16:9 (landscape or uhd), not {width}x{height}; \
              use --template single-scene for other formats"
         ));
     }
@@ -456,16 +479,25 @@ fn new(args: NewArgs) -> Result<(), String> {
                     std::array::from_fn(|_| format!("version = \"={}\"", env!("CARGO_PKG_VERSION")))
                 }
             };
+            // fframes-kit (crates.io) depends on crates.io fframes; a local or git fframes
+            // replaces it, so the graph has one fframes.
+            let kit_patch =
+                if project.template == Template::Slides && (source.is_some() || from_git) {
+                    format!("\n[patch.crates-io]\nfframes = {{ {fframes_source} }}\n")
+                } else {
+                    String::new()
+                };
             (
-                    format!("fframes = {{ {fframes_source}, {fframes_features} }}"),
-                    skia_deps(&skia_source, &player_source),
-                    "media".to_owned(),
-                    // Its own workspace, and dependencies optimized in dev builds so that
-                    // `cargo run` without --release still renders quickly.
-                    "\n[workspace]\n\n[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n"
-                        .to_owned(),
-                    "cargo run --release --".to_owned(),
-                )
+                format!("fframes = {{ {fframes_source}, {fframes_features} }}"),
+                skia_deps(&skia_source, &player_source),
+                "media".to_owned(),
+                // Its own workspace, and dependencies optimized in dev builds so that
+                // `cargo run` without --release still renders quickly.
+                format!(
+                    "\n[workspace]\n\n[profile.dev]\nopt-level = 1\n\n[profile.dev.package.\"*\"]\nopt-level = 3\n{kit_patch}"
+                ),
+                "cargo run --release --".to_owned(),
+            )
         }
     };
 
@@ -498,6 +530,15 @@ fn new(args: NewArgs) -> Result<(), String> {
             ),
         ),
         ("fframes_dep", fframes_dep),
+        // The slide layouts; fframes-kit is released on its own, from crates.io.
+        (
+            "kit_dep",
+            if project.template == Template::Slides {
+                format!("fframes-kit = \"{KIT_VERSION}\"\n")
+            } else {
+                String::new()
+            },
+        ),
         ("skia_dep", skia_dep),
         ("standalone_tables", standalone_tables),
         ("skia_module", skia_module.to_owned()),
@@ -592,6 +633,72 @@ mod tests {
         assert!(valid_name("my video").is_err());
     }
 
+    fn new_args(args: &[&str]) -> NewArgs {
+        let cli = Cli::parse_from(["cargo-fframes", "new"].iter().chain(args));
+        let Command::New(args) = cli.command;
+        args
+    }
+
+    #[test]
+    fn the_slides_template_depends_on_the_kit_with_one_fframes() {
+        let dir = std::env::temp_dir().join(format!("cargo-fframes-slides-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let checkout = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let args = new_args(&[
+            "deck",
+            "--template",
+            "slides",
+            "--backend",
+            "cpu",
+            "--yes",
+            "--dir",
+            dir.to_str().unwrap(),
+            "--fframes-path",
+            checkout.to_str().unwrap(),
+        ]);
+        new(args).unwrap();
+        let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+        let lib = std::fs::read_to_string(dir.join("src/lib.rs")).unwrap();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(cargo.contains("fframes-kit = \"0.3\"\n"), "{cargo}");
+        // The kit's crates.io fframes is the checkout's.
+        assert!(
+            cargo.contains("[patch.crates-io]\nfframes = { path = "),
+            "{cargo}"
+        );
+        assert!(lib.contains("Deck::new(Theme::default(), slides(title))"));
+        assert!(!lib.contains("{{"));
+    }
+
+    #[test]
+    fn the_slides_template_is_16_by_9() {
+        let error = ask(new_args(&[
+            "deck",
+            "--template",
+            "slides",
+            "--format",
+            "portrait",
+            "--yes",
+        ]))
+        .err()
+        .unwrap();
+        assert!(
+            error.starts_with("the slides template is laid out for 16:9"),
+            "{error}"
+        );
+        assert!(
+            ask(new_args(&[
+                "deck",
+                "--template",
+                "slides",
+                "--format",
+                "uhd",
+                "--yes"
+            ]))
+            .is_ok()
+        );
+    }
+
     #[test]
     fn templates_have_no_unknown_placeholders() {
         let vars: Vec<(&str, String)> = [
@@ -604,6 +711,7 @@ mod tests {
             "fps",
             "media_path",
             "fframes_dep",
+            "kit_dep",
             "codecs",
             "skia_dep",
             "standalone_tables",
@@ -623,6 +731,7 @@ mod tests {
         for template in [
             LIB_SINGLE_SCENE,
             LIB_MULTI_SCENE,
+            LIB_SLIDES,
             MAIN_CPU,
             MAIN_SKIA,
             CARGO_TOML,

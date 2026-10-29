@@ -7,8 +7,10 @@ mod model;
 mod playhead;
 mod ruler;
 mod segment;
+mod stops;
 mod view;
 mod waveform;
 
 pub use playhead::{PlayheadGeometry, playhead_overlay};
+pub use stops::{StopClip, clip_at, stop_clips};
 pub use view::{KEY_CONTEXT, TimelineControls, TimelineEvent, TimelineView};

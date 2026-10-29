@@ -1,19 +1,21 @@
-//! First-run setup, shown in the window in place of the workspace like the settings frame:
-//! the theme, the managed SDK, a first project, the agent and how the agent's permission
-//! requests are answered. Every step reuses the control the workspace has for it (the
-//! Appearance section, the Project drawer's SDK actions, the empty state's project actions,
-//! the Agent settings page). The agent comes after the project because an agent is set up
-//! through an open project's workflow; the choice is saved for every project.
+//! First-run setup, shown in the window in place of the workspace as a centred page of its
+//! own: the theme, the managed SDK, a first project, the agent and how the agent's permission
+//! requests are answered, one step at a time under a "Step N of M" bar. Every step reuses
+//! the control the workspace has for it (the Appearance section, the Project drawer's SDK
+//! actions, the empty state's project actions, the Agent settings page). The agent comes
+//! after the project because an agent is set up through an open project's workflow; the
+//! choice is saved for every project.
 
-use gpui::{Context, IntoElement, ParentElement, Styled, div, px};
+use gpui::{
+    Context, InteractiveElement, IntoElement, ParentElement, SharedString,
+    StatefulInteractiveElement, Styled, div, px,
+};
 use studio_engine::app_settings::{AppSettings, needs_onboarding};
 use studio_proto::PermissionPolicy;
-use studio_theme::METRICS;
+use studio_theme::{METRICS, TextStyle, text_style};
 
 use super::StudioShell;
-use crate::kit::{
-    Card, Icon, RadioCard, RadioCards, Section, SettingsFrame, SettingsNavItem, muted,
-};
+use crate::kit::{Card, Emphasis, PanelSection, Progress, RadioCard, RadioCards, selectable};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Step {
@@ -39,7 +41,7 @@ impl Step {
         Self::ALL.iter().position(|step| *step == self).unwrap_or(0)
     }
 
-    /// The step's id (telemetry, nav row `onboarding-<name>`).
+    /// The step's id (telemetry, and the step's content `onboarding-<name>`).
     pub(super) fn name(self) -> &'static str {
         match self {
             Step::Welcome => "welcome",
@@ -51,16 +53,42 @@ impl Step {
         }
     }
 
-    fn nav_item(self, selected: bool) -> SettingsNavItem {
-        let (label, icon) = match self {
-            Step::Welcome => ("Welcome", Icon::Info),
-            Step::Appearance => ("Appearance", Icon::Palette),
-            Step::Sdk => ("SDK", Icon::Package),
-            Step::Project => ("First video", Icon::FolderOpen),
-            Step::Agent => ("Agent", Icon::Bot),
-            Step::Permissions => ("Permissions", Icon::CircleCheck),
-        };
-        SettingsNavItem::new(format!("onboarding-{}", self.name()), label, icon, selected)
+    /// The step's title and the text under it.
+    fn heading(self) -> (&'static str, &'static str) {
+        match self {
+            Step::Welcome => (
+                "Welcome to fframes Studio",
+                "Studio turns a Rust project into a video you can preview, change with an AI \
+                 agent and export. This setup takes a minute: the look, the SDK that builds \
+                 your videos, a first video, an agent, and how the agent asks for permission. \
+                 Every step can be skipped and changed later in Settings.",
+            ),
+            Step::Appearance => (
+                "How Studio looks",
+                "Pick a theme and how much the interface moves. Change it anytime in Settings → General.",
+            ),
+            Step::Sdk => (
+                "Video SDK",
+                "Studio builds and previews videos with the fframes SDK. Install it once; \
+                 every project uses it.",
+            ),
+            Step::Project => (
+                "Your first video",
+                "Create a new video project, open one, or import a Rust fframes project. \
+                 The agent is set up for the open project next.",
+            ),
+            Step::Agent => (
+                "AI agent",
+                "Pick the coding agent that edits your videos. Detect agents only looks for \
+                 installed agents; nothing starts until you select one. The choice is saved \
+                 for every project.",
+            ),
+            Step::Permissions => (
+                "Agent permissions",
+                "Choose how the agent's requests are answered. Change it anytime in \
+                 Settings → Agent.",
+            ),
+        }
     }
 }
 
@@ -199,7 +227,7 @@ impl StudioShell {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let entity = cx.entity();
-        RadioCards::plain(
+        RadioCards::new(
             &self.theme,
             "permission-policy",
             POLICY_TEXT
@@ -218,32 +246,87 @@ impl StudioShell {
         .into_any_element()
     }
 
+    /// The setup on step `step` (0 Welcome … 5 Permissions), drawn with `theme`. For the UI
+    /// gallery's captures.
+    pub fn render_setup_fixture(
+        &mut self,
+        step: usize,
+        theme: studio_theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let policy = self
+            .onboarding
+            .as_ref()
+            .map_or(self.permission_policy, |onboarding| onboarding.policy);
+        self.onboarding = Some(Onboarding {
+            step: Step::ALL.get(step).copied().unwrap_or(Step::Welcome),
+            policy,
+        });
+        let main = std::mem::replace(&mut self.theme, theme);
+        let page = self.render_onboarding(cx);
+        self.theme = main;
+        page
+    }
+
+    /// The setup as its own page: a centred card, at most `start_max_w` wide, with the step
+    /// indicator, the step and the footer (Skip, Back, Next).
     pub(super) fn render_onboarding(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
+        let colors = theme.colors;
         let Some(onboarding) = &self.onboarding else {
             return div().into_any_element();
         };
         let step = onboarding.step;
-        let entity = cx.entity();
-        let page = self.onboarding_page(step, onboarding.policy, cx);
+        let number = step.index() + 1;
+        let count = Step::ALL.len();
         let last = step == Step::Permissions;
         let previous = Step::ALL.get(step.index().wrapping_sub(1)).copied();
         let next = Step::ALL.get(step.index() + 1).copied();
+        let (title, text) = step.heading();
+
+        let indicator = div()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_2))
+            .child(
+                text_style(div(), TextStyle::Small)
+                    .text_color(colors.text_3)
+                    .child(format!("Step {number} of {count}")),
+            )
+            .child(Progress::linear(&theme, number as f32 / count as f32));
+
+        let heading = div()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_1))
+            .child(
+                text_style(div(), TextStyle::Display)
+                    .text_color(colors.text_1)
+                    .child(selectable(title)),
+            )
+            .child(
+                text_style(div(), TextStyle::Body)
+                    .text_color(colors.text_2)
+                    .child(selectable(text)),
+            );
+
         let footer = div()
             .flex()
-            .flex_wrap()
+            .flex_none()
             .items_center()
             .gap(px(METRICS.space_2))
-            .pt(px(METRICS.space_2))
-            .child(self.action_button(
-                "onboarding-skip",
-                "Skip setup",
-                true,
-                false,
-                None,
-                cx,
-                |shell, cx| shell.skip_onboarding(cx),
-            ))
+            .child(
+                self.action_button(
+                    "onboarding-skip",
+                    "Skip setup",
+                    true,
+                    false,
+                    None,
+                    cx,
+                    |shell, cx| shell.skip_onboarding(cx),
+                )
+                .emphasis(Emphasis::Ghost),
+            )
             .child(div().flex_1())
             .child(self.action_button(
                 "onboarding-back",
@@ -270,119 +353,104 @@ impl StudioShell {
                     None => shell.finish_onboarding(cx),
                 },
             ));
-        let frame = SettingsFrame::settings(
-            &theme,
-            "onboarding",
-            Step::ALL
-                .iter()
-                .map(|item| item.nav_item(*item == step))
-                .collect(),
-        )
-        .on_select(move |index, _, cx| {
-            if let Some(step) = Step::ALL.get(*index) {
-                entity.update(cx, |shell, cx| shell.go_to_step(*step, cx));
-            }
-        })
-        .children([page, footer.into_any_element()]);
-        Card::editor(&theme)
-            .relative()
+
+        // A definite width (narrower windows shrink it): with `w_full` and `max_w` the
+        // wrapped text is measured at the unclamped width and the footer spills out.
+        let card = Card::raised(&theme)
+            .flex_none()
+            .w(px(METRICS.layout.start_max_w))
+            .max_w_full()
+            .mx_auto()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_6))
+            .p(px(METRICS.space_6))
+            .child(indicator)
+            .child(heading)
+            .child(
+                div()
+                    .id(SharedString::from(format!("onboarding-{}", step.name())))
+                    .flex()
+                    .flex_col()
+                    .gap(px(METRICS.space_6))
+                    .children(self.onboarding_page(step, onboarding.policy, cx)),
+            )
+            .child(footer);
+
+        div()
+            .id("onboarding")
             .flex_1()
             .min_h_0()
-            .overflow_hidden()
-            .child(frame)
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .py(px(METRICS.space_6))
+            .child(card)
             .into_any_element()
     }
 
+    /// What a step shows under its heading: its sections.
     fn onboarding_page(
         &self,
         step: Step,
         policy: PermissionPolicy,
         cx: &mut Context<Self>,
-    ) -> gpui::AnyElement {
+    ) -> Vec<gpui::AnyElement> {
         let theme = self.theme;
-        let section = |title: &'static str, text: &'static str, children: Vec<gpui::AnyElement>| {
-            Section::settings(&theme, title, Some(text), None, children).into_any_element()
-        };
         match step {
-            Step::Welcome => section(
-                "Welcome to fframes Studio",
-                "Studio turns a Rust project into a video you can preview, change with an AI \
-                 agent and export. This setup takes a minute: the look, the SDK that builds \
-                 your videos, a first video, an agent, and how the agent asks for permission. \
-                 Every step can be skipped and changed later in Settings.",
-                Vec::new(),
-            ),
-            Step::Appearance => self.render_appearance(cx),
+            Step::Welcome => Vec::new(),
+            Step::Appearance => vec![self.render_appearance(cx)],
             Step::Sdk => {
-                let mut children = vec![
-                    Card::settings(&theme, true)
-                        .child(self.sdk_controls(cx))
-                        .into_any_element(),
-                ];
+                let mut sdk = PanelSection::new(&theme, "Managed SDK")
+                    .card()
+                    .child(self.sdk_controls(cx));
                 if self.presentation.agent_sdk.is_none() {
-                    children.push(
-                        muted(
-                            &theme,
-                            "Without the SDK, Studio cannot build previews or export. You can \
-                             install it later from Settings → SDK.",
-                        )
-                        .into_any_element(),
-                    );
+                    sdk = sdk.child(note(
+                        &theme,
+                        "Without the SDK, Studio cannot build previews or export. You can \
+                         install it later from Settings → SDK.",
+                    ));
                 }
-                section(
-                    "Video SDK",
-                    "Studio builds and previews videos with the fframes SDK. Install it once; \
-                     every project uses it.",
-                    children,
-                )
+                vec![sdk.into_any_element()]
             }
             Step::Project => {
-                let mut children = vec![self.project_actions(cx).into_any_element()];
-                if let Some(project) = &self.presentation.project {
-                    children.insert(
-                        0,
-                        muted(
-                            &theme,
-                            format!(
-                                "Open: {} · {}",
-                                project.name,
-                                studio_bootstrap::external_path(&project.root).display()
-                            ),
-                        )
-                        .into_any_element(),
-                    );
+                let mut project = PanelSection::new(&theme, "Project");
+                if let Some(open) = &self.presentation.project {
+                    project = project.child(note(
+                        &theme,
+                        format!(
+                            "Open: {} · {}",
+                            open.name,
+                            studio_bootstrap::external_path(&open.root).display()
+                        ),
+                    ));
                 }
-                section(
-                    "Your first video",
-                    "Create a new video project, open one, or import a Rust fframes project. \
-                     The agent is set up for the open project next.",
-                    children,
-                )
+                vec![project.child(self.project_actions(cx)).into_any_element()]
             }
-            Step::Agent => section(
-                "AI agent",
-                "Pick the coding agent that edits your videos. Detect agents only looks for \
-                 installed agents; nothing starts until you select one. The choice is saved \
-                 for every project.",
-                vec![self.setup_page.clone().into_any_element()],
-            ),
-            Step::Permissions => section(
-                "Agent permissions",
-                "Choose how the agent's requests are answered. Change it anytime in \
-                 Settings → Agent.",
-                vec![self.permission_choice(
-                    policy,
-                    |shell, policy, cx| {
-                        if let Some(onboarding) = &mut shell.onboarding {
-                            onboarding.policy = policy;
-                            cx.notify();
-                        }
-                    },
-                    cx,
-                )],
-            ),
+            Step::Agent => vec![self.setup_page.clone().into_any_element()],
+            Step::Permissions => vec![
+                PanelSection::new(&theme, "Permission requests")
+                    .child(self.permission_choice(
+                        policy,
+                        |shell, policy, cx| {
+                            if let Some(onboarding) = &mut shell.onboarding {
+                                onboarding.policy = policy;
+                                cx.notify();
+                            }
+                        },
+                        cx,
+                    ))
+                    .into_any_element(),
+            ],
         }
     }
+}
+
+/// A line under a step's controls: `Small` in `text_2`.
+fn note(theme: &studio_theme::Theme, text: impl Into<SharedString>) -> gpui::Div {
+    text_style(div(), TextStyle::Small)
+        .text_color(theme.colors.text_2)
+        .child(selectable(text))
 }
 
 #[cfg(test)]

@@ -357,7 +357,7 @@ impl ConversationPanel {
                 "agent-stage-confirm",
                 "Attach",
                 true,
-                Tone::Primary,
+                Emphasis::Primary,
                 cx,
                 |this, _, cx| this.confirm_stage(cx),
             ))
@@ -365,7 +365,7 @@ impl ConversationPanel {
                 "agent-stage-cancel",
                 "Cancel",
                 true,
-                Tone::Normal,
+                Emphasis::Neutral,
                 cx,
                 |this, _, cx| this.cancel_stage(cx),
             ))

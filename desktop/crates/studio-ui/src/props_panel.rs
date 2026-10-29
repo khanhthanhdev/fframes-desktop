@@ -5,21 +5,24 @@
 //! The panel never writes `props.json` itself: it emits [`PropsEvent`]s, and the shell
 //! runs the commands through the engine, which writes the file and hands the document to
 //! the preview. A slider drag is one gesture, so it is one undo step and one write.
-use std::collections::HashMap;
+use std::{cell::Cell, collections::HashMap, rc::Rc};
 
 use fframes_studio_protocol::{EditorObjectIdentity, PropField, PropKind, PropsInfo};
 use gpui::{
-    AppContext, Context, DispatchPhase, Entity, EventEmitter, Focusable, InteractiveElement,
-    IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement, Render, SharedString,
-    StatefulInteractiveElement, Styled, Window, canvas, div, prelude::FluentBuilder, px,
+    AppContext, Bounds, Context, DispatchPhase, Entity, EventEmitter, FocusHandle, Focusable,
+    InteractiveElement, IntoElement, MouseButton, MouseMoveEvent, MouseUpEvent, ParentElement,
+    Pixels, Point, Render, SharedString, StatefulInteractiveElement, Styled, Window, canvas, div,
+    px,
 };
 use serde_json::Value;
 use studio_engine::props::{PropsCommand, PropsEditing, PropsSnapshot};
-use studio_theme::{METRICS, TextStyle, Theme, text_style};
+use studio_theme::{METRICS, Theme};
 
 use crate::kit::{
-    EditorButton, Icon, IconButton, IconButtonSize, Notice, Slider, SliderTrack, TextInput,
-    TextInputEvent, TextInputState, Toggle, Tone, section_title, selectable,
+    ColorPicker, ColorPickerSnapshot, EmptyState, FormField, Icon, IconButton, IconButtonSize,
+    Menu, MenuItem, MenuState, Notice, PanelSection, SegmentOption, SegmentedControl, Select,
+    Slider, TextInput, TextInputEvent, TextInputState, Toggle, Tone, bounds_probe, color_swatch,
+    hsv_to_rgb, hue_from_point, sv_from_point,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -43,7 +46,13 @@ pub struct PropsPanel {
     inputs_for: Option<(EditorObjectIdentity, String)>,
     /// The field a slider drag changes; the drag is one gesture.
     dragging: Option<String>,
-    tracks: HashMap<String, SliderTrack>,
+    /// Where each colour field's swatch was last painted, to anchor its picker.
+    swatches: HashMap<String, Rc<Cell<Option<Bounds<Pixels>>>>>,
+    picker: Option<Picker>,
+    /// The open choice menu and the field it chooses for.
+    menu: Option<(PropField, MenuState)>,
+    menu_focus: FocusHandle,
+    menu_return_focus: Option<FocusHandle>,
     /// Why the last entry could not be applied.
     error: Option<String>,
     /// Refreshed at the top of every render.
@@ -59,7 +68,11 @@ impl PropsPanel {
             inputs: HashMap::new(),
             inputs_for: None,
             dragging: None,
-            tracks: HashMap::new(),
+            swatches: HashMap::new(),
+            picker: None,
+            menu: None,
+            menu_focus: cx.focus_handle(),
+            menu_return_focus: None,
             error: None,
             theme: Theme::for_window(window, cx),
         }
@@ -86,6 +99,8 @@ impl PropsPanel {
             self.info = None;
             self.error = None;
             self.end_drag(cx);
+            self.picker = None;
+            self.menu = None;
             cx.notify();
         }
     }
@@ -161,17 +176,25 @@ impl PropsPanel {
         let (Some(min), Some(max)) = (field.min, field.max) else {
             return;
         };
-        if self.dragging.as_deref() != Some(field.name.as_str()) {
-            self.end_drag(cx);
-            self.dragging = Some(field.name.clone());
-            self.run(PropsCommand::BeginGesture, cx);
-        }
+        self.begin_drag(&field.name, cx);
         let value = slider_value(field, min, max, fraction);
         self.set_field(&field.name, Some(value), cx);
     }
 
-    /// Ends a slider drag as one gesture; nothing happens when no drag runs.
+    /// Starts a gesture on `name` unless one already runs on it.
+    fn begin_drag(&mut self, name: &str, cx: &mut Context<Self>) {
+        if self.dragging.as_deref() != Some(name) {
+            self.end_drag(cx);
+            self.dragging = Some(name.to_owned());
+            self.run(PropsCommand::BeginGesture, cx);
+        }
+    }
+
+    /// Ends a slider or picker drag as one gesture; nothing happens when no drag runs.
     pub fn end_drag(&mut self, cx: &mut Context<Self>) {
+        if let Some(picker) = &mut self.picker {
+            picker.part = None;
+        }
         if self.dragging.take().is_some() {
             self.run(PropsCommand::EndGesture, cx);
             cx.notify();
@@ -180,15 +203,28 @@ impl PropsPanel {
 
     /// Makes the text fields of `info`'s schema and puts the drawn values in the ones
     /// that are not being typed in.
-    fn sync_inputs(&mut self, info: &PropsInfo, window: &mut Window, cx: &mut Context<Self>) {
+    fn sync_inputs(
+        &mut self,
+        info: &PropsInfo,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let Some(identity) = self.selected.clone() else {
             return;
         };
         let target = (identity, info.schema.component.clone());
         if self.inputs_for.as_ref() != Some(&target) {
             self.inputs.clear();
-            self.tracks.clear();
+            self.swatches.clear();
+            self.picker = None;
+            self.menu = None;
             self.inputs_for = Some(target);
+        }
+        for field in &info.schema.fields {
+            if field.kind == PropKind::Color {
+                self.swatches.entry(field.name.clone()).or_default();
+            }
         }
         for field in info.schema.fields.iter().filter(|f| typed(&f.kind)) {
             let shown = info
@@ -216,17 +252,122 @@ impl PropsPanel {
                 input.update(cx, |input, cx| input.set_text(shown.clone(), cx));
                 *synced = shown;
             }
+            input.update(cx, |input, cx| input.set_disabled(!enabled, cx));
+        }
+    }
+
+    // ---- colour picker and choice menu -------------------------------------------------
+
+    /// The value the preview drew for `name`.
+    fn value(&self, name: &str) -> Option<Value> {
+        match &self.info {
+            Some(Ok(Some(info))) => info.values.get(name).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Opens the colour picker under the field's swatch.
+    fn open_picker(&mut self, field: &PropField, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(bounds) = self.swatches.get(&field.name).and_then(|cell| cell.get()) else {
+            return;
+        };
+        let (rgb, alpha) = self
+            .value(&field.name)
+            .as_ref()
+            .and_then(Value::as_str)
+            .and_then(parse_hex)
+            .unwrap_or(([0, 0, 0], None));
+        self.menu = None;
+        self.picker = Some(Picker {
+            field: field.name.clone(),
+            snapshot: ColorPickerSnapshot::place(bounds.bottom_left(), window.viewport_size(), rgb),
+            alpha,
+            part: None,
+        });
+        cx.notify();
+    }
+
+    fn close_picker(&mut self, cx: &mut Context<Self>) {
+        self.end_drag(cx);
+        if self.picker.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// A press or drag on the picker's field or hue rail: the colour under the pointer,
+    /// one gesture until the button is released.
+    fn pick(&mut self, part: PickerPart, position: Point<Pixels>, cx: &mut Context<Self>) {
+        let Some(picker) = &self.picker else {
+            return;
+        };
+        let mut snapshot = picker.snapshot;
+        match part {
+            PickerPart::Field => {
+                (snapshot.sat, snapshot.val) = sv_from_point(snapshot.origin, position);
+            }
+            PickerPart::Hue => snapshot.hue = hue_from_point(snapshot.origin, position),
+        }
+        let (name, alpha) = (picker.field.clone(), picker.alpha);
+        self.begin_drag(&name, cx);
+        if let Some(picker) = &mut self.picker {
+            picker.snapshot = snapshot;
+            picker.part = Some(part);
+        }
+        self.set_field(
+            &name,
+            Some(Value::String(hex(
+                hsv_to_rgb(snapshot.hue, snapshot.sat, snapshot.val),
+                alpha,
+            ))),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// The choice menu of a field with more options than a segmented control holds.
+    fn open_menu(
+        &mut self,
+        field: &PropField,
+        bounds: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.picker = None;
+        let items = self.menu_items(field);
+        self.menu = Some((field.clone(), MenuState::anchored(bounds, &items)));
+        self.menu_return_focus = window.focused(cx);
+        window.focus(&self.menu_focus, cx);
+        cx.notify();
+    }
+
+    fn menu_items(&self, field: &PropField) -> Vec<MenuItem> {
+        let PropKind::Choice { options } = &field.kind else {
+            return Vec::new();
+        };
+        let current = self.value(&field.name);
+        let current = current.as_ref().and_then(Value::as_str);
+        options
+            .iter()
+            .map(|option| {
+                MenuItem::new(option.clone(), current == Some(option.as_str()))
+                    .id(format!("prop-{}-{option}", field.name))
+            })
+            .collect()
+    }
+
+    fn close_menu(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.menu.take().is_some() {
+            if let Some(focus) = self.menu_return_focus.take() {
+                window.focus(&focus, cx);
+            }
+            cx.notify();
         }
     }
 
     // ---- rendering ---------------------------------------------------------------------
 
-    fn small(text: impl Into<SharedString>, color: gpui::Rgba) -> gpui::Div {
-        text_style(div(), TextStyle::Small)
-            .text_color(color)
-            .child(selectable(text))
-    }
-
+    /// One field: its label and control, a reset while it overrides the code, and a
+    /// slider under numbers with a range.
     fn field_row(
         &self,
         field: &PropField,
@@ -236,146 +377,363 @@ impl PropsPanel {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = self.theme;
-        let palette = theme.editor;
         let value = info.values.get(&field.name);
         let id = format!("prop-{}", field.name);
         let mut label = field.name.clone();
         if let Some(unit) = &field.unit {
             label.push_str(&format!(" ({unit})"));
         }
-        let mut header = div().flex().items_center().gap(px(METRICS.space_2)).child(
-            text_style(div().min_w_0().flex_1().truncate(), TextStyle::Body)
-                .text_color(palette.text_1)
-                .child(label),
-        );
-        if overridden {
-            let entity = cx.entity();
-            let name = field.name.clone();
-            header = header.child(
-                IconButton::editor(&theme, format!("{id}-reset"), Icon::RefreshCw.path())
-                    .editor_size(IconButtonSize::Small)
-                    .label("Reset to the code's value")
-                    .tooltip(&theme, "Reset to the code's value")
-                    .disabled(!enabled)
-                    .on_click(move |_, _, cx| {
-                        entity.update(cx, |panel, cx| panel.set_field(&name, None, cx));
-                    }),
-            );
-        }
-        let control = match &field.kind {
+        let (control, stacked) = match &field.kind {
             PropKind::Toggle => {
                 let entity = cx.entity();
                 let name = field.name.clone();
-                Toggle::plain(
+                let toggle = Toggle::new(
                     &theme,
                     id.clone(),
                     value.and_then(Value::as_bool).unwrap_or(false),
                 )
                 .label(field.name.clone())
-                .disabled(&theme, !enabled)
+                .disabled(!enabled)
                 .on_change(move |checked, _, cx| {
                     entity.update(cx, |panel, cx| {
                         panel.set_field(&name, Some(Value::Bool(checked)), cx)
                     });
-                })
-                .into_any_element()
+                });
+                (toggle.into_any_element(), false)
             }
-            PropKind::Choice { options } => {
-                let current = value.and_then(Value::as_str);
-                let mut row = div().flex().flex_wrap().gap(px(METRICS.space_1));
-                for option in options {
-                    let entity = cx.entity();
-                    let name = field.name.clone();
-                    let chosen = option.clone();
-                    let mut button = EditorButton::plain(&theme, format!("{id}-{option}"))
-                        .label(option.clone())
-                        .disabled(!enabled)
-                        .on_click(move |_, _, cx| {
-                            entity.update(cx, |panel, cx| {
-                                panel.set_field(&name, Some(Value::String(chosen.clone())), cx)
-                            });
-                        });
-                    button = if current == Some(option.as_str()) {
-                        button.accent(&theme)
-                    } else {
-                        button.filled(&theme)
-                    };
-                    row = row.child(button);
-                }
-                row.into_any_element()
-            }
-            _ => self.typed_control(field, value, enabled, cx),
+            PropKind::Choice { options } => (self.choice(field, options, value, enabled, cx), true),
+            PropKind::Color => (self.color_entry(field, value, enabled, cx), false),
+            PropKind::Text => (self.entry(field, false), true),
+            PropKind::Number | PropKind::Integer => (self.entry(field, true), false),
         };
+        let mut form = if stacked {
+            FormField::stacked(&theme, label, control)
+        } else {
+            FormField::row(&theme, label, control)
+        };
+        if overridden && enabled {
+            let entity = cx.entity();
+            let name = field.name.clone();
+            form = form.reset_id(format!("{id}-reset")).reset(move |_, cx| {
+                entity.update(cx, |panel, cx| panel.set_field(&name, None, cx));
+            });
+        }
         div()
             .id(SharedString::from(id))
             .flex()
             .flex_col()
             .gap(px(METRICS.space_1))
-            .child(header)
-            .child(control)
+            .child(form)
+            .children(self.slider(field, value, enabled, cx))
             .into_any_element()
     }
 
-    /// A text field, with a slider above it for a number with a range and a swatch for
-    /// a colour.
-    fn typed_control(
+    /// The field's text input; `fill` makes it take the rest of a row.
+    fn entry(&self, field: &PropField, fill: bool) -> gpui::AnyElement {
+        match self.inputs.get(&field.name) {
+            Some((input, _)) => TextInput::new(
+                &self.theme,
+                SharedString::from(format!("prop-{}-input", field.name)),
+                input,
+            )
+            .flex(fill)
+            .into_any_element(),
+            None => div().into_any_element(),
+        }
+    }
+
+    /// A segmented control for a few options, a select for more.
+    fn choice(
+        &self,
+        field: &PropField,
+        options: &[String],
+        value: Option<&Value>,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = self.theme;
+        let current = value.and_then(Value::as_str);
+        let entity = cx.entity();
+        if options.len() <= MAX_SEGMENTS {
+            let segments = options
+                .iter()
+                .map(|option| {
+                    SegmentOption::new(option.clone(), current == Some(option.as_str()))
+                        .id(format!("prop-{}-{option}", field.name))
+                        .disabled(!enabled)
+                })
+                .collect();
+            let name = field.name.clone();
+            let options = options.to_vec();
+            SegmentedControl::new(&theme, format!("prop-{}-choice", field.name), segments)
+                .stretch()
+                .on_select(move |index, _, cx| {
+                    if let Some(option) = options.get(*index) {
+                        entity.update(cx, |panel, cx| {
+                            panel.set_field(&name, Some(Value::String(option.clone())), cx)
+                        });
+                    }
+                })
+                .into_any_element()
+        } else {
+            let opened = field.clone();
+            Select::new(
+                &theme,
+                format!("prop-{}-select", field.name),
+                current.unwrap_or("Choose…").to_owned(),
+            )
+            .stretch_label()
+            .disabled(!enabled)
+            .on_open(move |bounds, window, cx| {
+                entity.update(cx, |panel, cx| {
+                    panel.open_menu(&opened, *bounds, window, cx)
+                });
+            })
+            .into_any_element()
+        }
+    }
+
+    /// The swatch that opens the colour picker, beside the hex entry.
+    fn color_entry(
         &self,
         field: &PropField,
         value: Option<&Value>,
         enabled: bool,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let theme = self.theme;
-        let palette = theme.editor;
-        let mut column = div().flex().flex_col().gap(px(METRICS.space_1));
-        if let (PropKind::Number | PropKind::Integer, Some(min), Some(max)) =
+        let fill = value
+            .and_then(Value::as_str)
+            .and_then(parse_hex)
+            .map(|(rgb, alpha)| swatch_color(rgb, alpha));
+        let bounds = self.swatches.get(&field.name).cloned().unwrap_or_default();
+        let entity = cx.entity();
+        let opened = field.clone();
+        let swatch = color_swatch(
+            &self.theme,
+            SharedString::from(format!("prop-{}-swatch", field.name)),
+            fill,
+            !enabled,
+            Rc::new(move |window, cx| {
+                entity.update(cx, |panel, cx| panel.open_picker(&opened, window, cx));
+            }),
+        )
+        .child(bounds_probe(Rc::new(move |measured, _| {
+            bounds.set(Some(measured))
+        })));
+        div()
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .items_center()
+            .gap(px(METRICS.space_2))
+            .child(swatch)
+            .child(self.entry(field, true))
+            .into_any_element()
+    }
+
+    /// A slider for a number with a range.
+    fn slider(
+        &self,
+        field: &PropField,
+        value: Option<&Value>,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Slider> {
+        let (PropKind::Number | PropKind::Integer, Some(min), Some(max)) =
             (&field.kind, field.min, field.max)
-            && max > min
-        {
-            let fraction = value
-                .and_then(Value::as_f64)
-                .map_or(0., |v| ((v - min) / (max - min)).clamp(0., 1.))
-                as f32;
-            let track = self.tracks.get(&field.name).cloned().unwrap_or_default();
-            let entity = cx.entity();
-            let dragged = field.clone();
-            column = column.child(
-                Slider::new(format!("prop-{}-slider", field.name), fraction, track)
-                    .flex()
-                    .track(px(3.), palette.ctl_active.into())
-                    .fill(palette.accent.into())
-                    .thumb(px(12.), palette.thumb.into(), None)
-                    .label(field.name.clone())
-                    .disabled(!enabled)
-                    .on_change(0., move |fraction, _, cx| {
-                        entity.update(cx, |panel, cx| panel.drag(&dragged, *fraction, cx));
+        else {
+            return None;
+        };
+        if max <= min {
+            return None;
+        }
+        let fraction = value
+            .and_then(Value::as_f64)
+            .map_or(0., |v| ((v - min) / (max - min)).clamp(0., 1.)) as f32;
+        let entity = cx.entity();
+        let dragged = field.clone();
+        Some(
+            Slider::new(&self.theme, format!("prop-{}-slider", field.name), fraction)
+                .label(field.name.clone())
+                .disabled(!enabled)
+                .on_change(0., move |fraction, _, cx| {
+                    entity.update(cx, |panel, cx| panel.drag(&dragged, *fraction, cx));
+                }),
+        )
+    }
+
+    /// What the panel shows under its title for the current selection, and the line
+    /// that names the selected component.
+    fn body(
+        &mut self,
+        snapshot: &PropsSnapshot,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> (Option<String>, Vec<gpui::AnyElement>) {
+        let theme = self.theme;
+        let empty = |title: &str, body: String| {
+            vec![
+                EmptyState::new(&theme, title.to_owned())
+                    .body(body)
+                    .into_any_element(),
+            ]
+        };
+        let Some(selected) = self.selected.clone() else {
+            return (
+                None,
+                empty(
+                    "Nothing selected",
+                    "Select a component on the canvas to edit its props.".into(),
+                ),
+            );
+        };
+        let info = match self.info.clone() {
+            None => {
+                return (
+                    None,
+                    vec![
+                        EmptyState::new(&theme, "Reading the selection's props…")
+                            .into_any_element(),
+                    ],
+                );
+            }
+            Some(Err(error)) => {
+                return (
+                    None,
+                    vec![Notice::new("props-unavailable", Tone::Warning, error).into_any_element()],
+                );
+            }
+            Some(Ok(None)) => {
+                return (
+                    None,
+                    empty(
+                        "No editable props",
+                        format!(
+                            "{} \"{}\" has no editable props. Mark it editable in the code (`.editable(\"key\")`).",
+                            selected.component_key, selected.object_key
+                        ),
+                    ),
+                );
+            }
+            Some(Ok(Some(info))) => info,
+        };
+        self.sync_inputs(&info, enabled, window, cx);
+        let description = format!(
+            "{} \"{}\" in {}",
+            info.schema.component, selected.object_key, selected.scene_instance_key
+        );
+        if info.schema.fields.is_empty() {
+            return (
+                Some(description),
+                empty(
+                    "No editable fields",
+                    "This component has no editable fields.".into(),
+                ),
+            );
+        }
+        let overrides = snapshot
+            .doc
+            .as_ref()
+            .and_then(|doc| doc.values(&selected))
+            .cloned()
+            .unwrap_or_default();
+        let rows = info
+            .schema
+            .fields
+            .iter()
+            .map(|field| {
+                let overridden = overrides.contains_key(&field.name);
+                self.field_row(field, &info, overridden, enabled, cx)
+            })
+            .collect();
+        (Some(description), rows)
+    }
+
+    /// The open colour picker over the whole window, closed by a press outside it.
+    fn picker_layer(&self, window: &Window, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let picker = self.picker.as_ref()?;
+        let viewport = window.viewport_size();
+        let (close, field, hue) = (cx.entity(), cx.entity(), cx.entity());
+        let layer = div()
+            .relative()
+            .w(viewport.width)
+            .h(viewport.height)
+            .child(
+                div()
+                    .id("prop-color-backdrop")
+                    .occlude()
+                    .absolute()
+                    .top_0()
+                    .left_0()
+                    .size_full()
+                    .on_mouse_down(MouseButton::Left, move |_, _, cx| {
+                        close.update(cx, |panel, cx| panel.close_picker(cx));
+                    }),
+            )
+            .child(
+                ColorPicker::new(&self.theme, picker.snapshot)
+                    .on_sv_down(move |event, _, cx| {
+                        field.update(cx, |panel, cx| {
+                            panel.pick(PickerPart::Field, event.position, cx)
+                        });
+                    })
+                    .on_hue_down(move |event, _, cx| {
+                        hue.update(cx, |panel, cx| {
+                            panel.pick(PickerPart::Hue, event.position, cx)
+                        });
                     }),
             );
-        }
-        let mut entry = div().flex().items_center().gap(px(METRICS.space_2));
-        if field.kind == PropKind::Color {
-            let swatch = value
-                .and_then(Value::as_str)
-                .and_then(parse_hex)
-                .unwrap_or(gpui::rgba(0x00000000));
-            entry = entry.child(
-                div()
-                    .flex_none()
-                    .size(px(20.))
-                    .rounded(px(METRICS.radius_item))
-                    .border_1()
-                    .border_color(palette.line)
-                    .bg(swatch),
-            );
-        }
-        if let Some((input, _)) = self.inputs.get(&field.name) {
-            entry = entry.child(div().min_w_0().flex_1().child(TextInput::plain(
-                &theme,
-                SharedString::from(format!("prop-{}-input", field.name)),
-                input,
-            )));
-        }
-        column.child(entry).into_any_element()
+        Some(
+            gpui::deferred(
+                gpui::anchored()
+                    .position_mode(gpui::AnchoredPositionMode::Window)
+                    .position(Point::default())
+                    .child(layer),
+            )
+            .with_priority(1)
+            .into_any_element(),
+        )
+    }
+
+    /// The open choice menu of a field with many options.
+    fn menu_layer(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        let (field, state) = self.menu.as_ref()?;
+        let PropKind::Choice { options } = &field.kind else {
+            return None;
+        };
+        let (highlight, select, dismiss) = (cx.entity(), cx.entity(), cx.entity());
+        let name = field.name.clone();
+        let options = options.clone();
+        Some(
+            Menu::new(
+                &self.theme,
+                format!("prop-{}-menu", field.name),
+                self.menu_items(field),
+                state,
+            )
+            .focus(&self.menu_focus)
+            .on_highlight(move |index, _, cx| {
+                highlight.update(cx, |panel, cx| {
+                    if let Some((_, state)) = &mut panel.menu {
+                        state.set_highlighted(*index);
+                        cx.notify();
+                    }
+                });
+            })
+            .on_select(move |index, window, cx| {
+                select.update(cx, |panel, cx| {
+                    panel.close_menu(window, cx);
+                    if let Some(option) = options.get(*index) {
+                        panel.set_field(&name, Some(Value::String(option.clone())), cx);
+                    }
+                });
+            })
+            .on_dismiss(move |window, cx| {
+                dismiss.update(cx, |panel, cx| panel.close_menu(window, cx))
+            })
+            .into_any_element(),
+        )
     }
 }
 
@@ -383,18 +741,17 @@ impl Render for PropsPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.theme.refresh(window, cx);
         let theme = self.theme;
-        let palette = theme.editor;
-        let mut root = div()
+        let root = div()
             .id("props-panel")
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .gap(px(METRICS.space_3))
-            .overflow_y_scroll()
-            .child(section_title(&theme, "Props"));
+            .overflow_y_scroll();
         let Some(snapshot) = self.snapshot.clone() else {
-            return root.child(Self::small("Open a project to edit props.", palette.text_2));
+            return root.child(PanelSection::new(&theme, "Props").child(
+                EmptyState::new(&theme, "No project open").body("Open a project to edit props."),
+            ));
         };
         let enabled = snapshot.editing == PropsEditing::Enabled;
         let mut history = div().flex().gap(px(METRICS.space_1));
@@ -416,83 +773,37 @@ impl Render for PropsPanel {
         ] {
             let entity = cx.entity();
             history = history.child(
-                IconButton::editor(&theme, id, glyph.path())
-                    .editor_size(IconButtonSize::Small)
+                IconButton::new(&theme, id, glyph.path())
+                    .size(IconButtonSize::Sm)
                     .label(label)
-                    .tooltip(&theme, label)
+                    .tooltip(label)
                     .disabled(!(enabled && possible))
                     .on_click(move |_, _, cx| {
                         entity.update(cx, |panel, cx| panel.run(command.clone(), cx));
                     }),
             );
         }
-        root = root.child(history);
+        let mut section = PanelSection::new(&theme, "Props").trailing(history);
         if let PropsEditing::Disabled(reason) = &snapshot.editing {
-            root = root.child(Notice::new(
+            section = section.child(Notice::new(
                 "props-disabled",
                 Tone::Warning,
                 format!("Props edits are disabled: {reason}"),
             ));
         }
         if let Some(notice) = &snapshot.notice {
-            root = root.child(Notice::new("props-notice", Tone::Info, notice.clone()));
+            section = section.child(Notice::new("props-notice", Tone::Info, notice.clone()));
         }
         if let Some(error) = &self.error {
-            root = root.child(Notice::new("props-error", Tone::Warning, error.clone()));
+            section = section.child(Notice::new("props-error", Tone::Warning, error.clone()));
         }
-        let Some(selected) = self.selected.clone() else {
-            return root.child(Self::small(
-                "Select a component on the canvas to edit its props.",
-                palette.text_2,
-            ));
-        };
-        let info = match self.info.clone() {
-            None => {
-                return root.child(Self::small(
-                    "Reading the selection's props…",
-                    palette.text_2,
-                ));
-            }
-            Some(Err(error)) => {
-                return root.child(Notice::new("props-unavailable", Tone::Info, error));
-            }
-            Some(Ok(None)) => {
-                return root.child(Self::small(
-                    format!(
-                        "{} \"{}\" has no editable props. Mark it editable in the code (`.editable(\"key\")`).",
-                        selected.component_key, selected.object_key
-                    ),
-                    palette.text_2,
-                ));
-            }
-            Some(Ok(Some(info))) => info,
-        };
-        self.sync_inputs(&info, window, cx);
-        root = root.child(Self::small(
-            format!(
-                "{} \"{}\" in {}",
-                info.schema.component, selected.object_key, selected.scene_instance_key
-            ),
-            palette.text_2,
-        ));
-        let overrides = snapshot
-            .doc
-            .as_ref()
-            .and_then(|doc| doc.values(&selected))
-            .cloned()
-            .unwrap_or_default();
-        if info.schema.fields.is_empty() {
-            root = root.child(Self::small(
-                "This component has no editable fields.",
-                palette.text_2,
-            ));
+        let (description, rows) = self.body(&snapshot, enabled, window, cx);
+        if let Some(description) = description {
+            section = section.description(description);
         }
-        for field in &info.schema.fields {
-            let overridden = overrides.contains_key(&field.name);
-            root = root.child(self.field_row(field, &info, overridden, enabled, cx));
-        }
+        let mut root = root.child(section.children(rows));
         if self.dragging.is_some() {
-            // The slider's release can land anywhere in the window.
+            // The slider's or picker's release can land anywhere in the window.
             let entity = cx.entity();
             root = root.child(
                 canvas(
@@ -505,14 +816,22 @@ impl Render for PropsPanel {
                                 up.update(cx, |panel, cx| panel.end_drag(cx));
                             }
                         });
-                        // A release outside the window arrives as a move without the button.
+                        // A release outside the window arrives as a move without the button;
+                        // a move with it held drags the picker.
                         let moved = entity.clone();
                         window.on_mouse_event(move |event: &MouseMoveEvent, phase, _, cx| {
-                            if phase == DispatchPhase::Capture
-                                && event.pressed_button != Some(MouseButton::Left)
-                            {
-                                moved.update(cx, |panel, cx| panel.end_drag(cx));
+                            if phase != DispatchPhase::Capture {
+                                return;
                             }
+                            moved.update(cx, |panel, cx| {
+                                if event.pressed_button != Some(MouseButton::Left) {
+                                    panel.end_drag(cx);
+                                } else if let Some(part) =
+                                    panel.picker.as_ref().and_then(|picker| picker.part)
+                                {
+                                    panel.pick(part, event.position, cx);
+                                }
+                            });
                         });
                     },
                 )
@@ -520,8 +839,29 @@ impl Render for PropsPanel {
                 .size_0(),
             );
         }
-        root.when(!enabled, |root| root.opacity(0.9))
+        root.children(self.picker_layer(window, cx))
+            .children(self.menu_layer(cx))
     }
+}
+
+/// The most options a segmented control shows; more go into a select.
+const MAX_SEGMENTS: usize = 4;
+
+/// Which part of the colour picker a drag moves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PickerPart {
+    Field,
+    Hue,
+}
+
+/// The open colour picker: the field it edits, where it is, and the alpha the value
+/// had, which the picker keeps.
+struct Picker {
+    field: String,
+    snapshot: ColorPickerSnapshot,
+    alpha: Option<u8>,
+    /// The part a drag that began on the picker moves.
+    part: Option<PickerPart>,
 }
 
 /// Fields edited by typing: numbers, text and colours.
@@ -580,17 +920,34 @@ pub fn parse_entry(field: &PropField, text: &str) -> Result<Value, String> {
     }
 }
 
-/// `#rrggbb` or `#rrggbbaa`.
-fn parse_hex(text: &str) -> Option<gpui::Rgba> {
+/// `#rrggbb` or `#rrggbbaa`: the colour and the alpha when it is written.
+fn parse_hex(text: &str) -> Option<([u8; 3], Option<u8>)> {
     let hex = text.strip_prefix('#')?;
-    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+    if !matches!(hex.len(), 6 | 8) || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    let value = u32::from_str_radix(hex, 16).ok()?;
-    match hex.len() {
-        6 => Some(gpui::rgba((value << 8) | 0xff)),
-        8 => Some(gpui::rgba(value)),
-        _ => None,
+    let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).ok();
+    let alpha = if hex.len() == 8 { Some(byte(6)?) } else { None };
+    Some(([byte(0)?, byte(2)?, byte(4)?], alpha))
+}
+
+/// The value a picked colour is written as: `#rrggbb`, or `#rrggbbaa` keeping the
+/// alpha the value had.
+fn hex([r, g, b]: [u8; 3], alpha: Option<u8>) -> String {
+    match alpha {
+        Some(a) => format!("#{r:02x}{g:02x}{b:02x}{a:02x}"),
+        None => format!("#{r:02x}{g:02x}{b:02x}"),
+    }
+}
+
+/// The swatch's fill for a parsed value.
+fn swatch_color([r, g, b]: [u8; 3], alpha: Option<u8>) -> gpui::Rgba {
+    let channel = |c: u8| f32::from(c) / 255.;
+    gpui::Rgba {
+        r: channel(r),
+        g: channel(g),
+        b: channel(b),
+        a: channel(alpha.unwrap_or(u8::MAX)),
     }
 }
 
@@ -614,6 +971,76 @@ pub fn slider_value(field: &PropField, min: f64, max: f64, fraction: f32) -> Val
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[gpui::test]
+    fn choice_menu_restores_its_trigger_after_escape_and_commit(cx: &mut gpui::TestAppContext) {
+        use fframes_studio_protocol::PropsSchema;
+
+        use crate::kit::test_support::{log, press, tab};
+
+        let (panel, cx) = cx.add_window_view(|window, cx| {
+            let mut panel = PropsPanel::new(window, cx);
+            panel.snapshot = Some(PropsSnapshot {
+                generation: 0,
+                props_json: None,
+                doc: None,
+                can_undo: false,
+                can_redo: false,
+                editing: PropsEditing::Enabled,
+                notice: None,
+            });
+            panel.selected = Some(EditorObjectIdentity {
+                scene_instance_key: "scene".into(),
+                component_key: "Card".into(),
+                object_key: "card".into(),
+                repeat_key: String::new(),
+            });
+            panel.info = Some(Ok(Some(PropsInfo {
+                schema: PropsSchema {
+                    component: "Card".into(),
+                    fields: vec![field(
+                        PropKind::Choice {
+                            options: ["a", "b", "c", "d", "e"].map(String::from).to_vec(),
+                        },
+                        None,
+                        None,
+                    )],
+                },
+                code_values: Default::default(),
+                values: Default::default(),
+            })));
+            panel
+        });
+        let events = log();
+        let observed = events.clone();
+        cx.update(|_, cx| {
+            cx.subscribe(&panel, move |_, event: &PropsEvent, _| {
+                observed.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        tab(cx);
+        let trigger = cx.update(|window, cx| window.focused(cx).expect("choice trigger focused"));
+        press(cx, "enter");
+        assert!(panel.read_with(cx, |panel, _| panel.menu.is_some()));
+        press(cx, "escape");
+        assert!(cx.update(|window, _| trigger.is_focused(window)));
+        assert!(events.borrow().is_empty(), "Escape must not edit props");
+
+        press(cx, "enter");
+        assert!(panel.read_with(cx, |panel, _| panel.menu.is_some()));
+        press(cx, "down");
+        press(cx, "enter");
+        assert!(panel.read_with(cx, |panel, _| panel.menu.is_none()));
+        assert!(cx.update(|window, _| trigger.is_focused(window)));
+        assert!(matches!(
+            events.borrow().as_slice(),
+            [PropsEvent::Run(PropsCommand::Set { field, value: Some(Value::String(_)), .. })]
+                if field == "size"
+        ));
+        press(cx, "enter");
+        assert!(panel.read_with(cx, |panel, _| panel.menu.is_some()));
+    }
 
     fn field(kind: PropKind, min: Option<f64>, max: Option<f64>) -> PropField {
         PropField {
@@ -670,5 +1097,15 @@ mod tests {
         assert_eq!(slider_value(&integer, 0., 9., 0.5), json!(5));
         let plain = field(PropKind::Number, Some(0.), Some(1.));
         assert_eq!(slider_value(&plain, 0., 1., 0.333_333), json!(0.33));
+    }
+
+    #[test]
+    fn picked_colours_keep_the_alpha_the_value_had() {
+        assert_eq!(parse_hex("#ff5500"), Some(([255, 85, 0], None)));
+        assert_eq!(parse_hex("#FF550080"), Some(([255, 85, 0], Some(0x80))));
+        assert_eq!(parse_hex("#ff55"), None);
+        assert_eq!(parse_hex("#gg5500"), None);
+        assert_eq!(hex([255, 85, 0], None), "#ff5500");
+        assert_eq!(hex([255, 85, 0], Some(0x80)), "#ff550080");
     }
 }

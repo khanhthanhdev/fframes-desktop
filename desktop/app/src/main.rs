@@ -166,7 +166,13 @@ fn run_studio(observation: Option<Observed>) {
             let settings = studio_engine::app_paths::AppPaths::system()
                 .map(|paths| studio_engine::app_settings::AppSettings::load(&paths))
                 .unwrap_or_default();
-            studio_theme::init(cx, settings.theme);
+            studio_theme::init_prefs(
+                cx,
+                studio_theme::UiPrefs {
+                    theme: settings.theme,
+                    motion: settings.motion,
+                },
+            );
             // Observed (telemetry) runs are tests: they never reach the network.
             let check_for_update = observation.is_none() && !settings.update_check_disabled;
             let bounds = Bounds::centered(None, size(px(1275.), px(800.)), cx);
@@ -181,7 +187,10 @@ fn run_studio(observation: Option<Observed>) {
                         titlebar: Some(gpui::TitlebarOptions {
                             title: Some("fframes Studio".into()),
                             appears_transparent: true,
-                            traffic_light_position: Some(point(px(20.), px(20.))),
+                            traffic_light_position: Some(point(
+                                px(studio_theme::METRICS.layout.traffic_light_inset),
+                                px(studio_theme::METRICS.layout.traffic_light_inset),
+                            )),
                         }),
                         app_owns_titlebar_drag: true,
                         ..Default::default()

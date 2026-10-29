@@ -12,6 +12,7 @@ use gpui::{
     FontStyle, FontWeight, Hsla, StrikethroughStyle, TextRun, TextStyle, UnderlineStyle, px,
 };
 use studio_markdown::{InlineRun, mend::PENDING_LINK_URL};
+use studio_theme::METRICS;
 
 use super::links::{LinkTarget, classify};
 use super::style::MdStyle;
@@ -128,12 +129,12 @@ pub fn runs_for(segs: &[Seg], base: &TextStyle, mono: &gpui::SharedString) -> Ve
                 color,
                 background_color: seg.background,
                 underline: seg.underline.then_some(UnderlineStyle {
-                    thickness: px(1.),
+                    thickness: px(METRICS.size.divider),
                     color: Some(color),
                     wavy: false,
                 }),
                 strikethrough: seg.strike.then_some(StrikethroughStyle {
-                    thickness: px(1.),
+                    thickness: px(METRICS.size.divider),
                     color: Some(color),
                 }),
             }

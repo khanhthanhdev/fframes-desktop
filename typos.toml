@@ -1,7 +1,8 @@
 [files]
 # Keep the upstream minified player unchanged; its identifiers are not prose.
 # The Lottie files are third-party animations: their layer names are not prose either.
-extend-exclude = ["*.snapshot.txt", "sessions.json", "package-lock.json", "examples/the-why/landing/vendor/hls.min.js", "landing/vendor/hls.min.js", "examples/lottie-launch/media/*.json"]
+# Recorded agent wire captures (*.jsonl) are full of random tool ids.
+extend-exclude = ["*.snapshot.txt", "sessions.json", "package-lock.json", "examples/the-why/landing/vendor/hls.min.js", "landing/vendor/hls.min.js", "examples/lottie-launch/media/*.json", "*.jsonl"]
 [default]
 # Git commit hashes in plans and reports (`cb5d0daa`)
 extend-ignore-re = ["\\b[0-9a-f]{7,40}\\b"]
@@ -19,3 +20,11 @@ Secur = "Secur"
 metalness = "metalness"
 lod = "lod"
 iy = "iy"
+# Codex thread ids (`thr-…`)
+thr = "thr"
+# "café" split at the accent in text-input tests
+caf = "caf"
+# tasklist's `/FO CSV` flag
+FO = "FO"
+# Claude CLI's `ede_diagnostic` error tag in wire-shape reports
+ede = "ede"

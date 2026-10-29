@@ -1,6 +1,7 @@
 //! Split layout: old on the left, new on the right, paired per hunk.
 
 use gpui::{Div, ParentElement, Styled, div, px};
+use studio_theme::METRICS;
 
 use super::model::{DiffLine, Hunk, LineKind, gutter_width};
 use super::paint::{
@@ -61,7 +62,7 @@ pub fn row(hunk: &Hunk, left: Option<u32>, right: Option<u32>, style: &RowStyle)
         .child(half(left, Side::Old, style))
         .child(
             div()
-                .w(px(1.))
+                .w(px(METRICS.size.divider))
                 .self_stretch()
                 .flex_none()
                 .bg(style.colors.line),

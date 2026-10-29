@@ -221,7 +221,7 @@ impl RenderOnce for Disclosure {
                     .path("icons/chevron-right.svg")
                     .size(px(12.))
                     .flex_shrink_0()
-                    .text_color(Hsla::from(theme.editor.text_3))
+                    .text_color(Hsla::from(theme.colors.text_3))
                     .with_transformation(Transformation::rotate(radians(turn))),
             )
             .children(children)

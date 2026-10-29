@@ -302,9 +302,12 @@ fn codec_id(codec: ExportCodec) -> AVCodecID {
 }
 
 /// Speed settings only: no quality target, so the bitrate shared with size estimates applies.
+/// OpenH264 takes that bitrate too, but must not skip frames to hold it: exports are
+/// frame-exact.
 fn encoder_params(encoder: &str) -> Option<&'static [(&'static str, &'static str)]> {
     match encoder {
         "libx264" | "libx265" => Some(&[("preset", "veryfast")]),
+        "libopenh264" => Some(&[("allow_skip_frames", "0")]),
         "libvpx-vp9" => Some(&[("deadline", "good"), ("cpu-used", "4"), ("row-mt", "1")]),
         _ => None,
     }

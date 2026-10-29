@@ -2,20 +2,20 @@
 //! middle, then mute, the timeline's Split and zoom, build and cancel.
 
 use gpui::{
-    Context, InteractiveElement, IntoElement, ParentElement, Styled, div, prelude::FluentBuilder,
-    px,
+    Context, InteractiveElement, IntoElement, ParentElement, Pixels, Styled, div,
+    prelude::FluentBuilder, px,
 };
 use studio_engine::engine::backend::Command;
-use studio_theme::{METRICS, TextStyle, Theme, text_style};
+use studio_theme::{METRICS, TextStyle, text_style};
 
 use super::StudioShell;
-use crate::kit::{Icon, IconButtonSize, Slider, SliderTrack, with_tooltip};
+use crate::kit::{Divider, Emphasis, Icon, IconButtonSize, Slider, with_tooltip};
 use crate::timeline::TimelineControls;
 
 impl StudioShell {
     pub(super) fn render_transport(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
-        let palette = theme.editor;
+        let palette = theme.colors;
         let enabled = !self.busy;
         let project = self.presentation.project.clone();
         let mode = transport_mode(self.player_width);
@@ -92,12 +92,12 @@ impl StudioShell {
                 "build-preview",
                 "Build preview",
                 Icon::Hammer,
-                IconButtonSize::Medium,
+                IconButtonSize::Md,
                 can_build,
                 cx,
                 |s, cx| s.dispatch(Command::Build, cx),
             )
-            .accent(&theme)
+            .emphasis(Emphasis::Primary)
             .into_any_element()
         };
         let cancel = self
@@ -105,22 +105,22 @@ impl StudioShell {
                 "cancel-preview",
                 "Cancel build",
                 Icon::Square,
-                IconButtonSize::Medium,
+                IconButtonSize::Md,
                 can_cancel,
                 cx,
                 |s, cx| s.dispatch(Command::CancelBuild, cx),
             )
-            .ctl_fill(&theme);
+            .emphasis(Emphasis::Neutral);
         let playback = div()
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(14.))
+            .gap(px(METRICS.space_3))
             .child(self.action_icon_button(
                 "previous-frame",
                 "Previous frame",
                 Icon::StepBack,
-                IconButtonSize::Small,
+                IconButtonSize::Sm,
                 has_frames,
                 cx,
                 |s, cx| s.step_preview(-1, cx),
@@ -130,19 +130,19 @@ impl StudioShell {
                     "play-pause",
                     if playing { "Pause" } else { "Play" },
                     if playing { Icon::Pause } else { Icon::Play },
-                    IconButtonSize::Large,
+                    IconButtonSize::Md,
                     has_frames,
                     cx,
                     |s, cx| s.toggle_playback(cx),
                 )
-                .inverted(&theme)
-                .rounded(px(16.)),
+                .round()
+                .emphasis(Emphasis::Neutral),
             )
             .child(self.action_icon_button(
                 "next-frame",
                 "Next frame",
                 Icon::StepForward,
-                IconButtonSize::Small,
+                IconButtonSize::Sm,
                 has_frames,
                 cx,
                 |s, cx| s.step_preview(1, cx),
@@ -160,13 +160,13 @@ impl StudioShell {
         let split = if mode == TransportMode::Full {
             split
         } else {
-            split.icon_only(&theme)
+            split.icon_only()
         };
         let mut tools = div()
             .flex()
             .flex_none()
             .items_center()
-            .gap(px(TOOLS_GAP))
+            .gap(px(METRICS.layout.transport_tools_gap))
             .child(self.action_icon_button(
                 "mute-audio",
                 if self.muted { "Unmute (M)" } else { "Mute (M)" },
@@ -175,30 +175,30 @@ impl StudioShell {
                 } else {
                     Icon::Volume2
                 },
-                IconButtonSize::Medium,
+                IconButtonSize::Md,
                 self.displayed.is_some(),
                 cx,
                 |s, cx| s.toggle_mute(cx),
             ))
-            .child(vertical_divider(&theme))
+            .child(Divider::vertical(&theme))
             .child(split)
             .child(self.action_icon_button(
                 "timeline-cycle",
                 "Cycle scene (S)",
                 Icon::Layers,
-                IconButtonSize::Medium,
+                IconButtonSize::Md,
                 timeline.enabled,
                 cx,
                 |s, cx| s.timeline.update(cx, |t, cx| t.cycle_scene(cx)),
             ));
         if mode != TransportMode::Narrow {
             tools = tools
-                .child(vertical_divider(&theme))
+                .child(Divider::vertical(&theme))
                 .child(self.action_icon_button(
                     "timeline-zoom-out",
                     "Zoom out",
                     Icon::ZoomOut,
-                    IconButtonSize::Medium,
+                    IconButtonSize::Md,
                     timeline.enabled,
                     cx,
                     |s, cx| s.timeline.update(cx, |t, cx| t.zoom(0.5, cx)),
@@ -210,7 +210,7 @@ impl StudioShell {
                     "timeline-zoom-in",
                     "Zoom in",
                     Icon::ZoomIn,
-                    IconButtonSize::Medium,
+                    IconButtonSize::Md,
                     timeline.enabled,
                     cx,
                     |s, cx| s.timeline.update(cx, |t, cx| t.zoom(2., cx)),
@@ -226,7 +226,7 @@ impl StudioShell {
                 ));
         }
         let tools = tools
-            .child(vertical_divider(&theme))
+            .child(Divider::vertical(&theme))
             .child(build)
             .child(cancel)
             .child(self.overflow_trigger(cx));
@@ -245,7 +245,7 @@ impl StudioShell {
                 div()
                     .flex()
                     .flex_1()
-                    .flex_basis(px(0.))
+                    .flex_basis(Pixels::ZERO)
                     .min_w_0()
                     .overflow_hidden()
                     .items_center()
@@ -256,7 +256,7 @@ impl StudioShell {
                 div()
                     .flex()
                     .flex_1()
-                    .flex_basis(px(0.))
+                    .flex_basis(Pixels::ZERO)
                     .justify_end()
                     .items_center()
                     .child(tools),
@@ -267,57 +267,33 @@ impl StudioShell {
     /// Cap's 72 px zoom slider: Fit at the left end, the closest zoom at the right. It drives
     /// the timeline, which reports the new zoom back through its controls.
     fn zoom_slider(&self, timeline: TimelineControls) -> gpui::Div {
-        let palette = self.theme.editor;
         let entity = self.timeline.clone();
         // The half-thumb inset keeps the knob inside the 72 px.
         div()
             .flex()
             .flex_none()
-            .w(px(ZOOM_SLIDER_W))
-            .px(px(ZOOM_THUMB / 2.))
+            .w(px(METRICS.layout.zoom_slider_w))
+            .px(px(METRICS.size.slider_thumb / 2.))
             .child(
-                Slider::new(
-                    "timeline-zoom-slider",
-                    timeline.zoom_fraction,
-                    SliderTrack::default(),
-                )
-                .flex()
-                .track(px(ZOOM_TRACK_H), palette.ctl_active.into())
-                .fill(palette.accent.into())
-                .thumb(px(ZOOM_THUMB), palette.thumb.into(), None)
-                .thumb_shadow()
-                .label("Timeline zoom")
-                .disabled(!timeline.enabled)
-                .on_change(0., move |fraction, _, cx| {
-                    entity.update(cx, |t, cx| t.set_zoom_fraction(*fraction, cx));
-                }),
+                Slider::new(&self.theme, "timeline-zoom-slider", timeline.zoom_fraction)
+                    .flex()
+                    .label("Timeline zoom")
+                    .disabled(!timeline.enabled)
+                    .on_change(0., move |fraction, _, cx| {
+                        entity.update(cx, |t, cx| t.set_zoom_fraction(*fraction, cx));
+                    }),
             )
     }
 }
 
-/// A 16 px hairline between the groups of the transport's tools.
-fn vertical_divider(theme: &Theme) -> gpui::Div {
-    div().w(px(1.)).h(px(16.)).flex_none().bg(theme.editor.line)
-}
-
-/// Tighter than the bar's gaps so the tools fit beside centred playback in a 1280 px window.
-const TOOLS_GAP: f32 = 6.;
-const ZOOM_SLIDER_W: f32 = 72.;
-const ZOOM_TRACK_H: f32 = 3.;
-const ZOOM_THUMB: f32 = 12.;
-
-/// The bar keeps playback centred while each side fits half of it: the tools measure
-/// 566 px with the slider and the Split and Build labels, 333 px without them and 214 px
-/// without the zoom group, beside 108 px of playback, 24 px of padding and two 12 px gaps.
-/// Below this player width the slider and the labels go.
-const TRANSPORT_COMPACT_BELOW: f32 = 1290.;
-
-/// Player width under which the zoom buttons and Fit go too; a 1280x800 window gives the
-/// player about 824 px, so the zoom stays there.
-const TRANSPORT_NARROW_BELOW: f32 = 820.;
-
-/// Player width under which the clock drops the total.
-const TRANSPORT_TOTAL_HIDDEN_BELOW: f32 = 620.;
+// The breakpoints are `METRICS.layout`'s. The bar keeps playback centred while each side
+// fits half of it: the tools measure 566 px with the slider and the Split and Build labels,
+// 333 px without them and 214 px without the zoom group, beside about 100 px of playback,
+// 24 px of padding and two 12 px gaps. Below `transport_compact_below` the slider and the
+// labels go; below `transport_narrow_below` the zoom buttons and Fit go too (a 1280x800
+// window gives the player about 824 px, so the zoom stays there); below
+// `transport_total_hidden_below` the clock drops the total. The tools' gap,
+// `transport_tools_gap`, is tighter than the bar's so they fit in a 1280 px window.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TransportMode {
@@ -327,9 +303,10 @@ pub(super) enum TransportMode {
 }
 
 pub(super) fn transport_mode(player_width: f32) -> TransportMode {
-    if player_width < TRANSPORT_NARROW_BELOW {
+    let layout = METRICS.layout;
+    if player_width < layout.transport_narrow_below {
         TransportMode::Narrow
-    } else if player_width < TRANSPORT_COMPACT_BELOW {
+    } else if player_width < layout.transport_compact_below {
         TransportMode::Compact
     } else {
         TransportMode::Full
@@ -337,7 +314,7 @@ pub(super) fn transport_mode(player_width: f32) -> TransportMode {
 }
 
 pub(super) fn show_total_time(player_width: f32) -> bool {
-    player_width >= TRANSPORT_TOTAL_HIDDEN_BELOW
+    player_width >= METRICS.layout.transport_total_hidden_below
 }
 
 /// `m:ss.cc`, truncated to centiseconds.

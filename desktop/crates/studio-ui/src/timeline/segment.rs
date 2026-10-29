@@ -6,10 +6,8 @@ use studio_theme::{
 
 use crate::kit::{Icon, icon};
 
-/// Left inset of the segment label and the room kept on its right.
-const LABEL_PAD_LEFT: f32 = 13.;
-const LABEL_PAD_RIGHT: f32 = 10.;
-const ACCENT_BAR_W: f32 = 3.;
+/// The gap between a segment's label and its length.
+const LABEL_GAP: f32 = 6.;
 
 /// Where a segment label sits: `left` from the segment's left edge, `width` available.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -23,9 +21,13 @@ pub(super) struct LabelSlice {
 pub(super) fn label_slice(x: f32, width: f32, view_width: f32) -> LabelSlice {
     let visible_start = (-x).clamp(0., width);
     let visible_end = (view_width - x).min(width).max(visible_start);
+    let (pad_left, pad_right) = (
+        METRICS.layout.segment_label_pad_left,
+        METRICS.layout.segment_label_pad_right,
+    );
     LabelSlice {
-        left: visible_start + LABEL_PAD_LEFT,
-        width: (visible_end - visible_start - LABEL_PAD_LEFT - LABEL_PAD_RIGHT).max(0.),
+        left: visible_start + pad_left,
+        width: (visible_end - visible_start - pad_left - pad_right).max(0.),
     }
 }
 
@@ -52,6 +54,7 @@ pub(super) fn track_row(
     segments: Vec<gpui::AnyElement>,
 ) -> gpui::Div {
     let metrics = METRICS;
+    let (tile_radius, band_radius) = (px(metrics.radius.item), px(metrics.radius.segment));
     div()
         .absolute()
         .left_0()
@@ -62,15 +65,14 @@ pub(super) fn track_row(
         .items_center()
         .gap(px(metrics.space_2))
         .child(
-            text_style(div(), TextStyle::Small)
-                .font_weight(gpui::FontWeight::MEDIUM)
+            text_style(div(), TextStyle::Label)
                 .w(px(metrics.track_gutter_w))
                 .flex_none()
                 .flex()
                 .items_center()
                 .gap(px(metrics.space_2))
                 .overflow_hidden()
-                .text_color(theme.editor.text_2)
+                .text_color(theme.colors.text_2)
                 .child(
                     div()
                         .size(px(metrics.track_tile))
@@ -78,9 +80,9 @@ pub(super) fn track_row(
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(6.))
-                        .bg(theme.editor.ctl)
-                        .child(icon(glyph, metrics.icon_sm, theme.editor.text_2)),
+                        .rounded(tile_radius)
+                        .bg(theme.colors.ctl)
+                        .child(icon(glyph, metrics.icon_sm, theme.colors.text_2)),
                 )
                 .child(
                     div()
@@ -98,8 +100,8 @@ pub(super) fn track_row(
                 .min_w_0()
                 .h_full()
                 .overflow_hidden()
-                .rounded(px(metrics.radius_segment))
-                .bg(theme.editor.card_2)
+                .rounded(band_radius)
+                .bg(theme.colors.card_2)
                 .children(segments),
         )
 }
@@ -120,6 +122,7 @@ pub(super) fn segment(
     let metrics = METRICS;
     let colors = segment_colors_for(theme.appearance, kind, selected);
     let slice = label_slice(x, width, view_width);
+    let radius = px(metrics.radius.segment);
     div()
         .absolute()
         .left(px(x))
@@ -127,7 +130,7 @@ pub(super) fn segment(
         .w(px(width))
         .h(px(metrics.track_h))
         .overflow_hidden()
-        .rounded(px(metrics.radius_segment))
+        .rounded(radius)
         .border_1()
         // Selected: the track colour itself, over the fill that is already stronger.
         .border_color(if selected {
@@ -142,7 +145,7 @@ pub(super) fn segment(
                 .left_0()
                 .top_0()
                 .bottom_0()
-                .w(px(ACCENT_BAR_W))
+                .w(px(metrics.layout.segment_accent_bar_w))
                 .bg(track_color(kind)),
         )
         .child(
@@ -154,22 +157,21 @@ pub(super) fn segment(
                 .w(px(slice.width))
                 .flex()
                 .items_center()
-                .gap(px(6.))
+                .gap(px(LABEL_GAP))
                 .overflow_hidden()
                 .whitespace_nowrap()
                 .child(
-                    div()
+                    text_style(div(), TextStyle::Label)
                         .min_w_0()
                         .overflow_hidden()
                         .text_ellipsis()
-                        .font_weight(gpui::FontWeight::MEDIUM)
                         .text_color(colors.label)
                         .child(label),
                 )
                 .child(
                     div()
                         .flex_none()
-                        .text_color(theme.editor.text_3)
+                        .text_color(theme.colors.text_3)
                         .child(detail),
                 ),
         )
@@ -181,7 +183,8 @@ mod tests {
 
     #[test]
     fn segment_label_anchors_to_visible_slice() {
-        let inner = LABEL_PAD_LEFT + LABEL_PAD_RIGHT;
+        const LABEL_PAD_LEFT: f32 = METRICS.layout.segment_label_pad_left;
+        let inner = LABEL_PAD_LEFT + METRICS.layout.segment_label_pad_right;
         // Fully visible: label starts after the left padding.
         let whole = label_slice(10., 100., 500.);
         assert_eq!(whole.left, LABEL_PAD_LEFT);

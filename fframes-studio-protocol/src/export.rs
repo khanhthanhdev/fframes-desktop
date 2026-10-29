@@ -70,11 +70,12 @@ impl ExportCodec {
     pub const ALL: [Self; 4] = [Self::Mpeg4, Self::H264, Self::Hevc, Self::Vp9];
 
     /// FFmpeg encoders that produce this codec, in order of preference. Only software
-    /// encoders: hardware ones can be listed by the build and still fail to open.
+    /// encoders: hardware ones can be listed by the build and still fail to open. H.264
+    /// prefers libx264 (Windows); the macOS and Linux SDKs ship OpenH264 instead.
     pub fn encoders(self) -> &'static [&'static str] {
         match self {
             Self::Mpeg4 => &["mpeg4"],
-            Self::H264 => &["libx264"],
+            Self::H264 => &["libx264", "libopenh264"],
             Self::Hevc => &["libx265"],
             Self::Vp9 => &["libvpx-vp9"],
         }
@@ -345,6 +346,11 @@ mod tests {
             ..Default::default()
         };
         assert!(capabilities.accepts(&h264).is_err());
+    }
+
+    #[test]
+    fn h264_prefers_libx264_and_falls_back_to_openh264() {
+        assert_eq!(ExportCodec::H264.encoders(), ["libx264", "libopenh264"]);
     }
 
     #[test]

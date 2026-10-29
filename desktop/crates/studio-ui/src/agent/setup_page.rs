@@ -49,7 +49,11 @@ impl ConversationPanel {
     ) -> AnyElement {
         let configured = snapshot.adapter.provider.is_some();
         let g = guidance(&snapshot.adapter.readiness, configured);
-        let mut column = div().id("agent-setup-page").flex().flex_col().gap(px(8.));
+        let mut column = div()
+            .id("agent-setup-page")
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_2));
         column = column.child(
             self.section(&g.headline)
                 .children(g.steps.iter().map(|s| self.line(s.clone()))),
@@ -115,7 +119,7 @@ impl ConversationPanel {
                         "agent-handoff-continue-draft",
                         "Continue captured draft",
                         true,
-                        Tone::Primary,
+                        Emphasis::Primary,
                         cx,
                         |this, _, cx| {
                             if let Some(workflow) = this.workflow().cloned() {
@@ -132,7 +136,7 @@ impl ConversationPanel {
                         "agent-handoff-restart-accepted",
                         "Restart from accepted",
                         true,
-                        Tone::Normal,
+                        Emphasis::Neutral,
                         cx,
                         |this, _, cx| {
                             if let Some(workflow) = this.workflow().cloned() {
@@ -149,7 +153,7 @@ impl ConversationPanel {
                         "agent-handoff-cancel",
                         "Cancel switch",
                         true,
-                        Tone::Normal,
+                        Emphasis::Neutral,
                         cx,
                         |this, _, cx| {
                             if let Some(workflow) = this.workflow().cloned() {
@@ -174,7 +178,7 @@ impl ConversationPanel {
                         "agent-transfer-retained-queue",
                         "Explicitly transfer queued briefs",
                         !selection_busy && !switch_pending,
-                        Tone::Normal,
+                        Emphasis::Neutral,
                         cx,
                         |this, _, cx| {
                             if let Some(workflow) = this.workflow().cloned() {
@@ -186,7 +190,7 @@ impl ConversationPanel {
                         "agent-clear-retained-queue",
                         "Clear held briefs",
                         !selection_busy && !switch_pending,
-                        Tone::Normal,
+                        Emphasis::Neutral,
                         cx,
                         |this, _, cx| {
                             if let Some(workflow) = this.workflow().cloned() {
@@ -214,7 +218,7 @@ impl ConversationPanel {
                     "agent-restore-session",
                     "Use restored session for next task",
                     !selection_busy && !switch_pending,
-                    Tone::Normal,
+                    Emphasis::Neutral,
                     cx,
                     |this, _, cx| {
                         if let Some(workflow) = this.workflow().cloned() {
@@ -227,7 +231,7 @@ impl ConversationPanel {
                 "agent-dismiss-session",
                 "Dismiss saved session",
                 !selection_busy && !switch_pending,
-                Tone::Normal,
+                Emphasis::Neutral,
                 cx,
                 |this, _, cx| {
                     if let Some(workflow) = this.workflow().cloned() {
@@ -267,7 +271,7 @@ impl ConversationPanel {
                                 this.key_in_field(&field, event, false, window, cx);
                             },
                         ))
-                        .child(TextInput::plain(
+                        .child(TextInput::new(
                             &this.theme,
                             SharedString::from(format!("setup-{label}")),
                             input,
@@ -286,10 +290,10 @@ impl ConversationPanel {
                             .disabled(!editable)
                     })
                     .collect();
-                field_row(
+                FormField::row(
                     &self.theme,
                     "Protocol",
-                    SegmentedControl::settings(&self.theme, "agent-wire", options).on_select(
+                    SegmentedControl::new(&self.theme, "agent-wire", options).on_select(
                         move |index, _, app| {
                             if let Some(&wire) = AgentWire::ALL.get(*index) {
                                 entity.update(app, |this, cx| {
@@ -327,16 +331,16 @@ impl ConversationPanel {
                     McpChoice::Baseline => "Project tools: MCP and command line",
                     McpChoice::Unsupported => "Project tools: command line only",
                 };
-                field_row(
+                FormField::row(
                     &self.theme,
                     label,
-                    Toggle::plain(
+                    Toggle::new(
                         &self.theme,
                         "agent-mcp-toggle",
                         self.mcp_choice == McpChoice::Baseline,
                     )
                     .label(label)
-                    .disabled(&self.theme, !editable)
+                    .disabled(!editable)
                     .on_change(move |_, _, app| {
                         entity.update(app, |this, cx| {
                             this.mcp_choice = match this.mcp_choice {
@@ -357,7 +361,7 @@ impl ConversationPanel {
                         "agent-save-adapter",
                         "Save",
                         editable && !self.saves.is_pending(),
-                        Tone::Primary,
+                        Emphasis::Primary,
                         cx,
                         |this, _, cx| this.save_adapter(cx),
                     ))
@@ -365,7 +369,7 @@ impl ConversationPanel {
                         "agent-check-adapter",
                         "Check adapter",
                         controls.check_adapter,
-                        Tone::Normal,
+                        Emphasis::Neutral,
                         cx,
                         |this, _, cx| {
                             if let Some(w) = this.workflow().cloned() {

@@ -282,7 +282,7 @@ fn proof(lb: f32) -> Svgr<'static> {
     let seconds = THIS_RENDER_S * count;
     let fps = THIS_FRAMES / THIS_RENDER_S;
     let (so, sd) = rise(lb, PROOF + 0.8, 30.0);
-    let (fo, fd) = rise(lb, PROOF + 1.6, 30.0);
+    let (po, pd) = rise(lb, PROOF + 1.6, 30.0);
     let no = prog(lb, PROOF + 3.5, PROOF + 4.1);
     fframes::svgr!(
         <g>
@@ -295,7 +295,7 @@ fn proof(lb: f32) -> Svgr<'static> {
                 <text x="112" y="560" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="180" letter-spacing="-7.2" fill={ACTION}>{format!("{seconds:.1} s")}</text>
                 <text x="124" y="620" font-family={MONO} font-weight="500" font-size="20" letter-spacing="3" fill={SECONDARY}>"TO RENDER AND ENCODE ALL OF IT"</text>
             </g>
-            <g opacity={fo} transform={at(0.0, fd)}>
+            <g opacity={po} transform={at(0.0, pd)}>
                 <text x="1052" y="560" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="180" letter-spacing="-7.2" fill={TEXT}>{format!("{:.0}", fps * count.min(1.0))}</text>
                 <text x="1064" y="620" font-family={MONO} font-weight="500" font-size="20" letter-spacing="3" fill={SECONDARY}>"FRAMES EVERY SECOND"</text>
             </g>

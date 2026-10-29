@@ -1,35 +1,20 @@
-//! `SegmentedControl` -- one component for the four idioms the Solid app grew
-//! independently (digest section 7, item 13).
-//!
-//! | idiom | where | shape |
-//! |---|---|---|
-//! | sliding pill | `packages/ui-solid/src/SwitchTab.tsx` | bordered strip, `KTabs.Indicator` slides a `bg-gray-1` pill |
-//! | tab rail | `ConfigSidebar.tsx`, `FrameButton.tsx` | icon triggers, `size-9` indicator box |
-//! | flat pills | `ExportPage.tsx` | loose `gap-1.5` buttons, selected `bg-gray-3 border-gray-5` |
-//! | icon grid | `ConfigSidebar.tsx` text-align | `grid-cols-3` cells in a bordered box, selected `bg-gray-5` |
-//!
-//! The superset is: a container (padding, radius, border, fill, gap) holding
-//! items (padding, radius, text size/weight, per-state fill and colour), each
-//! either a label, an icon, or both. The tab-rail idiom keeps its own component
-//! ([`crate::kit::TabRail`]) because its items are `flex-1` icon boxes with a
-//! separate indicator layer, not padded pills.
+//! `SegmentedControl`: exclusive options on a `ctl` trough, the selected one a raised
+//! pill. Options carry a label, an icon, or both.
 //!
 //! The indicator does not slide. Kobalte positions it from the selected
 //! trigger's measured rect and animates a transform; this gpui rev has no
-//! transform, so the selected item paints its own fill -- which is what the
-//! settings window has always done here.
-
+//! transform, so the selected item paints its own fill.
 use std::rc::Rc;
 
 use gpui::{
-    App, Bounds, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement,
-    Pixels, RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Window, div,
+    App, Bounds, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels,
+    RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Window, div,
     prelude::FluentBuilder, px, svg,
 };
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, Shadow, TextStyle, Theme, shadow_for, text_style};
 
-use super::interact::{Nav, bounds_probe, focusable, nav_key, step_enabled};
+use super::interact::{Nav, States, bounds_probe, dim_disabled, focusable, nav_key, step_enabled};
 
 /// One segment. `selected` is computed by the caller so the control never has
 /// to know what the value type is.
@@ -41,6 +26,8 @@ pub struct SegmentOption {
     pub name: Option<SharedString>,
     pub selected: bool,
     pub disabled: bool,
+    /// The option's element id; `{id}-{index}` when not set.
+    pub id: Option<SharedString>,
 }
 
 impl SegmentOption {
@@ -51,6 +38,7 @@ impl SegmentOption {
             name: None,
             selected,
             disabled: false,
+            id: None,
         }
     }
 
@@ -61,7 +49,15 @@ impl SegmentOption {
             name: None,
             selected,
             disabled: false,
+            id: None,
         }
+    }
+
+    /// Gives the option a stable element id of its own instead of `{id}-{index}`, for
+    /// options that already had one.
+    pub fn id(mut self, id: impl Into<SharedString>) -> Self {
+        self.id = Some(id.into());
+        self
     }
 
     pub fn disabled(mut self, disabled: bool) -> Self {
@@ -100,29 +96,18 @@ pub fn option_at<T: Copy>(values: &[T], index: usize) -> Option<T> {
 /// argument, and the index *is* the event here.
 type SegmentHandler = Box<dyn Fn(&usize, &mut Window, &mut App) + 'static>;
 
+/// The trough's inset around its items.
+const TROUGH_INSET: f32 = 2.;
+/// An item's horizontal padding.
+const ITEM_PAD_X: f32 = 10.;
+
+/// Exclusive options on a `ctl` trough; the selected one is a raised `segment_selected`
+/// pill. Each option is `{id}-{index}`.
 #[derive(IntoElement)]
 pub struct SegmentedControl {
     id: ElementId,
+    theme: Theme,
     options: Vec<SegmentOption>,
-    container_padding: Pixels,
-    container_radius: Pixels,
-    container_gap: Pixels,
-    container_bg: Option<Hsla>,
-    container_border: Option<Hsla>,
-    item_padding_x: Pixels,
-    item_padding_y: Pixels,
-    item_height: Option<Pixels>,
-    item_radius: Pixels,
-    item_gap: Pixels,
-    text_size: Pixels,
-    font_weight: Option<FontWeight>,
-    icon_size: Pixels,
-    selected_bg: Option<Hsla>,
-    selected_text: Hsla,
-    idle_text: Hsla,
-    idle_bg: Option<Hsla>,
-    hover_bg: Option<Hsla>,
-    selected_shadow: Vec<gpui::BoxShadow>,
     stretch: bool,
     on_select: Option<SegmentHandler>,
     on_option_bounds: Option<OptionBoundsHandler>,
@@ -132,146 +117,20 @@ pub struct SegmentedControl {
 type OptionBoundsHandler = Rc<dyn Fn(usize, Bounds<Pixels>, &mut App)>;
 
 impl SegmentedControl {
-    fn base(theme: &Theme, id: impl Into<ElementId>, options: Vec<SegmentOption>) -> Self {
+    pub fn new(theme: &Theme, id: impl Into<ElementId>, options: Vec<SegmentOption>) -> Self {
         Self {
             id: id.into(),
+            theme: *theme,
             options,
-            container_padding: px(2.),
-            container_radius: px(8.),
-            container_gap: px(0.),
-            container_bg: None,
-            container_border: None,
-            item_padding_x: px(12.),
-            item_padding_y: px(4.),
-            item_height: None,
-            item_radius: px(6.),
-            item_gap: px(6.),
-            text_size: px(12.),
-            font_weight: Some(FontWeight::MEDIUM),
-            icon_size: px(14.),
-            selected_bg: None,
-            selected_text: theme.gray(12),
-            idle_text: theme.gray(11),
-            idle_bg: None,
-            hover_bg: None,
-            selected_shadow: Vec::new(),
             stretch: false,
             on_select: None,
             on_option_bounds: None,
         }
     }
 
-    pub fn settings(theme: &Theme, id: impl Into<ElementId>, options: Vec<SegmentOption>) -> Self {
-        Self {
-            container_bg: Some(theme.settings_fill()),
-            container_border: None,
-            container_radius: px(8.),
-            item_padding_x: px(10.),
-            item_padding_y: px(0.),
-            item_height: Some(px(24.)),
-            item_gap: px(4.),
-            icon_size: px(11.),
-            selected_bg: Some(if theme.is_dark() {
-                gpui::hsla(0., 0., 1., 0.16)
-            } else {
-                gpui::white()
-            }),
-            selected_text: theme.settings_text(),
-            idle_text: theme.settings_muted(),
-            hover_bg: Some(theme.settings_hover()),
-            selected_shadow: if theme.is_dark() {
-                Vec::new()
-            } else {
-                studio_theme::raised_pill_shadow()
-            },
-            ..Self::base(theme, id, options)
-        }
-    }
-
-    /// `ExportPage`'s loose pills: no container chrome, `flex gap-1.5`,
-    /// selected `bg-gray-3 border-gray-5 text-gray-12`, idle transparent with
-    /// `hover:bg-gray-3`.
-    pub fn pills(theme: &Theme, id: impl Into<ElementId>, options: Vec<SegmentOption>) -> Self {
-        Self {
-            container_padding: px(0.),
-            container_gap: px(6.),
-            container_bg: None,
-            container_border: None,
-            item_radius: px(8.),
-            selected_bg: Some(theme.gray(3)),
-            hover_bg: Some(theme.gray(3)),
-            idle_text: theme.gray(11),
-            ..Self::base(theme, id, options)
-        }
-    }
-
-    /// The editor's segmented control: an `ed-ctl` trough with a raised
-    /// `ed-card` pill on the selected item (a white 12% wash in dark, where a
-    /// lifted card would read as a hole).
-    pub fn editor(theme: &Theme, id: impl Into<ElementId>, options: Vec<SegmentOption>) -> Self {
-        let editor = theme.editor;
-        Self {
-            container_bg: Some(Hsla::from(editor.ctl)),
-            container_border: None,
-            item_padding_x: px(10.),
-            item_padding_y: px(0.),
-            item_height: Some(px(24.)),
-            selected_bg: Some(if theme.is_dark() {
-                gpui::hsla(0., 0., 1., 0.12)
-            } else {
-                Hsla::from(editor.card)
-            }),
-            selected_text: Hsla::from(editor.text_1),
-            idle_text: Hsla::from(editor.text_2),
-            hover_bg: Some(Hsla::from(editor.ctl_hover)),
-            selected_shadow: if theme.is_dark() {
-                Vec::new()
-            } else {
-                studio_theme::raised_pill_shadow()
-            },
-            ..Self::base(theme, id, options)
-        }
-    }
-
-    /// The text-align icon grid: `grid grid-cols-N gap-1 rounded-lg border
-    /// border-gray-3 bg-gray-2 p-1`, selected `bg-gray-5 text-gray-12`.
-    pub fn icons(theme: &Theme, id: impl Into<ElementId>, options: Vec<SegmentOption>) -> Self {
-        Self {
-            container_padding: px(4.),
-            container_gap: px(4.),
-            container_bg: Some(theme.gray(2)),
-            container_border: Some(theme.gray(3)),
-            item_padding_x: px(6.),
-            item_padding_y: px(6.),
-            selected_bg: Some(theme.gray(5)),
-            stretch: true,
-            ..Self::base(theme, id, options)
-        }
-    }
-
+    /// The options share the control's full width.
     pub fn stretch(mut self) -> Self {
         self.stretch = true;
-        self
-    }
-
-    pub fn text_size(mut self, size: Pixels) -> Self {
-        self.text_size = size;
-        self
-    }
-
-    pub fn item_height(mut self, height: Pixels) -> Self {
-        self.item_height = Some(height);
-        self
-    }
-
-    pub fn item_padding(mut self, x: Pixels, y: Pixels) -> Self {
-        self.item_padding_x = x;
-        self.item_padding_y = y;
-        self
-    }
-
-    pub fn idle_bg(mut self, bg: Hsla) -> Self {
-        self.idle_bg = Some(bg);
         self
     }
 
@@ -291,34 +150,21 @@ impl SegmentedControl {
 }
 
 impl RenderOnce for SegmentedControl {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = Theme::for_window(window, cx);
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let SegmentedControl {
             id,
+            theme,
             options,
-            container_padding,
-            container_radius,
-            container_gap,
-            container_bg,
-            container_border,
-            item_padding_x,
-            item_padding_y,
-            item_height,
-            item_radius,
-            item_gap,
-            text_size,
-            font_weight,
-            icon_size,
-            selected_bg,
-            selected_text,
-            idle_text,
-            idle_bg,
-            hover_bg,
-            selected_shadow,
             stretch,
             on_select,
             on_option_bounds,
         } = self;
+        let colors = theme.colors;
+        let states = States::of(&theme);
+        let selected_bg = Hsla::from(colors.segment_selected);
+        let selected_text = Hsla::from(colors.text_1);
+        let idle_text = Hsla::from(colors.text_2);
+        let selected_shadow = shadow_for(theme.appearance, Shadow::RaisedPill).into_vec();
 
         let handler: Option<Rc<SegmentHandler>> = on_select.map(Rc::new);
         let keyed = Rc::new(options.clone());
@@ -332,13 +178,9 @@ impl RenderOnce for SegmentedControl {
             .role(Role::RadioGroup)
             .flex()
             .flex_row()
-            .p(container_padding)
-            .gap(container_gap)
-            .rounded(container_radius)
-            .when_some(container_bg, |this, bg| this.bg(bg))
-            .when_some(container_border, |this, border| {
-                this.border_1().border_color(border)
-            })
+            .p(px(TROUGH_INSET))
+            .rounded(px(METRICS.radius.segment))
+            .bg(states.rest)
             .children(options.into_iter().enumerate().map(|(index, option)| {
                 let handler = handler.clone();
                 let keyed = keyed.clone();
@@ -346,92 +188,77 @@ impl RenderOnce for SegmentedControl {
                 let disabled = option.disabled;
                 let name = option.label.clone().or(option.name.clone());
 
-                focusable(
-                    div().id(SharedString::from(format!("{prefix}-{index}"))),
-                    &theme,
-                    disabled,
-                )
-                .role(Role::RadioButton)
-                .aria_selected(selected)
-                .relative()
-                .children(on_option_bounds.clone().map(|report| {
-                    bounds_probe(Rc::new(move |bounds, cx: &mut App| {
-                        report(index, bounds, cx)
+                let item_id = option
+                    .id
+                    .clone()
+                    .unwrap_or_else(|| SharedString::from(format!("{prefix}-{index}")));
+                let item = focusable(div().id(item_id), &theme, disabled)
+                    .role(Role::RadioButton)
+                    .aria_selected(selected)
+                    .relative()
+                    .children(on_option_bounds.clone().map(|report| {
+                        bounds_probe(Rc::new(move |bounds, cx: &mut App| {
+                            report(index, bounds, cx)
+                        }))
                     }))
-                }))
-                .when_some(name, |this, name| this.aria_label(name))
-                .flex()
-                .flex_row()
-                .items_center()
-                .justify_center()
-                .gap(item_gap)
-                .px(item_padding_x)
-                .when(f32::from(item_padding_y) > 0., |this| {
-                    this.py(item_padding_y)
-                })
-                .when_some(item_height, |this, height| this.h(height))
-                .rounded(item_radius)
-                .text_size(text_size)
-                .when(stretch, |this| this.flex_1())
-                .when_some(font_weight, |this, weight| this.font_weight(weight))
-                .when(disabled, |this| this.opacity(0.5))
-                .map(|this| {
-                    if selected {
-                        let this = this
-                            .text_color(selected_text)
-                            .when(!selected_shadow.is_empty(), |this| {
-                                this.shadow(selected_shadow.clone())
-                            });
-                        match selected_bg {
-                            Some(bg) => this.bg(bg),
-                            None => this,
-                        }
-                    } else {
-                        let this = this.text_color(idle_text);
-                        let this = match idle_bg {
-                            Some(bg) => this.bg(bg),
-                            None => this,
-                        };
-                        match hover_bg {
-                            Some(bg) if !disabled => this.hover(move |style| style.bg(bg)),
-                            _ => this,
-                        }
-                    }
-                })
-                .children(option.icon.map(|icon| {
-                    svg()
-                        .path(icon)
-                        .size(icon_size)
-                        .flex_shrink_0()
-                        .text_color(if selected { selected_text } else { idle_text })
-                }))
-                .children(option.label)
-                .when_some(handler.filter(|_| !disabled), |this, handler| {
-                    let keys = handler.clone();
-                    this.on_click(move |_, window, cx| handler(&index, window, cx))
-                        .on_key_down(move |event, window, cx| {
-                            let Some(key @ (Nav::Left | Nav::Right)) =
-                                nav_key(event.keystroke.key.as_str())
-                            else {
-                                return;
-                            };
-                            // Every enabled item is a tab stop, so the key belongs to the
-                            // focused one, which need not be the selected one.
-                            if let Some(target) = segment_target(index, key, &keyed) {
-                                keys(&target, window, cx);
-                                if key == Nav::Left {
-                                    window.focus_prev(cx);
-                                } else {
-                                    window.focus_next(cx);
-                                }
-                                cx.stop_propagation();
+                    .when_some(name, |this, name| this.aria_label(name))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(METRICS.space_1))
+                    .px(px(ITEM_PAD_X))
+                    .h(px(METRICS.size.control_sm_h))
+                    .rounded(px(METRICS.radius.item))
+                    .when(stretch, |this| this.flex_1());
+                dim_disabled(text_style(item, TextStyle::Label), disabled)
+                    .map(|this| {
+                        if selected {
+                            this.text_color(selected_text)
+                                .bg(selected_bg)
+                                .shadow(selected_shadow.clone())
+                        } else {
+                            let this = this.text_color(idle_text);
+                            if disabled {
+                                this
+                            } else {
+                                this.hover(move |style| style.bg(states.hover))
                             }
-                        })
-                })
+                        }
+                    })
+                    .children(option.icon.map(|icon| {
+                        svg()
+                            .path(icon)
+                            .size(px(METRICS.size.icon_sm))
+                            .flex_shrink_0()
+                            .text_color(if selected { selected_text } else { idle_text })
+                    }))
+                    .children(option.label)
+                    .when_some(handler.filter(|_| !disabled), |this, handler| {
+                        let keys = handler.clone();
+                        this.on_click(move |_, window, cx| handler(&index, window, cx))
+                            .on_key_down(move |event, window, cx| {
+                                let Some(key @ (Nav::Left | Nav::Right)) =
+                                    nav_key(event.keystroke.key.as_str())
+                                else {
+                                    return;
+                                };
+                                // Every enabled item is a tab stop, so the key belongs to the
+                                // focused one, which need not be the selected one.
+                                if let Some(target) = segment_target(index, key, &keyed) {
+                                    keys(&target, window, cx);
+                                    if key == Nav::Left {
+                                        window.focus_prev(cx);
+                                    } else {
+                                        window.focus_next(cx);
+                                    }
+                                    cx.stop_propagation();
+                                }
+                            })
+                    })
             }))
     }
 }
-
 #[cfg(test)]
 mod tests {
     use gpui::{Context, Render, TestAppContext};
@@ -481,7 +308,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, label)| SegmentOption::new(label, i == self.selected).disabled(i == 1))
                 .collect();
-            SegmentedControl::editor(&theme, "zoom", options).on_select(cx.listener(
+            SegmentedControl::new(&theme, "zoom", options).on_select(cx.listener(
                 move |this, index: &usize, _, cx| {
                     picks.borrow_mut().push(*index);
                     this.selected = *index;
@@ -543,7 +370,7 @@ mod tests {
                 SegmentOption::new("Short", true),
                 SegmentOption::new("A much longer label", false),
             ];
-            SegmentedControl::settings(&theme, "measured", options).on_option_bounds(
+            SegmentedControl::new(&theme, "measured", options).on_option_bounds(
                 move |index, bounds, _| {
                     seen.borrow_mut()
                         .push((index, f32::from(bounds.size.width)));

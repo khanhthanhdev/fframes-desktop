@@ -17,13 +17,13 @@
 //! the pill's radius, which is what the first pass shipped.
 
 use gpui::{
-    App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels, RenderOnce, Role,
+    App, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce, Role,
     SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, svg,
 };
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, Theme};
 
-use super::interact::{Nav, focusable, nav_key, step_enabled};
+use super::interact::{Nav, States, dim_disabled, focusable, nav_key, step_enabled};
 
 #[derive(Debug, Clone)]
 pub struct TabRailItem {
@@ -85,56 +85,32 @@ pub fn tab_target(from: usize, key: Nav, items: &[TabRailItem]) -> Option<usize>
 /// components use, so `cx.listener` builds the handler directly.
 type TabHandler = Box<dyn Fn(&usize, &mut Window, &mut App) + 'static>;
 
+/// A tab's box and the rail's side padding.
+const TAB_W: f32 = 40.;
+const TAB_H: f32 = 30.;
+const RAIL_PAD_X: f32 = 10.;
+/// Where the attention dot sits in the tab's corner.
+const DOT_TOP: f32 = 4.;
+const DOT_RIGHT: f32 = 8.;
+
+/// The sidebar's icon tabs: a bar on `card` under a `line` hairline, `tab_bar_h` high,
+/// the selected tab on `ctl_active`.
 #[derive(IntoElement)]
 pub struct TabRail {
     id: ElementId,
     items: Vec<TabRailItem>,
-    height: Pixels,
-    box_size: Pixels,
-    box_width: Pixels,
-    icon_size: Pixels,
-    bg: Hsla,
-    border: Hsla,
-    indicator: Hsla,
-    hover: Hsla,
-    selected_icon: Hsla,
-    idle_icon: Hsla,
     theme: Theme,
     on_select: Option<TabHandler>,
 }
 
 impl TabRail {
-    /// The editor's config sidebar rail: a 46px bar on the card surface under
-    /// an `ed-line` hairline, with 40x30 tab boxes and 16px icons.
-    pub fn editor(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        panel_bg: Hsla,
-        items: Vec<TabRailItem>,
-    ) -> Self {
+    pub fn new(theme: &Theme, id: impl Into<ElementId>, items: Vec<TabRailItem>) -> Self {
         Self {
             id: id.into(),
             items,
-            height: px(46.),
-            box_size: px(30.),
-            box_width: px(40.),
-            icon_size: px(16.),
-            bg: panel_bg,
-            border: Hsla::from(theme.editor.line),
-            indicator: Hsla::from(theme.editor.ctl_hover),
-            hover: Hsla::from(theme.editor.ctl),
-            selected_icon: Hsla::from(theme.editor.text_1),
-            idle_icon: Hsla::from(theme.editor.text_2),
             theme: *theme,
             on_select: None,
         }
-    }
-
-    /// `h-16` on the editor's rail. Kept a parameter so the call site can go
-    /// on quoting its own metric.
-    pub fn height(mut self, height: Pixels) -> Self {
-        self.height = height;
-        self
     }
 
     pub fn on_select(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
@@ -148,20 +124,13 @@ impl RenderOnce for TabRail {
         let TabRail {
             id,
             items,
-            height,
-            box_size,
-            box_width,
-            icon_size,
-            bg,
-            border,
-            indicator,
-            hover,
-            selected_icon,
-            idle_icon,
             theme,
             on_select,
         } = self;
-
+        let colors = theme.colors;
+        let states = States::of(&theme);
+        let selected_icon = Hsla::from(colors.text_1);
+        let idle_icon = Hsla::from(colors.text_2);
         let prefix: SharedString = match &id {
             ElementId::Name(name) => name.clone(),
             other => SharedString::from(format!("{other:?}")),
@@ -176,15 +145,16 @@ impl RenderOnce for TabRail {
             .flex()
             .flex_row()
             .items_center()
-            .h(height)
+            .h(px(METRICS.layout.tab_bar_h))
             .flex_none()
             .overflow_hidden()
-            .rounded_t(px(11.))
+            // Inside the card's 1 px border.
+            .rounded_t(px(METRICS.radius.card - METRICS.size.divider))
             .justify_around()
-            .px(px(10.))
+            .px(px(RAIL_PAD_X))
             .border_b_1()
-            .border_color(border)
-            .bg(bg)
+            .border_color(colors.line)
+            .bg(colors.card)
             .children(items.into_iter().enumerate().map(|(index, item)| {
                 let handler = handler.clone();
                 let keyed = keyed.clone();
@@ -196,7 +166,7 @@ impl RenderOnce for TabRail {
                     .clone()
                     .unwrap_or_else(|| SharedString::from(format!("{prefix}-{index}")));
 
-                focusable(div().id(item_id), &theme, disabled)
+                let tab = focusable(div().id(item_id), &theme, disabled)
                     .role(Role::Tab)
                     .aria_selected(selected)
                     .aria_label(item.label.clone())
@@ -205,31 +175,32 @@ impl RenderOnce for TabRail {
                     .flex_none()
                     .items_center()
                     .justify_center()
-                    .h(box_size)
-                    .w(box_width)
-                    .rounded(px(9.))
-                    .when(disabled, |this| this.opacity(0.6))
-                    .when(selected, |this| this.bg(indicator))
+                    .h(px(TAB_H))
+                    .w(px(TAB_W))
+                    .rounded(px(METRICS.radius.tab));
+                dim_disabled(tab, disabled)
+                    .when(selected, |this| this.bg(states.selected))
                     .when(!selected && !disabled, |this| {
-                        this.cursor_pointer().hover(move |style| style.bg(hover))
+                        this.cursor_pointer()
+                            .hover(move |style| style.bg(states.hover))
                     })
                     .tooltip_show_delay(crate::kit::TOOLTIP_SHOW_DELAY)
                     .tooltip(move |_, cx| crate::kit::Tooltip::new(&theme, label.clone()).view(cx))
                     .child(
                         svg()
                             .path(item.icon)
-                            .size(icon_size)
+                            .size(px(METRICS.size.icon_md))
                             .text_color(if selected { selected_icon } else { idle_icon }),
                     )
                     .when(item.dot, |this| {
                         this.child(
                             div()
                                 .absolute()
-                                .top(px(4.))
-                                .right(px(8.))
+                                .top(px(DOT_TOP))
+                                .right(px(DOT_RIGHT))
                                 .size(px(DOT))
                                 .rounded_full()
-                                .bg(theme.editor.accent),
+                                .bg(colors.accent),
                         )
                     })
                     .when_some(handler.filter(|_| !disabled), |this, handler| {
@@ -302,7 +273,7 @@ mod tests {
                 .enumerate()
                 .map(|(i, label)| TabRailItem::new("icons/x.svg", label, i == self.selected, false))
                 .collect();
-            TabRail::editor(&theme, "rail", theme.editor.card.into(), items).on_select(cx.listener(
+            TabRail::new(&theme, "rail", items).on_select(cx.listener(
                 move |this, index: &usize, _, cx| {
                     picks.borrow_mut().push(*index);
                     this.selected = *index;

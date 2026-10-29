@@ -36,10 +36,10 @@ impl StudioShell {
         let theme = self.theme;
         let entity = cx.entity();
         let anchor = self.overflow_anchor.clone();
-        IconButton::editor(&theme, "overflow-actions", Icon::MoreHorizontal.path())
-            .editor_size(IconButtonSize::Medium)
+        IconButton::new(&theme, "overflow-actions", Icon::MoreHorizontal.path())
+            .size(IconButtonSize::Md)
             .label("More actions")
-            .tooltip(&theme, "More actions")
+            .tooltip("More actions")
             .on_bounds(move |bounds, _| anchor.set(Some(bounds)))
             .on_click(move |_, window, cx| {
                 entity.update(cx, |shell, cx| {
@@ -110,7 +110,7 @@ impl StudioShell {
         let highlight = cx.entity();
         let dismiss = cx.entity();
         Some(
-            Menu::editor(
+            Menu::new(
                 &self.theme,
                 "overflow-menu",
                 self.overflow_items(),

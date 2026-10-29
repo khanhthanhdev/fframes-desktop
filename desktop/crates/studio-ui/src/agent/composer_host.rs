@@ -11,7 +11,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::time::Instant;
 
-use gpui::{App, Focusable, KeyDownEvent};
+use gpui::{App, Focusable, KeyDownEvent, prelude::FluentBuilder as _};
 use studio_engine::agent::{
     CommandInfo, OpenQuestion, PreparedAttachment, StagedAttachment, SteerSupport, WorkflowError,
 };
@@ -22,7 +22,9 @@ use super::composer::{
 use super::history::{HistoryEvent, HistoryList};
 use super::question_card::ItemDraft;
 use super::todo_panel::{TodoItem, TodoPanel};
+use super::ui::{ActionCard, STATUS_MARK, TrayHeader, TrayRow, tray_frame};
 use super::*;
+use crate::kit::icon;
 use crate::probe::BoundsSink;
 
 /// Why image chips are off while the agent has not said it takes images.
@@ -62,6 +64,8 @@ pub(super) struct ComposerHost {
     pub questions: HashMap<studio_engine::agent::PermissionRef, Vec<ItemDraft>>,
     /// Counts session list requests; only the newest answer is shown.
     pub sessions_serial: u64,
+    /// The model option the composer shows beside Send: its id and the current value's name.
+    pub last_model: Option<(String, String)>,
 }
 
 impl ComposerHost {
@@ -107,6 +111,7 @@ impl ComposerHost {
             last_refusal: None,
             questions: HashMap::new(),
             sessions_serial: 0,
+            last_model: None,
         }
     }
 }
@@ -157,6 +162,7 @@ impl ConversationPanel {
                 .composer
                 .update(cx, |composer, cx| composer.set_commands(commands, cx));
         }
+        self.sync_model(&snapshot, cx);
         let mode = match view.steer {
             SteerSupport::None => SteerMode::None,
             SteerSupport::AtBoundary => SteerMode::AtBoundary,
@@ -190,6 +196,43 @@ impl ConversationPanel {
         }
     }
 
+    /// Shows the agent's model option beside Send, or none when it advertises none.
+    fn sync_model(&mut self, snapshot: &WorkflowSnapshot, cx: &mut Context<Self>) {
+        let advertised = derive_controls(snapshot, true, self.sdk_ready).config_options;
+        let model = snapshot
+            .options
+            .config
+            .iter()
+            .filter(|_| advertised)
+            .find(|option| super::chat_tab::is_model_option(option))
+            .and_then(|option| match &option.kind {
+                ConfigKind::Select { current, values } => Some((
+                    option.id.clone(),
+                    values
+                        .iter()
+                        .find(|v| &v.value == current)
+                        .map_or_else(|| current.clone(), |v| v.name.clone()),
+                )),
+                ConfigKind::Boolean { .. } => None,
+            });
+        if self.host.last_model == model {
+            return;
+        }
+        self.host.last_model = model.clone();
+        let panel = cx.entity().downgrade();
+        let choice = model.map(|(id, label)| super::composer::ModelChoice {
+            label: label.into(),
+            on_open: Rc::new(move |bounds, window, cx| {
+                let _ = panel.update(cx, |this, cx| {
+                    this.toggle_config_menu(&id, *bounds, window, cx)
+                });
+            }),
+        });
+        self.host
+            .composer
+            .update(cx, |composer, cx| composer.set_model(choice, cx));
+    }
+
     /// A different conversation, or none: nothing prepared for the old one may travel.
     pub(super) fn reset_composer_state(&mut self, cx: &mut Context<Self>) {
         let host = &mut self.host;
@@ -209,6 +252,10 @@ impl ConversationPanel {
     pub(super) fn clear_composer(&mut self, cx: &mut Context<Self>) {
         self.reset_composer_state(cx);
         self.host.last_commands.clear();
+        self.host.last_model = None;
+        self.host
+            .composer
+            .update(cx, |composer, cx| composer.set_model(None, cx));
         self.host
             .composer
             .update(cx, |composer, cx| composer.set_commands(Vec::new(), cx));
@@ -348,28 +395,24 @@ impl ConversationPanel {
     // ---- what the panel shows above the composer ---------------------------------------------
 
     /// The bottom of the chat tab: the cards that wait for the user (questions, permission
-    /// requests, held and refused messages, the plan, the queue) in one scrolling area that
-    /// gives way to the transcript, then the composer and its toolbar.
+    /// requests, the outside-file prompt, held and refused messages) in one scrolling area that
+    /// gives way to the transcript, the tray (the plan and the queue) tucked under the
+    /// composer's top edge, the composer and its toolbar.
     pub(super) fn composer_dock(
         &mut self,
         snapshot: &WorkflowSnapshot,
         controls: &Controls,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let mut cards = div().flex().flex_col().gap(px(6.));
-        let mut has_cards = false;
-        let mut add = |cards: gpui::Div, card: AnyElement| {
-            has_cards = true;
-            cards.child(card)
-        };
+        let theme = self.theme;
+        let mut cards: Vec<AnyElement> = Vec::new();
         if let Some(restore) = controls
             .session_restore
             .as_ref()
             .filter(|r| !r.is_resumable)
         {
-            cards = add(
-                cards,
-                Notice::new("agent-readonly-session", UiTone::Info, "Read-only conversation")
+            cards.push(
+                ActionCard::new(&theme, "agent-readonly-session", UiTone::Info, "Read-only conversation")
                     .body(restore.notice.clone().unwrap_or_else(|| {
                         "The provider cannot resume this session; its stored messages are shown as they were."
                             .to_owned()
@@ -379,7 +422,7 @@ impl ConversationPanel {
         }
         for (index, question) in snapshot.composer.questions.iter().enumerate() {
             let card = self.question_card(index, question, cx);
-            cards = add(cards, card.into_any_element());
+            cards.push(card.into_any_element());
         }
         let requests: Vec<PermissionCard> = snapshot
             .open_permissions()
@@ -389,86 +432,73 @@ impl ConversationPanel {
             .collect();
         for card in &requests {
             let request = self.permission_request(card, cx);
-            cards = add(cards, request.into_any_element());
+            cards.push(request.into_any_element());
         }
         if let Some(held) = snapshot.composer.held.clone() {
-            let notice = Notice::new("agent-held", UiTone::Info, "Waiting for the next step")
-                .body(held)
-                .action(self.action_button(
-                    "agent-held-cancel",
-                    "Cancel message",
-                    true,
-                    Tone::Normal,
-                    cx,
-                    |this, _, cx| {
-                        if let Some(workflow) = this.workflow().cloned() {
-                            let result = workflow.cancel_held();
-                            this.command(result, cx);
-                        }
-                    },
-                ));
-            cards = add(cards, notice.into_any_element());
+            let card = ActionCard::new(
+                &theme,
+                "agent-held",
+                UiTone::Info,
+                "Waiting for the next step",
+            )
+            .body(held)
+            .action(self.action_button(
+                "agent-held-cancel",
+                "Cancel message",
+                true,
+                Emphasis::Neutral,
+                cx,
+                |this, _, cx| {
+                    if let Some(workflow) = this.workflow().cloned() {
+                        let result = workflow.cancel_held();
+                        this.command(result, cx);
+                    }
+                },
+            ));
+            cards.push(card.into_any_element());
         }
         if let Some(text) = self.host.refused.clone() {
-            let notice = Notice::new(
+            let card = ActionCard::new(
+                &theme,
                 "agent-refused",
                 UiTone::Warning,
                 "The agent did not take this message",
             )
             .body(text)
             .action(self.action_button(
-                "agent-refused-restore",
-                "Put back",
-                true,
-                Tone::Normal,
-                cx,
-                |this, _, cx| this.restore_refused(cx),
-            ))
-            .action(self.action_button(
                 "agent-refused-dismiss",
                 "Dismiss",
                 true,
-                Tone::Normal,
+                Emphasis::Neutral,
                 cx,
                 |this, _, cx| {
                     this.host.refused = None;
                     cx.notify();
                 },
+            ))
+            .action(self.action_button(
+                "agent-refused-restore",
+                "Put back",
+                true,
+                Emphasis::Primary,
+                cx,
+                |this, _, cx| this.restore_refused(cx),
             ));
-            cards = add(cards, notice.into_any_element());
+            cards.push(card.into_any_element());
         }
         if let Some(card) = self.stage_card(cx) {
-            cards = add(cards, card);
-        }
-        if let Some(queue) = self.queue_section(snapshot, cx) {
-            cards = add(cards, queue.into_any_element());
-        }
-        if self.host.todo.read(cx).is_visible() {
-            cards = add(cards, self.host.todo.clone().into_any_element());
-        }
-        // Without a task there is no status strip to carry Stop (queued briefs).
-        if snapshot.task.is_none()
-            && !snapshot.composer.turn_live
-            && let Some(note) = controls.stop.clone()
-        {
-            let row = div()
-                .flex()
-                .items_center()
-                .gap(px(8.))
-                .child(self.stop_button(cx))
-                .child(div().flex_1().min_w_0().child(self.line(note)));
-            cards = add(cards, row.into_any_element());
+            cards.push(card);
         }
         let mut dock = div()
             .flex()
             .flex_col()
             .flex_shrink(1.)
             .min_h_0()
-            .gap(px(6.))
-            .px(px(12.))
-            .pt(px(8.))
-            .pb(px(10.));
-        if has_cards {
+            .gap(px(METRICS.space_2))
+            .px(px(METRICS.space_3))
+            .pt(px(METRICS.space_2))
+            .pb(px(METRICS.space_3));
+        if !cards.is_empty() {
             // A short window scrolls the cards; the choice stays reachable and the
             // composer stays in view.
             dock = dock.child(
@@ -477,13 +507,34 @@ impl ConversationPanel {
                     .flex_shrink(1.)
                     .min_h_0()
                     .overflow_y_scroll()
-                    .child(cards),
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap(px(METRICS.space_2))
+                            .children(cards),
+                    ),
             );
         }
+        let todo = self.host.todo.read(cx).is_visible();
+        let queue = self.queue_tray(snapshot, cx);
+        let tray = (todo || queue.is_some()).then(|| {
+            tray_frame(&theme)
+                .children(todo.then(|| self.host.todo.clone()))
+                .children(queue.map(|queue| {
+                    div()
+                        .when(todo, |queue| {
+                            queue.border_t_1().border_color(theme.colors.line)
+                        })
+                        .child(queue)
+                }))
+        });
         dock = dock.child(
             div()
                 .id("agent-prompt")
                 .flex_none()
+                .flex()
+                .flex_col()
                 .on_key_down(cx.listener(|_, event: &KeyDownEvent, _, cx| {
                     let m = &event.keystroke.modifiers;
                     if event.keystroke.key == "escape" && !m.shift && !m.alt && !m.control {
@@ -491,6 +542,7 @@ impl ConversationPanel {
                         cx.stop_propagation();
                     }
                 }))
+                .children(tray)
                 .child(self.host.composer.clone()),
         );
         let blocked = controls
@@ -505,12 +557,56 @@ impl ConversationPanel {
                     .flex_none()
                     .flex()
                     .flex_col()
-                    .gap(px(4.))
+                    .gap(px(METRICS.space_1))
                     .children(options)
                     .children(blocked.map(|reason| self.caption(&reason))),
             );
         }
         dock
+    }
+
+    /// Briefs waiting for the running task, as the tray's second list: each with a remove
+    /// button shown on hover, and a stale one marked as refused.
+    fn queue_tray(
+        &mut self,
+        snapshot: &WorkflowSnapshot,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Div> {
+        if snapshot.queue.is_empty() {
+            return None;
+        }
+        let theme = self.theme;
+        let mut tray = div().flex().flex_col().child(
+            TrayHeader::new(&theme, "agent-queue", Icon::Layers, "Queued")
+                .count(snapshot.queue.len().to_string()),
+        );
+        for item in &snapshot.queue {
+            let id = item.id;
+            let mut row = TrayRow::new(&theme, ("queue-item", id as usize), item.summary.clone())
+                .mark(icon(Icon::ArrowUp, STATUS_MARK, theme.colors.text_3))
+                .action(self.icon_button(
+                    format!("queue-remove-{id}"),
+                    Icon::X,
+                    "Remove",
+                    Emphasis::Ghost,
+                    cx,
+                    move |this, _, cx| {
+                        if let Some(w) = this.workflow().cloned() {
+                            let r = w.cancel_queued(id);
+                            this.command(r, cx);
+                        }
+                    },
+                ));
+            if let Some(scope) = &item.scope {
+                row = if item.stale_scope {
+                    row.note(format!("{scope} · will be refused"), theme.colors.warning)
+                } else {
+                    row.note(scope.clone(), theme.colors.text_3)
+                };
+            }
+            tray = tray.child(row);
+        }
+        Some(tray)
     }
 
     /// Puts the refused text back into the composer after whatever is there.

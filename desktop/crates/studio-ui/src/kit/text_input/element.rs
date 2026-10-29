@@ -33,33 +33,36 @@ pub struct TextInput {
     fit_content: bool,
 }
 
+/// The field's horizontal padding and the gap before its leading icon.
+const PAD_X: f32 = 8.;
+const ICON_GAP: f32 = 4.;
+
 impl TextInput {
-    pub(super) fn base(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        state: &Entity<TextInputState>,
-    ) -> Self {
+    /// A borderless `ctl` field, `input_h` high, that shows an `accent` border while
+    /// focused; `text_1` text and caret, `text_3` placeholder, `selection` highlight.
+    pub fn new(theme: &Theme, id: impl Into<ElementId>, state: &Entity<TextInputState>) -> Self {
+        let colors = theme.colors;
         Self {
             state: state.clone(),
             id: id.into(),
             icon: None,
-            height: Some(px(32.)),
-            padding_x: px(8.),
+            height: Some(px(METRICS.size.input_h)),
+            padding_x: px(PAD_X),
             padding_y: px(0.),
-            radius: px(8.),
-            gap: px(2.),
-            text_size: px(12.),
+            radius: px(METRICS.radius.control),
+            gap: px(METRICS.space_1 / 2.),
+            text_size: px(TextStyle::Body.size()),
             line_height: None,
             weight: FontWeight::NORMAL,
             align: TextAlign::Left,
-            bg: None,
+            bg: Some(Hsla::from(colors.ctl)),
             border: None,
-            focus_border: None,
-            text: theme.gray(12),
-            muted: theme.gray(10),
-            icon_color: theme.gray(10),
-            caret_color: theme.gray(12),
-            selection_color: selection_tint(),
+            focus_border: Some(Hsla::from(colors.focus)),
+            text: Hsla::from(colors.text_1),
+            muted: Hsla::from(colors.text_3),
+            icon_color: Hsla::from(colors.text_3),
+            caret_color: Hsla::from(colors.text_1),
+            selection_color: Hsla::from(colors.selection),
             flex: false,
             full_width: false,
             fixed_width: None,
@@ -67,97 +70,13 @@ impl TextInput {
         }
     }
 
-    /// The settings window's inputs: `<Input>` is `h-8 rounded-lg bg-gray-2
-    /// px-2 text-xs` in `editor/ui.tsx`, re-filled from the settings material's
-    /// `--macos-settings-fill` / `-border` / `-text` / `-muted`.
-    pub fn settings(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        state: &Entity<TextInputState>,
-    ) -> Self {
-        Self {
-            bg: Some(theme.settings_fill()),
-            border: Some(theme.settings_border()),
-            focus_border: Some(Theme::with_alpha(gpui::rgb(Theme::SETTINGS_ACCENT), 0.8)),
-            text: theme.settings_text(),
-            muted: theme.settings_muted(),
-            caret_color: theme.settings_text(),
-            full_width: true,
-            ..Self::base(theme, id, state)
-        }
-    }
-
-    /// The main window's search field: `h-9 px-2 rounded-md border-gray-5
-    /// bg-gray-2` with a leading magnifier, over the panel material's body
-    /// remaps.
-    pub fn search(theme: &Theme, id: impl Into<ElementId>, state: &Entity<TextInputState>) -> Self {
-        Self {
-            height: Some(px(36.)),
-            radius: px(6.),
-            gap: px(4.),
-            bg: Some(theme.body_fill(2)),
-            border: Some(theme.body_border(5)),
-            icon: Some(SharedString::from("icons/search.svg")),
-            text: theme.gray(12),
-            muted: theme.gray(10),
-            caret_color: theme.gray(12),
-            flex: true,
-            ..Self::base(theme, id, state)
-        }
-    }
-
-    /// The editor's Radix-on-nothing surface: the header's name field and the
-    /// sidebar's hex inputs.
-    pub fn plain(theme: &Theme, id: impl Into<ElementId>, state: &Entity<TextInputState>) -> Self {
-        Self {
-            radius: px(7.),
-            text_size: px(13.),
-            bg: Some(Hsla::from(theme.editor.ctl)),
-            border: None,
-            focus_border: Some(Hsla::from(theme.editor.accent)),
-            text: Hsla::from(theme.editor.text_1),
-            muted: Hsla::from(theme.editor.text_3),
-            icon_color: Hsla::from(theme.editor.text_3),
-            caret_color: Hsla::from(theme.editor.text_1),
-            ..Self::base(theme, id, state)
-        }
-    }
-
-    /// No chrome at all: the caller draws the container. The teleprompter's
-    /// script area is this.
-    pub fn bare(theme: &Theme, id: impl Into<ElementId>, state: &Entity<TextInputState>) -> Self {
-        Self {
-            height: None,
-            padding_x: px(0.),
-            radius: px(0.),
-            bg: None,
-            border: None,
-            full_width: true,
-            ..Self::base(theme, id, state)
-        }
-    }
-
-    pub fn placeholder_color(mut self, color: Hsla) -> Self {
-        self.muted = color;
+    /// A search field: a leading magnifier, and the field takes the row's free width.
+    pub fn search(mut self) -> Self {
+        self.icon = Some(SharedString::from("icons/search.svg"));
+        self.gap = px(ICON_GAP);
+        self.flex = true;
         self
     }
-
-    pub fn text_color(mut self, color: Hsla) -> Self {
-        self.text = color;
-        self.caret_color = color;
-        self
-    }
-
-    pub fn caret_color(mut self, color: Hsla) -> Self {
-        self.caret_color = color;
-        self
-    }
-
-    pub fn selection_color(mut self, color: Hsla) -> Self {
-        self.selection_color = color;
-        self
-    }
-
     pub fn text_size(mut self, size: Pixels) -> Self {
         self.text_size = size;
         self
@@ -203,16 +122,6 @@ impl TextInput {
         self
     }
 
-    pub fn bg(mut self, bg: Hsla) -> Self {
-        self.bg = Some(bg);
-        self
-    }
-
-    pub fn border(mut self, border: Hsla) -> Self {
-        self.border = Some(border);
-        self
-    }
-
     pub fn flex(mut self, flex: bool) -> Self {
         self.flex = flex;
         self
@@ -230,14 +139,6 @@ impl TextInput {
         self.full_width = false;
         self
     }
-}
-
-/// The selection wash. `--macos-settings-accent` resolves to the user's system
-/// accent in the shipping app and gpui exposes no query for it, so this is the
-/// same macOS blue the toggles already deviate to, at the 30 % a focused
-/// `<input>`'s selection paints at.
-pub(super) fn selection_tint() -> Hsla {
-    Theme::with_alpha(gpui::rgb(Theme::SETTINGS_ACCENT), 0.30)
 }
 
 // -- Rendering ----------------------------------------------------------------
@@ -325,7 +226,7 @@ impl RenderOnce for TextInput {
             .children(self.icon.map(|icon| {
                 svg()
                     .path(icon)
-                    .size(px(12.))
+                    .size(px(TextStyle::Label.size()))
                     .flex_shrink_0()
                     .text_color(self.icon_color)
             }))
@@ -435,6 +336,7 @@ impl TextBody {
             line_height: self.line_height,
             weight: self.weight,
             marked: marked.clone(),
+            color: self.color,
         };
 
         if let Some(layout) = self.layout.borrow().as_ref()

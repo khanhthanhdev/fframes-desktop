@@ -13,15 +13,15 @@ use gpui::{Context, IntoElement, ParentElement, SharedString, Styled, div, px};
 use studio_engine::export_options::{FORMATS, REDUCED_FPS, SCALES, format_label};
 use studio_engine::services::audio_service::OutputDevice;
 use studio_engine::{ReviewPolicy, app_settings::AppSettings, updates::AvailableUpdate};
-use studio_proto::AppTheme;
-use studio_theme::Theme;
+use studio_proto::{AppTheme, MotionPreference};
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::StudioShell;
 use super::sections::box_probe;
 use super::settings_window::{self, SettingsWindow};
 use crate::kit::{
-    Card, Icon, Section, SegmentOption, SegmentedControl, SettingRow, SettingsFrame,
-    SettingsNavItem, Toggle,
+    FormField, Icon, PanelSection, RadioCard, RadioCards, SegmentOption, SegmentedControl,
+    SettingsFrame, SettingsNavItem, Toggle, selectable,
 };
 
 /// The check for a newer Studio release.
@@ -39,6 +39,13 @@ const THEMES: [(AppTheme, &str); 3] = [
     (AppTheme::System, "System"),
     (AppTheme::Light, "Light"),
     (AppTheme::Dark, "Dark"),
+];
+
+/// The motion choices in the order the control shows them; option `i` is `motion-i`.
+const MOTIONS: [(MotionPreference, &str); 3] = [
+    (MotionPreference::System, "System"),
+    (MotionPreference::Reduced, "Reduced"),
+    (MotionPreference::Full, "Full"),
 ];
 
 /// A page of the settings frame, in the order of its nav column.
@@ -83,6 +90,7 @@ const DEFAULT_FPS: [(Option<u32>, &str); 2] =
 #[derive(Default)]
 pub(super) struct SettingsWriter {
     latest: AtomicU64,
+    latest_motion: AtomicU64,
     latest_export: AtomicU64,
     latest_setup: AtomicU64,
     latest_update_check: AtomicU64,
@@ -194,6 +202,35 @@ impl StudioShell {
         .detach();
     }
 
+    /// Applies the motion `choice` to every window and saves it in the background, like
+    /// the theme.
+    fn choose_motion(&mut self, choice: MotionPreference, cx: &mut Context<Self>) {
+        if studio_theme::current_motion(cx) == choice {
+            return;
+        }
+        studio_theme::set_motion(choice, cx);
+        let Some(paths) = self.presentation.paths.clone() else {
+            self.error =
+                Some("Cannot save the motion setting: the app's storage is unavailable".into());
+            return;
+        };
+        let writer = self.settings_writer.clone();
+        let generation = writer.latest_motion.fetch_add(1, Ordering::AcqRel) + 1;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { save_motion(&writer, generation, choice, &paths) })
+                .await;
+            if let Err(error) = result {
+                let _ = this.update(cx, |shell, cx| {
+                    shell.error = Some(error);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
     /// Saves the setup record and the permission policy in the background. Both fields are
     /// written from the shell's current values, so the latest save carries every choice and
     /// an overtaken one is skipped.
@@ -294,7 +331,7 @@ impl StudioShell {
     fn render_updates(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
         let entity = cx.entity();
-        let toggle = Toggle::settings(&theme, "update-check", !self.update_check_disabled)
+        let toggle = Toggle::new(&theme, "update-check", !self.update_check_disabled)
             .label("Check for updates at launch")
             .on_change(move |enabled, _, cx| {
                 entity.update(cx, |shell, cx| shell.set_update_check(enabled, cx))
@@ -309,42 +346,34 @@ impl StudioShell {
             ),
             UpdateCheck::Failed(error) => error.clone(),
         };
-        let mut actions = div().flex().gap(px(8.)).child(self.action_button(
-            "check-update",
-            "Check now",
-            self.update != UpdateCheck::Checking,
-            false,
-            None,
-            cx,
-            |shell, cx| shell.check_for_update(cx),
-        ));
+        let mut actions = div()
+            .flex()
+            .gap(px(METRICS.space_2))
+            .child(self.action_button(
+                "check-update",
+                "Check now",
+                self.update != UpdateCheck::Checking,
+                false,
+                None,
+                cx,
+                |shell, cx| shell.check_for_update(cx),
+            ));
         if let UpdateCheck::Available(update) = &self.update {
             actions = actions.child(self.download_update_button(update.url.clone(), cx));
         }
-        Section::settings(
-            &theme,
-            "Updates",
-            Some("Studio asks GitHub for a newer release. Nothing is downloaded or installed without you."),
-            None,
-            vec![
-                Card::settings_rows(
-                    &theme,
-                    vec![
-                        SettingRow::settings(
-                            &theme,
-                            "Check for updates at launch",
-                            None,
-                            toggle.into_any_element(),
-                        )
-                        .into_any_element(),
-                        SettingRow::settings(&theme, status, None, actions.into_any_element())
-                            .into_any_element(),
-                    ],
-                )
-                .into_any_element(),
-            ],
-        )
-        .into_any_element()
+        PanelSection::new(&theme, "Updates")
+            .description(
+                "Studio asks GitHub for a newer release. Nothing is downloaded or installed \
+                 without you.",
+            )
+            .card()
+            .child(FormField::row(
+                &theme,
+                "Check for updates at launch",
+                toggle,
+            ))
+            .child(FormField::row(&theme, status, actions))
+            .into_any_element()
     }
 
     /// Opens the release page of `url`, where the installer and the notes are.
@@ -352,7 +381,7 @@ impl StudioShell {
         &self,
         url: String,
         cx: &mut Context<Self>,
-    ) -> crate::kit::EditorButton {
+    ) -> crate::kit::Button {
         self.action_button(
             "download-update",
             "Download…",
@@ -373,63 +402,61 @@ impl StudioShell {
         let theme = self.theme;
         let entity = cx.entity();
         let page = match self.settings_page {
-            SettingsPage::General => div()
-                .flex()
-                .flex_col()
-                .gap(px(28.))
+            SettingsPage::General => settings_page()
                 .child(self.render_appearance(cx))
                 .child(self.render_audio_output(cx))
-                .child(Section::settings(
-                    &theme,
-                    "Setup",
-                    Some("Walk through the theme, SDK, first video, agent and permissions again."),
-                    None,
-                    vec![
-                        self.action_button(
-                            "run-setup-again",
-                            "Run setup again",
-                            true,
-                            false,
-                            None,
-                            cx,
-                            |shell, cx| shell.run_setup_again(cx),
+                .child(
+                    PanelSection::new(&theme, "Setup")
+                        .description(
+                            "Walk through the theme, SDK, first video, agent and permissions \
+                             again.",
                         )
-                        .into_any_element(),
-                    ],
-                ))
+                        .card()
+                        .child(FormField::row(
+                            &theme,
+                            "First-run setup",
+                            self.action_button(
+                                "run-setup-again",
+                                "Run setup again",
+                                true,
+                                false,
+                                None,
+                                cx,
+                                |shell, cx| shell.run_setup_again(cx),
+                            ),
+                        )),
+                )
                 .child(self.render_updates(cx))
                 .into_any_element(),
             // The two short choices first: the provider setup below them runs long.
-            SettingsPage::Agent => div()
-                .flex()
-                .flex_col()
-                .gap(px(28.))
+            SettingsPage::Agent => settings_page()
                 .child(self.render_review_policy(cx))
-                .child(Section::settings(
-                    &theme,
-                    "Permissions",
-                    Some("How the agent's permission requests are answered. A running task keeps the choice it started with."),
-                    None,
-                    vec![self.permission_choice(
-                        self.permission_policy,
-                        |shell, policy, cx| shell.choose_permission_policy(policy, cx),
-                        cx,
-                    )],
-                ))
+                .child(
+                    PanelSection::new(&theme, "Permissions")
+                        .description(
+                            "How the agent's permission requests are answered. A running task \
+                             keeps the choice it started with.",
+                        )
+                        .child(self.permission_choice(
+                            self.permission_policy,
+                            |shell, policy, cx| shell.choose_permission_policy(policy, cx),
+                            cx,
+                        )),
+                )
                 .child(self.setup_page.clone())
                 .into_any_element(),
-            SettingsPage::Sdk => Section::settings(
-                &theme,
-                "Managed SDK",
-                Some("Studio builds previews and exports with this SDK. Selecting an installed one applies to the open project."),
-                None,
-                vec![self.sdk_controls(cx).into_any_element()],
-            )
-            .into_any_element(),
+            SettingsPage::Sdk => PanelSection::new(&theme, "Managed SDK")
+                .description(
+                    "Studio builds previews and exports with this SDK. Selecting an installed \
+                     one applies to the open project.",
+                )
+                .card()
+                .child(self.sdk_controls(cx))
+                .into_any_element(),
             SettingsPage::Presets => self.preset_panel.clone().into_any_element(),
             SettingsPage::Export => self.render_export_defaults(cx),
         };
-        let frame = SettingsFrame::settings(
+        let frame = SettingsFrame::new(
             &theme,
             "settings",
             SettingsPage::ALL
@@ -472,9 +499,27 @@ impl StudioShell {
             .into_any_element()
     }
 
+    /// The settings frame on page `page` (0 General … 4 Export), drawn with `theme` the way
+    /// the settings window draws it. For the UI gallery's captures.
+    pub fn render_settings_fixture(
+        &mut self,
+        page: usize,
+        theme: Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        if let Some(page) = SettingsPage::ALL.get(page) {
+            self.settings_page = *page;
+        }
+        self.export_defaults();
+        let main = std::mem::replace(&mut self.theme, theme);
+        let frame = self.render_settings(None, cx);
+        self.theme = main;
+        frame
+    }
+
     /// A settings segmented control whose option `i` reports its bounds as `{id}-{i}`, and
     /// whose clicks call `on_select` with the option's index.
-    fn settings_segments(
+    fn measured_segments(
         &self,
         id: &'static str,
         options: Vec<SegmentOption>,
@@ -482,7 +527,7 @@ impl StudioShell {
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let entity = cx.entity();
-        let mut control = SegmentedControl::settings(&self.theme, id, options).on_select({
+        let mut control = SegmentedControl::new(&self.theme, id, options).on_select({
             let entity = entity.clone();
             move |index, _, cx| entity.update(cx, |shell, cx| on_select(shell, *index, cx))
         });
@@ -508,7 +553,7 @@ impl StudioShell {
         let actions = div()
             .flex()
             .flex_wrap()
-            .gap(px(8.))
+            .gap(px(METRICS.space_2))
             .child(self.action_button(
                 "next-audio-output",
                 "Next output",
@@ -536,32 +581,19 @@ impl StudioShell {
                 cx,
                 |s, cx| s.change_output(OutputDevice::Unavailable, cx),
             ));
-        Section::settings(
-            &theme,
-            "Audio output",
-            Some("Where the preview plays its sound. Retry audio goes back to the system's default device."),
-            None,
-            vec![
-                Card::settings_rows(
-                    &theme,
-                    vec![
-                        SettingRow::settings(
-                            &theme,
-                            if ready {
-                                self.audio_status()
-                            } else {
-                                "Open a preview to choose its output".to_owned()
-                            },
-                            None,
-                            actions.into_any_element(),
-                        )
-                        .into_any_element(),
-                    ],
-                )
-                .into_any_element(),
-            ],
-        )
-        .into_any_element()
+        let status = if ready {
+            self.audio_status()
+        } else {
+            "Open a preview to choose its output".to_owned()
+        };
+        PanelSection::new(&theme, "Audio output")
+            .description(
+                "Where the preview plays its sound. Retry audio goes back to the system's \
+                 default device.",
+            )
+            .card()
+            .child(FormField::stacked(&theme, status, actions))
+            .into_any_element()
     }
 
     /// The Agent page's Review: whether later tasks apply validated changes themselves or
@@ -578,53 +610,57 @@ impl StudioShell {
                 .into_any_element(),
             ),
             Some((current, running)) => {
-                let options = REVIEW_POLICIES
-                    .iter()
-                    .map(|(policy, label)| SegmentOption::new(*label, *policy == current))
-                    .collect();
-                let control = self.settings_segments(
+                let entity = cx.entity();
+                let mut control = RadioCards::new(
+                    &theme,
                     "review-policy",
-                    options,
-                    |shell, index, cx| {
-                        if let Some((policy, _)) = REVIEW_POLICIES.get(index) {
-                            shell
-                                .panel
-                                .update(cx, |panel, cx| panel.set_review_policy(*policy, cx));
+                    REVIEW_POLICIES
+                        .iter()
+                        .map(|(_, label)| RadioCard::new(*label, None))
+                        .collect(),
+                    REVIEW_POLICIES
+                        .iter()
+                        .position(|(policy, _)| *policy == current),
+                )
+                .on_select({
+                    let entity = entity.clone();
+                    move |index, _, cx| {
+                        if let Some((policy, _)) = REVIEW_POLICIES.get(*index) {
+                            entity.update(cx, |shell, cx| {
+                                shell
+                                    .panel
+                                    .update(cx, |panel, cx| panel.set_review_policy(*policy, cx));
+                            });
                         }
-                    },
-                    cx,
-                );
-                let mut rows = vec![
-                    SettingRow::settings(
-                        &theme,
-                        "Validated changes",
-                        Some(ReviewPolicy::SCOPE_NOTICE),
-                        control,
-                    )
-                    .into_any_element(),
-                ];
+                    }
+                });
+                if self.qualifying {
+                    control = control.on_option_bounds(move |index, bounds, cx| {
+                        entity.update(cx, |shell, _| {
+                            shell.button_bounds.insert(
+                                format!("review-policy-{index}"),
+                                crate::probe::bounds_to_record(bounds),
+                            );
+                        });
+                    });
+                }
+                children.push(control.into_any_element());
+                children.push(settings_note(&theme, ReviewPolicy::SCOPE_NOTICE).into_any_element());
                 if let Some(running) = running {
-                    rows.push(
-                        SettingRow::settings(
+                    children.push(
+                        settings_note(
                             &theme,
-                            "The running task keeps",
-                            None,
-                            settings_note(&theme, review_label(running)).into_any_element(),
+                            format!("The running task keeps {}.", review_label(running)),
                         )
                         .into_any_element(),
                     );
                 }
-                children.push(Card::settings_rows(&theme, rows).into_any_element());
             }
         }
-        Section::settings(
-            &theme,
-            "Review",
-            Some("A change applies to tasks started afterwards."),
-            None,
-            children,
-        )
-        .into_any_element()
+        PanelSection::new(&theme, "Review")
+            .description("A change applies to tasks started afterwards.")
+            .children(children)
+            .into_any_element()
     }
 
     /// The Export page: the format, size and frame rate every export starts from. The
@@ -633,7 +669,7 @@ impl StudioShell {
     fn render_export_defaults(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
         let defaults = self.export_panel.saved.unwrap_or_default();
-        let format = self.settings_segments(
+        let format = self.measured_segments(
             "default-format",
             FORMATS
                 .iter()
@@ -658,7 +694,7 @@ impl StudioShell {
             },
             cx,
         );
-        let size = self.settings_segments(
+        let size = self.measured_segments(
             "default-scale",
             SCALES
                 .iter()
@@ -682,7 +718,7 @@ impl StudioShell {
             },
             cx,
         );
-        let fps = self.settings_segments(
+        let fps = self.measured_segments(
             "default-fps",
             DEFAULT_FPS
                 .iter()
@@ -701,42 +737,25 @@ impl StudioShell {
             },
             cx,
         );
-        Section::settings(
-            &theme,
-            "Export defaults",
-            Some("Every export starts with these. The export panel changes them for that export only."),
-            None,
-            vec![
-                Card::settings_rows(
-                    &theme,
-                    vec![
-                        SettingRow::settings(
-                            &theme,
-                            "Format",
-                            Some("When the project's SDK lacks it, MP4 · MPEG-4 is used."),
-                            format,
-                        )
-                        .into_any_element(),
-                        SettingRow::settings(
-                            &theme,
-                            "Size",
-                            Some("Half size renders faster and makes a smaller file."),
-                            size,
-                        )
-                        .into_any_element(),
-                        SettingRow::settings(
-                            &theme,
-                            "Frame rate",
-                            Some("30 fps applies where it divides the video's rate."),
-                            fps,
-                        )
-                        .into_any_element(),
-                    ],
-                )
-                .into_any_element(),
-            ],
-        )
-        .into_any_element()
+        PanelSection::new(&theme, "Export defaults")
+            .description(
+                "Every export starts with these. The export panel changes them for that export \
+                 only.",
+            )
+            .card()
+            .child(
+                FormField::row(&theme, "Format", format)
+                    .hint("When the project's SDK lacks it, MP4 · MPEG-4 is used."),
+            )
+            .child(
+                FormField::row(&theme, "Size", size)
+                    .hint("Half size renders faster and makes a smaller file."),
+            )
+            .child(
+                FormField::row(&theme, "Frame rate", fps)
+                    .hint("30 fps applies where it divides the video's rate."),
+            )
+            .into_any_element()
     }
 
     /// The General page's Appearance: the theme.
@@ -747,7 +766,7 @@ impl StudioShell {
             .iter()
             .map(|(value, label)| SegmentOption::new(*label, *value == current))
             .collect();
-        let control = self.settings_segments(
+        let control = self.measured_segments(
             "theme",
             options,
             |shell, index, cx| {
@@ -757,23 +776,29 @@ impl StudioShell {
             },
             cx,
         );
-        Section::settings(
-            &theme,
-            "Appearance",
-            Some("Follow the system's light or dark appearance, or pick one."),
-            None,
-            vec![
-                Card::settings_rows(
-                    &theme,
-                    vec![
-                        SettingRow::settings(&theme, "Theme", None, control.into_any_element())
-                            .into_any_element(),
-                    ],
-                )
-                .into_any_element(),
-            ],
-        )
-        .into_any_element()
+        let current_motion = studio_theme::current_motion(cx);
+        let motion = self.measured_segments(
+            "motion",
+            MOTIONS
+                .iter()
+                .map(|(value, label)| SegmentOption::new(*label, *value == current_motion))
+                .collect(),
+            |shell, index, cx| {
+                if let Some((choice, _)) = MOTIONS.get(index) {
+                    shell.choose_motion(*choice, cx);
+                }
+            },
+            cx,
+        );
+        PanelSection::new(&theme, "Appearance")
+            .description("Follow the system's light or dark appearance, or pick one.")
+            .card()
+            .child(FormField::row(&theme, "Theme", control))
+            .child(
+                FormField::row(&theme, "Motion", motion)
+                    .hint("Reduced makes animations snap into place."),
+            )
+            .into_any_element()
     }
 }
 
@@ -790,12 +815,33 @@ fn review_label(policy: ReviewPolicy) -> &'static str {
     }
 }
 
-/// A line of the settings window's muted text.
+/// A note on a settings page: `Small` in `text_2`.
 fn settings_note(theme: &Theme, text: impl Into<SharedString>) -> gpui::Div {
-    div()
-        .text_size(px(13.))
-        .text_color(theme.settings_muted())
-        .child(text.into())
+    text_style(div(), TextStyle::Small)
+        .text_color(theme.colors.text_2)
+        .child(selectable(text))
+}
+
+/// A settings page's column of sections, `space_8` apart.
+fn settings_page() -> gpui::Div {
+    div().flex().flex_col().gap(px(METRICS.space_8))
+}
+
+/// Writes the motion `choice` into the app's settings unless a later choice was made
+/// meanwhile.
+fn save_motion(
+    writer: &SettingsWriter,
+    generation: u64,
+    choice: MotionPreference,
+    paths: &studio_engine::app_paths::AppPaths,
+) -> Result<(), String> {
+    let _write = writer.write.lock();
+    if writer.latest_motion.load(Ordering::Acquire) != generation {
+        return Ok(());
+    }
+    let mut settings = AppSettings::load(paths);
+    settings.motion = choice;
+    settings.save(paths)
 }
 
 /// Writes `choice` into the app's settings unless a later choice was made meanwhile.
@@ -852,5 +898,29 @@ mod tests {
     fn the_options_are_system_light_and_dark() {
         let order: Vec<_> = THEMES.iter().map(|(theme, _)| *theme).collect();
         assert_eq!(order, [AppTheme::System, AppTheme::Light, AppTheme::Dark]);
+    }
+
+    #[test]
+    fn motion_is_system_reduced_or_full_and_saved_beside_the_theme() {
+        let order: Vec<_> = MOTIONS.iter().map(|(motion, _)| *motion).collect();
+        assert_eq!(
+            order,
+            [
+                MotionPreference::System,
+                MotionPreference::Reduced,
+                MotionPreference::Full
+            ]
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let paths = studio_engine::app_paths::AppPaths::new(dir.path()).unwrap();
+        let writer = SettingsWriter::default();
+        writer.latest.store(1, Ordering::Release);
+        save_theme(&writer, 1, AppTheme::Dark, &paths).unwrap();
+        writer.latest_motion.store(2, Ordering::Release);
+        save_motion(&writer, 2, MotionPreference::Reduced, &paths).unwrap();
+        save_motion(&writer, 1, MotionPreference::Full, &paths).unwrap();
+        let saved = AppSettings::load(&paths);
+        assert_eq!(saved.motion, MotionPreference::Reduced);
+        assert_eq!(saved.theme, AppTheme::Dark);
     }
 }

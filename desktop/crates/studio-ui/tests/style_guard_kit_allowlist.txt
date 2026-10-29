@@ -1,0 +1,12 @@
+# Style guard allowlist for studio-ui/src/kit (tests/style_guard.rs).
+# Format: <path under src/> <pattern> <count>. Counts may only go down; a new file gets no entry.
+# Regenerate: STYLE_GUARD_WRITE=1 cargo test --manifest-path desktop/Cargo.toml -p studio-ui --test style_guard
+# (refuses to raise a count unless STYLE_GUARD_ALLOW_INCREASE=1 is set too).
+#
+# Patterns: colour literals and Radix steps: gray( .gray_ .blue_ .red_ .amber_ .green_ rgb( rgba(
+# hsla( gpui::black() gpui::white() SETTINGS_ACCENT. Comments, string contents and #[cfg(test)]
+# modules are not counted.
+#
+# Exceptions by design: theme plumbing (tone_color, tone_surface and the surface palettes) maps
+# roles to steps until phase 1 makes the steps private; those entries go when it lands.
+# px( in the kit is migrated in phase 2 and guarded from then on.

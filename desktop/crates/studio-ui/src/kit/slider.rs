@@ -21,14 +21,14 @@
 use std::{cell::Cell, rc::Rc};
 
 use gpui::{
-    App, Bounds, DispatchPhase, ElementId, Hsla, InteractiveElement, IntoElement, MouseButton,
+    App, Bounds, DispatchPhase, ElementId, InteractiveElement, IntoElement, MouseButton,
     MouseDownEvent, MouseMoveEvent, MouseUpEvent, ParentElement, Pixels, Point, RenderOnce, Role,
     SharedString, StatefulInteractiveElement, Styled, Window, canvas, div, prelude::FluentBuilder,
     px,
 };
-use studio_theme::Theme;
+use studio_theme::{METRICS, Shadow, Theme, shadow_for};
 
-use super::interact::{DISABLED_OPACITY, Nav, focusable, nav_key};
+use super::interact::{Nav, dim_disabled, focusable, nav_key};
 
 /// How far an arrow key moves a pointer slider whose drag does not snap.
 const DEFAULT_KEY_STEP: f32 = 0.05;
@@ -110,21 +110,19 @@ struct PointerDrag {
 /// `cx.listener(..)` builds one directly.
 type DragStartHandler = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
 
+/// The row's own box -- `h-4` over the thinner track, so the thumb has room.
+const ROW_H: f32 = 16.;
+
+/// A themed slider: a `ctl_active` track, an `accent` fill up to the value and a `thumb`
+/// knob with the thumb shadow.
 #[derive(IntoElement)]
 pub struct Slider {
     id: ElementId,
+    theme: Theme,
     fraction: f32,
     track_cell: SliderTrack,
-    /// The row's own box -- `h-4` over a thinner track, so the thumb has room.
-    row_height: Pixels,
     row_width: Option<Pixels>,
     fill_row: bool,
-    track_height: Pixels,
-    track_bg: Hsla,
-    /// `bg-blue-9`, when the slider draws a filled portion at all. The
-    /// teleprompter's pills do not.
-    fill: Option<Hsla>,
-    thumb: Option<ThumbStyle>,
     on_drag_start: Option<DragStartHandler>,
     /// The accessible name.
     label: Option<SharedString>,
@@ -136,31 +134,15 @@ pub struct Slider {
     disabled: bool,
 }
 
-#[derive(Debug, Clone)]
-struct ThumbStyle {
-    size: Pixels,
-    fill: Hsla,
-    border: Option<Hsla>,
-    shadow: Vec<gpui::BoxShadow>,
-    /// The thumb's `top`. Defaults to centring it over the track; the settings
-    /// zoom slider sits one pixel high of centre and that is transcribed, not
-    /// corrected.
-    top: Pixels,
-}
-
 impl Slider {
-    pub fn new(id: impl Into<ElementId>, fraction: f32, track: SliderTrack) -> Self {
+    pub fn new(theme: &Theme, id: impl Into<ElementId>, fraction: f32) -> Self {
         Self {
             id: id.into(),
+            theme: *theme,
             fraction: fraction.clamp(0., 1.),
-            track_cell: track,
-            row_height: px(16.),
+            track_cell: SliderTrack::default(),
             row_width: None,
             fill_row: false,
-            track_height: px(4.),
-            track_bg: gpui::transparent_black(),
-            fill: None,
-            thumb: None,
             on_drag_start: None,
             label: None,
             on_key_change: None,
@@ -169,6 +151,12 @@ impl Slider {
         }
     }
 
+    /// Writes the track's painted bounds into `track`, for a caller that does its own
+    /// pointer maths (with [`Slider::drag_layer`]).
+    pub fn track_cell(mut self, track: SliderTrack) -> Self {
+        self.track_cell = track;
+        self
+    }
     /// Makes the slider follow the pointer: a press on the row jumps there and
     /// a drag keeps tracking anywhere in the window until release. Values snap
     /// to `step` (a fraction of the track; zero does not snap), and the slider
@@ -218,54 +206,6 @@ impl Slider {
         self
     }
 
-    pub fn row_height(mut self, height: Pixels) -> Self {
-        self.row_height = height;
-        self
-    }
-
-    /// `h-[0.3rem] bg-gray-4 rounded-full`, or whatever the surface remaps the
-    /// track fill to.
-    pub fn track(mut self, height: Pixels, bg: Hsla) -> Self {
-        self.track_height = height;
-        self.track_bg = bg;
-        self
-    }
-
-    /// `absolute h-full rounded-full bg-blue-9`.
-    pub fn fill(mut self, color: Hsla) -> Self {
-        self.fill = Some(color);
-        self
-    }
-
-    /// `bg-gray-1 dark:bg-gray-12 border border-gray-6 rounded-full size-4`.
-    pub fn thumb(mut self, size: Pixels, fill: Hsla, border: Option<Hsla>) -> Self {
-        let top = px(-(f32::from(size) - f32::from(self.track_height)) / 2.);
-        self.thumb = Some(ThumbStyle {
-            size,
-            fill,
-            border,
-            shadow: Vec::new(),
-            top,
-        });
-        self
-    }
-
-    /// A knob that has to read on a light track needs the lift the CSS one
-    /// gets from `0 1px 3px rgba(0,0,0,.25)`.
-    pub fn thumb_shadow(mut self) -> Self {
-        if let Some(thumb) = self.thumb.as_mut() {
-            thumb.shadow = studio_theme::thumb_shadow();
-        }
-        self
-    }
-
-    pub fn thumb_top(mut self, top: Pixels) -> Self {
-        if let Some(thumb) = self.thumb.as_mut() {
-            thumb.top = top;
-        }
-        self
-    }
-
     pub fn on_drag_start(
         mut self,
         handler: impl Fn(&MouseDownEvent, &mut Window, &mut App) + 'static,
@@ -311,15 +251,11 @@ impl RenderOnce for Slider {
     fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let Slider {
             id,
+            theme,
             fraction,
             track_cell,
-            row_height,
             row_width,
             fill_row,
-            track_height,
-            track_bg,
-            fill,
-            thumb,
             on_drag_start,
             label,
             on_key_change,
@@ -344,15 +280,16 @@ impl RenderOnce for Slider {
         });
         let row = div().id(id).role(Role::Slider);
         let row = match keys {
-            Some((step, handler)) => focusable(row, &Theme::for_window(window, cx), false)
-                .on_key_down(move |event, window, cx| {
+            Some((step, handler)) => {
+                focusable(row, &theme, false).on_key_down(move |event, window, cx| {
                     if let Some(next) = nav_key(event.keystroke.key.as_str())
                         .and_then(|key| slider_key(fraction, key, step))
                     {
                         handler(&next, window, cx);
                         cx.stop_propagation();
                     }
-                }),
+                })
+            }
             None => row,
         };
         let row = match (pointer, drag) {
@@ -422,21 +359,23 @@ impl RenderOnce for Slider {
             _ => row,
         };
 
-        row.when_some(label, |this, label| this.aria_label(label))
-            .when(disabled, |this| this.opacity(DISABLED_OPACITY))
+        let colors = theme.colors;
+        let size = METRICS.size;
+        dim_disabled(row, disabled)
+            .when_some(label, |this, label| this.aria_label(label))
             .flex()
             .flex_row()
             .items_center()
-            .h(row_height)
+            .h(px(ROW_H))
             .when(fill_row, |this| this.flex_1().min_w_0())
             .when_some(row_width, |this, width| this.w(width).flex_shrink_0())
             .child(
                 div()
                     .relative()
                     .w_full()
-                    .h(track_height)
+                    .h(px(size.slider_track))
                     .rounded_full()
-                    .bg(track_bg)
+                    .bg(colors.ctl_active)
                     .child(
                         canvas(
                             move |bounds, _window, _cx| track_cell.set(Some(bounds)),
@@ -445,7 +384,7 @@ impl RenderOnce for Slider {
                         .absolute()
                         .size_full(),
                     )
-                    .children(fill.map(|color| {
+                    .child(
                         div()
                             .absolute()
                             .left_0()
@@ -453,22 +392,19 @@ impl RenderOnce for Slider {
                             .h_full()
                             .w(gpui::relative(fraction))
                             .rounded_full()
-                            .bg(color)
-                    }))
-                    .children(thumb.map(|thumb| {
+                            .bg(colors.accent),
+                    )
+                    .child(
                         div()
                             .absolute()
-                            .top(thumb.top)
+                            .top(px(-(size.slider_thumb - size.slider_track) / 2.))
                             .left(gpui::relative(fraction))
-                            .ml(px(-f32::from(thumb.size) / 2.))
-                            .size(thumb.size)
+                            .ml(px(-size.slider_thumb / 2.))
+                            .size(px(size.slider_thumb))
                             .rounded_full()
-                            .bg(thumb.fill)
-                            .shadow(thumb.shadow.clone())
-                            .when_some(thumb.border, |this, border| {
-                                this.border_1().border_color(border)
-                            })
-                    })),
+                            .bg(colors.thumb)
+                            .shadow(shadow_for(theme.appearance, Shadow::Thumb).into_vec()),
+                    ),
             )
             .when_some(on_drag_start, |this, handler| {
                 this.on_mouse_down(MouseButton::Left, move |event, window, cx| {
@@ -573,10 +509,12 @@ mod tests {
     }
 
     impl Render for Volume {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::for_window(window, cx);
             let changes = self.changes.clone();
             let track: SliderTrack = Rc::new(Cell::new(None));
-            Slider::new("volume", self.fraction, track)
+            Slider::new(&theme, "volume", self.fraction)
+                .track_cell(track)
                 .label("Volume")
                 .on_key_change(
                     0.25,
@@ -614,10 +552,12 @@ mod tests {
     }
 
     impl Render for Zoom {
-        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::for_window(window, cx);
             let changes = self.changes.clone();
             let track: SliderTrack = Rc::new(Cell::new(None));
-            Slider::new("zoom", self.fraction, track)
+            Slider::new(&theme, "zoom", self.fraction)
+                .track_cell(track)
                 .label("Zoom")
                 .row_width(px(200.))
                 .disabled(self.disabled)

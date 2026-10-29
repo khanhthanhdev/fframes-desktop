@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; media-src 'self'">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="generator" content="fframes Studio">
+<title>Slides</title>
+<link rel="stylesheet" href="style.css">
+<script type="application/json" id="deck-data">__FFRAMES_DECK_MANIFEST__</script>
+<script src="app.js" defer></script>
+</head>
+<body>
+<main id="stage" class="stage" aria-label="Slide deck">
+  <video id="video" class="layer" src="deck.mp4" preload="auto" playsinline disablepictureinpicture></video>
+  <img id="poster" class="layer poster" alt="" hidden>
+  <div id="start" class="start" hidden>
+    <p class="start-title" id="start-title"></p>
+    <p class="start-hint">Press <kbd>&rarr;</kbd> or click to start</p>
+  </div>
+  <div id="counter" class="counter" aria-live="polite"></div>
+</main>
+
+<aside id="notes" class="notes" hidden aria-label="Speaker notes">
+  <header class="panel-head">
+    <span id="notes-counter" class="muted"></span>
+    <button type="button" class="close" data-close="notes" aria-label="Close notes">&times;</button>
+  </header>
+  <h2 id="notes-title" class="notes-title"></h2>
+  <p id="notes-text" class="notes-text"></p>
+  <p class="muted keys">&rarr; next &middot; &larr; previous &middot; O overview &middot; S notes &middot; F full screen</p>
+</aside>
+
+<section id="overview" class="overview" hidden aria-label="All slides">
+  <header class="panel-head">
+    <h1 id="overview-title" class="overview-title"></h1>
+    <button type="button" class="close" data-close="overview" aria-label="Close overview">&times;</button>
+  </header>
+  <ol id="grid" class="grid"></ol>
+</section>
+
+<section id="print" class="print" aria-hidden="true"></section>
+
+<noscript><p class="noscript">This slide deck needs JavaScript. The video is <a href="deck.mp4">deck.mp4</a>.</p></noscript>
+</body>
+</html>

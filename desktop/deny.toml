@@ -10,8 +10,8 @@ allow-git = [
     # Zed's forks that the GPUI fork itself pins by commit.
     "https://github.com/zed-industries/font-kit",
     "https://github.com/zed-industries/xim-rs.git",
-    # proptest, which the GPUI fork's `test-support` feature (the parity tests' headless
-    # window) pins by commit. Dev-dependency only; never in the shipped binary.
+    # proptest, which the GPUI fork's `test-support` feature (the headless window of the
+    # studio-ui tests) pins by commit. Dev-dependency only; never in the shipped binary.
     "https://github.com/proptest-rs/proptest",
 ]
 

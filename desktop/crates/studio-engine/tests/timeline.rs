@@ -394,6 +394,68 @@ fn transport_pause_seek_end_replay_and_shorter_rebuild() {
 }
 
 #[test]
+fn play_until_stops_exactly_at_the_bound_and_holds() {
+    let mut t = PlaybackClock::install(30, 120, 10, 0.).unwrap();
+    t.set_play_until(Some(40));
+    t.toggle(0.).unwrap();
+    t.fallback(0.).unwrap();
+    assert_eq!(t.tick(0.5), 25);
+    assert!(t.playing());
+    // Far past the bound: exactly at it, and stopped.
+    assert_eq!(t.tick(10.), 40);
+    assert!(!t.playing());
+    assert_eq!(t.next_frame_in(11.), None);
+    // A later tick does not move it.
+    assert_eq!(t.tick(20.), 40);
+    assert_eq!(t.position(), 40);
+}
+
+#[test]
+fn toggle_at_the_bound_plays_on_instead_of_restarting() {
+    let mut t = PlaybackClock::install(30, 120, 0, 0.).unwrap();
+    t.set_play_until(Some(40));
+    t.toggle(0.).unwrap();
+    t.fallback(0.).unwrap();
+    assert_eq!(t.tick(5.), 40);
+    t.toggle(5.).unwrap();
+    assert!(t.playing());
+    assert_eq!(t.position(), 40, "a held stop is not the video's end");
+    assert_eq!(t.play_until(), None);
+    // A new bound ahead stops the next play there.
+    t.pause(5.).unwrap();
+    t.set_play_until(Some(70));
+    t.toggle(5.).unwrap();
+    t.fallback(5.).unwrap();
+    assert_eq!(t.tick(9.), 70);
+    assert!(!t.playing());
+    // Only the video's end restarts from frame 0.
+    t.toggle(9.).unwrap();
+    t.fallback(9.).unwrap();
+    assert_eq!(t.tick(100.), 120);
+    t.toggle(100.).unwrap();
+    assert_eq!(t.position(), 0);
+}
+
+#[test]
+fn seek_and_reinstall_clear_play_until() {
+    let mut t = PlaybackClock::install(30, 120, 0, 0.).unwrap();
+    t.set_play_until(Some(40));
+    t.seek(10, 0.).unwrap();
+    assert_eq!(t.play_until(), None);
+    assert_eq!(t.end_frame(), 120);
+    t.set_play_until(Some(40));
+    t.reinstall(30, 90, 10, 1.).unwrap();
+    assert_eq!(t.play_until(), None);
+    t.toggle(1.).unwrap();
+    t.fallback(1.).unwrap();
+    assert_eq!(t.tick(2.), 40);
+    assert!(t.playing(), "the cleared bound no longer stops playback");
+    // A bound past the end stops at the end.
+    t.set_play_until(Some(500));
+    assert_eq!(t.end_frame(), 90);
+}
+
+#[test]
 fn huge_thumbnail_interpolation_does_not_overflow() {
     let mut value = report(usize::MAX);
     value.fps = 1 << 40;

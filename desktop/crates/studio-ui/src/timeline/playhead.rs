@@ -4,9 +4,6 @@
 use gpui::{Bounds, ContentMask, Hsla, IntoElement, Pixels, Styled, canvas, fill, point, px, size};
 use studio_theme::{METRICS, Theme};
 
-const PLAYHEAD_HEAD: f32 = 10.;
-const PLAYHEAD_LINE: f32 = 1.5;
-
 /// Where the playhead is, in window pixels: the time axis it is clipped to and its x.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PlayheadGeometry {
@@ -16,7 +13,8 @@ pub struct PlayheadGeometry {
 
 /// An overlay that paints the playhead line and its head on the ruler.
 pub fn playhead_overlay(theme: &Theme, geometry: Option<PlayheadGeometry>) -> impl IntoElement {
-    let line = Hsla::from(theme.editor.playhead);
+    let line = Hsla::from(theme.colors.playhead);
+    let (head_size, line_w) = (METRICS.layout.playhead_head, METRICS.layout.playhead_line);
     canvas(
         |_, _, _| {},
         move |_, _, window, _| {
@@ -28,21 +26,18 @@ pub fn playhead_overlay(theme: &Theme, geometry: Option<PlayheadGeometry>) -> im
                 let center = x + 0.5;
                 window.paint_quad(fill(
                     Bounds::new(
-                        point(px(center - PLAYHEAD_LINE / 2.), axis.top()),
-                        size(px(PLAYHEAD_LINE), axis.size.height),
+                        point(px(center - line_w / 2.), axis.top()),
+                        size(px(line_w), axis.size.height),
                     ),
                     line,
                 ));
                 let head = point(
-                    px(center - PLAYHEAD_HEAD / 2.),
-                    axis.top() + px((METRICS.ruler_h - PLAYHEAD_HEAD) / 2.),
+                    px(center - head_size / 2.),
+                    axis.top() + px((METRICS.ruler_h - head_size) / 2.),
                 );
                 window.paint_quad(
-                    fill(
-                        Bounds::new(head, size(px(PLAYHEAD_HEAD), px(PLAYHEAD_HEAD))),
-                        line,
-                    )
-                    .corner_radii(px(PLAYHEAD_HEAD / 2.)),
+                    fill(Bounds::new(head, size(px(head_size), px(head_size))), line)
+                        .corner_radii(px(head_size / 2.)),
                 );
             });
         },

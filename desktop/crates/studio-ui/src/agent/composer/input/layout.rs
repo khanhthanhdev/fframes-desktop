@@ -10,6 +10,7 @@ pub(super) struct InputLayoutKey {
     font: gpui::Font,
     font_size: Pixels,
     color: gpui::Hsla,
+    placeholder_color: gpui::Hsla,
     marked_range: Option<Range<usize>>,
     placeholder: SharedString,
 }
@@ -24,11 +25,13 @@ impl ComposerInput {
         window: &mut Window,
     ) -> f32 {
         let font_size = style.font_size.to_pixels(window.rem_size());
+        let placeholder_color: gpui::Hsla = self.theme.colors.text_3.into();
         let key = InputLayoutKey {
             width,
             font: style.font(),
             font_size,
             color: style.color,
+            placeholder_color,
             marked_range: self.marked_range.clone(),
             placeholder: self.placeholder.clone(),
         };
@@ -46,7 +49,7 @@ impl ComposerInput {
             SharedString::from(self.content.clone())
         };
         let color = if is_placeholder {
-            self.theme.gray(9)
+            placeholder_color
         } else {
             style.color
         };
@@ -59,7 +62,7 @@ impl ComposerInput {
             background_color: None,
             underline: underline.then_some(UnderlineStyle {
                 color: Some(color),
-                thickness: px(1.0),
+                thickness: px(studio_theme::METRICS.size.divider),
                 wavy: false,
             }),
             strikethrough: None,
@@ -98,7 +101,7 @@ impl ComposerInput {
                 text.to_string().into(),
                 font_size,
                 &runs,
-                Some(width.max(px(20.0))),
+                Some(width.max(px(MIN_WRAP_WIDTH))),
                 None,
             ) {
                 for line in shaped {

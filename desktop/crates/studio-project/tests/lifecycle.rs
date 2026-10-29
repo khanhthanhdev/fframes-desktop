@@ -1,6 +1,6 @@
 use std::fs;
 use studio_project::{
-    create, import,
+    ProjectTemplate, create, create_from_template, import,
     manifest::{CargoEntry, SdkPin},
     open,
 };
@@ -154,4 +154,157 @@ fn import_validates_source_before_publishing_sidecar_and_supports_custom_bins() 
     fs::write(root.join("movie.rs"), "fn main() {}\n").unwrap();
     assert!(!import(root, entry, pin()).unwrap().worker_available);
     assert_eq!(fs::read(root.join("movie.rs")).unwrap(), b"fn main() {}\n");
+}
+
+/// Every file of a new project, relative to its root, with `/` separators.
+fn files(root: &std::path::Path) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut dirs = vec![root.to_path_buf()];
+    while let Some(dir) = dirs.pop() {
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else {
+                let relative = path.strip_prefix(root).unwrap().to_string_lossy();
+                found.push(relative.replace('\\', "/"));
+            }
+        }
+    }
+    found.sort();
+    found
+}
+
+#[test]
+fn the_blank_template_writes_the_same_files() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("blank");
+    let via_template = temp.path().join("blank-template");
+    create(&root, "Video", pin(), "1.3.0", "0.2.0").unwrap();
+    create_from_template(
+        &via_template,
+        "Video",
+        pin(),
+        "1.3.0",
+        "0.2.0",
+        ProjectTemplate::Blank,
+    )
+    .unwrap();
+    let expected = [
+        ".gitignore",
+        "AGENTS.md",
+        "Cargo.toml",
+        "media/DMSans-Medium.ttf",
+        "media/OFL.txt",
+        "src/bin/studio_worker.rs",
+        "src/lib.rs",
+        "src/main.rs",
+        "src/video.rs",
+        "studio.json",
+        "style/tokens.json",
+    ];
+    assert_eq!(files(&root), expected);
+    assert_eq!(files(&via_template), expected);
+    let template = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
+    for source in [
+        "AGENTS.md",
+        "src/bin/studio_worker.rs",
+        "src/lib.rs",
+        "src/main.rs",
+        "src/video.rs",
+        "style/tokens.json",
+    ] {
+        assert_eq!(
+            fs::read(root.join(source)).unwrap(),
+            fs::read(template.join(source)).unwrap(),
+            "{source}"
+        );
+    }
+    let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert_eq!(
+        cargo,
+        fs::read_to_string(via_template.join("Cargo.toml")).unwrap()
+    );
+    assert!(!cargo.contains("fframes-kit"));
+}
+
+#[test]
+fn the_slide_deck_template_pins_the_kit_and_ships_its_documents() {
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("deck");
+    let project = create_from_template(
+        &root,
+        "Deck",
+        pin(),
+        "1.3.0",
+        "0.2.0",
+        ProjectTemplate::SlideDeck,
+    )
+    .unwrap();
+    assert!(project.worker_available);
+    assert_eq!(
+        files(&root),
+        [
+            ".gitignore",
+            "AGENTS.md",
+            "Cargo.toml",
+            "media/DMSans-Medium.ttf",
+            "media/OFL.txt",
+            "slides.json",
+            "src/bin/studio_worker.rs",
+            "src/lib.rs",
+            "src/main.rs",
+            "src/video.rs",
+            "studio.json",
+            "style/tokens.json",
+        ]
+    );
+    let cargo: toml::Table = fs::read_to_string(root.join("Cargo.toml"))
+        .unwrap()
+        .parse()
+        .unwrap();
+    let deps = cargo["dependencies"].as_table().unwrap();
+    let version = |name: &str| deps[name]["version"].as_str().unwrap().to_owned();
+    assert_eq!(version("fframes"), "=1.3.0");
+    for runtime in [
+        "fframes-studio-runtime",
+        "fframes-studio-protocol",
+        "fframes-studio-kit",
+    ] {
+        assert_eq!(version(runtime), "=0.2.0", "{runtime}");
+    }
+    assert_eq!(
+        version("fframes-kit"),
+        format!("={}", ProjectTemplate::SlideDeck.kit_version().unwrap())
+    );
+    assert_eq!(deps["fframes-kit"]["features"][0].as_str(), Some("studio"));
+    assert!(cargo.get("patch").is_none());
+    let agents = fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    let blank = include_str!("../templates/AGENTS.md");
+    assert!(agents.starts_with(blank), "the Blank text comes first");
+    assert!(agents[blank.len()..].starts_with("Slides template:"));
+    // The project's own props are absent: the deck draws the code's text.
+    assert!(!root.join("props.json").exists());
+}
+
+/// The template's kit is the one fframes-studio-kit (and so the SDK) is built with.
+#[test]
+fn the_slide_deck_kit_is_the_sdk_kit() {
+    let manifest = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../../fframes-studio-kit/Cargo.toml");
+    let cargo: toml::Table = fs::read_to_string(manifest).unwrap().parse().unwrap();
+    let kit = cargo["dependencies"]["fframes-kit"]["version"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        kit,
+        format!("={}", ProjectTemplate::SlideDeck.kit_version().unwrap())
+    );
+    let template: toml::Table = include_str!("../templates-slides/Cargo.toml")
+        .parse()
+        .unwrap();
+    assert_eq!(
+        template["dependencies"]["fframes-kit"]["version"].as_str(),
+        Some(kit)
+    );
 }

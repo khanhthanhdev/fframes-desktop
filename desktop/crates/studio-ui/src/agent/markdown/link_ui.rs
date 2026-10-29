@@ -13,10 +13,16 @@ use gpui::{
     SharedString, StatefulInteractiveElement, Styled, Window, div, px,
 };
 use studio_markdown::mend::PENDING_LINK_URL;
-use studio_theme::{TextStyle, Theme, text_style};
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::links::{self, LinkAction, LinkEffect, LinkTarget, action_for, classify, effect};
-use crate::kit::{Button, ButtonSize, ButtonVariant, Popover};
+use crate::kit::{Button, Emphasis, Popover};
+
+/// The link confirmation's width, the least it shrinks to in a narrow window, and the tallest
+/// its address grows before it scrolls.
+const CONFIRM_W: f32 = 360.;
+const CONFIRM_MIN_W: f32 = 336.;
+const URL_MAX_H: f32 = 96.;
 
 /// Performs the effect of a link click. The default hands it to the OS; tests record it.
 pub type LinkSink = Rc<dyn Fn(&LinkEffect, &mut App)>;
@@ -86,25 +92,25 @@ pub fn confirm_overlay(
 ) -> AnyElement {
     let on_cancel = Rc::new(on_cancel);
     let dismiss = on_cancel.clone();
-    let body = Popover::plain(theme)
+    let body = Popover::new(theme)
         .relative()
         .id(SharedString::from(format!("md-confirm-{id}")))
         .role(Role::Dialog)
         .occlude()
-        .gap(px(8.))
-        .p(px(12.))
-        .w(px(360.))
-        .max_w(px(336.).max(viewport.width - px(48.)))
+        .gap(px(METRICS.space_2))
+        .p(px(METRICS.space_3))
+        .w(px(CONFIRM_W))
+        .max_w(px(CONFIRM_MIN_W).max(viewport.width - px(METRICS.space_6 * 2.)))
         .child(
             text_style(div(), TextStyle::Body)
-                .text_color(theme.editor.text_1)
+                .text_color(theme.colors.text_1)
                 .child("Open this link in your browser?"),
         )
         .child(
             text_style(div(), TextStyle::Small)
                 .id(SharedString::from(format!("md-confirm-url-{id}")))
-                .text_color(theme.editor.text_2)
-                .max_h(px(96.))
+                .text_color(theme.colors.text_2)
+                .max_h(px(URL_MAX_H))
                 .overflow_y_scroll()
                 // The whole address, wrapped anywhere: nothing of it is truncated.
                 .child(SharedString::from(confirm.url.clone())),
@@ -114,29 +120,21 @@ pub fn confirm_overlay(
                 .flex()
                 .flex_row()
                 .justify_end()
-                .gap(px(8.))
+                .gap(px(METRICS.space_2))
                 .child(
                     div().debug_selector(|| "md-confirm-cancel".into()).child(
-                        Button::plain(
-                            theme,
-                            SharedString::from(format!("md-confirm-cancel-{id}")),
-                            ButtonVariant::Gray,
-                            ButtonSize::Sm,
-                        )
-                        .label("Cancel")
-                        .on_click(move |_, window, cx| on_cancel(window, cx)),
+                        Button::new(theme, SharedString::from(format!("md-confirm-cancel-{id}")))
+                            .emphasis(Emphasis::Neutral)
+                            .label("Cancel")
+                            .on_click(move |_, window, cx| on_cancel(window, cx)),
                     ),
                 )
                 .child(
                     div().debug_selector(|| "md-confirm-open".into()).child(
-                        Button::plain(
-                            theme,
-                            SharedString::from(format!("md-confirm-open-{id}")),
-                            ButtonVariant::Primary,
-                            ButtonSize::Sm,
-                        )
-                        .label("Open")
-                        .on_click(move |_, window, cx| on_open(window, cx)),
+                        Button::new(theme, SharedString::from(format!("md-confirm-open-{id}")))
+                            .emphasis(Emphasis::Primary)
+                            .label("Open")
+                            .on_click(move |_, window, cx| on_open(window, cx)),
                     ),
                 ),
         );
@@ -157,13 +155,13 @@ pub fn confirm_overlay(
         .child(
             gpui::anchored()
                 .position(confirm.at)
-                .snap_to_window_with_margin(px(12.))
+                .snap_to_window_with_margin(px(METRICS.space_3))
                 .child(body),
         );
     gpui::deferred(
         gpui::anchored()
             .position_mode(gpui::AnchoredPositionMode::Window)
-            .position(gpui::point(px(0.), px(0.)))
+            .position(gpui::Point::default())
             .child(layer),
     )
     .with_priority(2)

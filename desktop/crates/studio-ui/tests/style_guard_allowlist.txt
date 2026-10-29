@@ -1,0 +1,15 @@
+# Style guard allowlist for studio-ui/src outside kit/ (tests/style_guard.rs).
+# Format: <path under src/> <pattern> <count>. Counts may only go down; a new file gets no entry.
+# Regenerate: STYLE_GUARD_WRITE=1 cargo test --manifest-path desktop/Cargo.toml -p studio-ui --test style_guard
+# (refuses to raise a count unless STYLE_GUARD_ALLOW_INCREASE=1 is set too).
+#
+# Patterns: colours gray( .gray_ .blue_ .red_ .amber_ .green_ rgb( rgba( hsla( gpui::black()
+# gpui::white() SETTINGS_ACCENT; surfaces .settings_ .body_ (method calls) header_bg header_border;
+# type text_size( text_xs( text_sm( font_weight(; sizes px(<digit> rounded(px( opacity(<literal>.
+# Comments, string contents, #[cfg(test)] modules and `mod tests` blocks are not counted.
+#
+# Exceptions by design:
+# - timeline/ (painters) and agent/changes/paint.rs: px(<digit> inside `const` items is not
+#   counted, so named painter sizes stay; px( literals in code are counted.
+# - agent/syntax/ may use the theme's `syntax` colour set (phase 1); those role names match no
+#   pattern here.

@@ -74,7 +74,7 @@ impl ConversationPanel {
         div()
             .flex_1()
             .min_h_0()
-            .p(px(12.))
+            .p(px(METRICS.space_3))
             .child(self.host.history.clone())
             .into_any_element()
     }

@@ -7,6 +7,7 @@ use crate::agent::composer::keymap::{
     Backspace, Delete, DeleteToLineEnd, Down, End, Newline, Redo, SelectDown, SelectEnd, SelectUp,
     Undo, Up,
 };
+use crate::agent::composer::metrics::INPUT_TEXT_SIZE;
 
 const SECONDARY_ENTER: &str = if cfg!(target_os = "macos") {
     "cmd-enter"
@@ -558,6 +559,9 @@ fn the_composer_theme_changes_how_the_input_shapes(cx: &mut TestAppContext) {
         input.set_theme(Theme::light(), cx);
         input.layout_text(px(300.0), &window.text_style(), window);
         assert_eq!(input.layout_rebuilds, rebuilds + 1);
-        assert_eq!(input.last_runs[0].color, Theme::light().gray(9));
+        assert_eq!(
+            input.last_runs[0].color,
+            gpui::Hsla::from(Theme::light().colors.text_3)
+        );
     });
 }

@@ -11,7 +11,7 @@ impl ConversationPanel {
         &mut self,
         card: &ChangeCard,
         cx: &mut Context<Self>,
-    ) -> Option<EditorButton> {
+    ) -> Option<Button> {
         let current = self.snapshot.as_ref().is_some_and(|snapshot| {
             snapshot.task.as_ref().is_some_and(|task| {
                 task.phase == TaskPhase::AwaitingReview
@@ -24,7 +24,7 @@ impl ConversationPanel {
                 "agent-review-candidate",
                 "Review changes",
                 true,
-                Tone::Normal,
+                Emphasis::Neutral,
                 cx,
                 |this, _, cx| this.request_review(ReviewTarget::Candidate, cx),
             )
@@ -33,12 +33,12 @@ impl ConversationPanel {
 
     /// The button in the pinned banner, which stays in view while the candidate awaits review
     /// even when its change card has scrolled out of the transcript.
-    pub(super) fn banner_review_button(&mut self, cx: &mut Context<Self>) -> EditorButton {
+    pub(super) fn banner_review_button(&mut self, cx: &mut Context<Self>) -> Button {
         self.action_button(
             "agent-review-banner",
             "Review changes",
             true,
-            Tone::Normal,
+            Emphasis::Neutral,
             cx,
             |this, _, cx| this.request_review(ReviewTarget::Candidate, cx),
         )
@@ -49,13 +49,13 @@ impl ConversationPanel {
         &mut self,
         revision: &str,
         cx: &mut Context<Self>,
-    ) -> EditorButton {
+    ) -> Button {
         let target = ReviewTarget::Revision(revision.to_owned());
         self.action_button(
             format!("agent-review-{revision}"),
             "Review changes",
             true,
-            Tone::Normal,
+            Emphasis::Neutral,
             cx,
             move |this, _, cx| this.request_review(target.clone(), cx),
         )

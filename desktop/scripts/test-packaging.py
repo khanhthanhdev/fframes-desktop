@@ -29,17 +29,37 @@ def load(name):
 assembly = load("assemble-phase-zero-sdk")
 packaging = load("package-phase-zero")
 finalizing = load("finalize-native-package")
-debian_packaging = load("package-linux-deb")
 windows_installer = load("package-windows-installer")
 github_release = load("prepare-github-release")
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_sdk_framework_keeps_registry_versions_instead_of_development_paths(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            framework = Path(temporary)
+            for crate in ["fframes-media", "fframes-skia-renderer"]:
+                (framework / crate).mkdir()
+                shutil.copy(assembly.ROOT / crate / "Cargo.toml", framework / crate / "Cargo.toml")
+            source = '''[workspace]
+lints = {}
+[workspace.dependencies]
+svgr = {path = "../svgr/crates/svgr", version = "0.50.2", default-features = false}
+usvgr = {path = "../svgr/crates/usvgr", version = "0.50.2", features = ["text"]}
+fframes = {path = "fframes", version = "1.3.0"}
+ffmpeg-sys-fframes = "9.0.0"
+'''
+            assembly.write_framework(framework, source)
+            dependencies = tomllib.loads((framework / "Cargo.toml").read_text())["workspace"]["dependencies"]
+            self.assertEqual(dependencies["svgr"], {"version": "0.50.2", "default-features": False})
+            self.assertEqual(dependencies["usvgr"], {"version": "0.50.2", "features": ["text"]})
+            self.assertEqual(dependencies["fframes"]["path"], "fframes")
+            self.assertEqual(dependencies["ffmpeg-sys-fframes"], "9.0.0")
+
     def test_sdk_manifest_has_stable_digest_and_no_preview_fields(self):
         raw = json.loads((assembly.ROOT / "desktop/packaging/sdk/phase-zero-sdk.json").read_text())
         self.assertNotIn("preview_contract_versions", raw)
         canonical = json.dumps(raw, separators=(",", ":"))
-        self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "69844c9c836606ee4ad359616e359af1d1f9bba9c03f29d323ed2d41eee53ffd")
+        self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "b122d5d7e7af533eed9dd9c32ab5a746005a41bd23287b3584a71a938b7293c8")
         fframes_version = tomllib.loads((assembly.ROOT / "fframes/Cargo.toml").read_text())["package"]["version"]
         cargo_fframes_version = tomllib.loads((assembly.ROOT / "cargo-fframes/Cargo.toml").read_text())["package"]["version"]
         self.assertEqual(raw["fframes_version"], fframes_version)
@@ -63,49 +83,6 @@ class ArtifactTests(unittest.TestCase):
         self.assertIn('fframes-studio.exe" studio %*', packager)
         self.assertIn('bin/fframes-studio" studio', packager)
         self.assertIn('MacOS/fframes-studio" studio', packager)
-
-    @unittest.skipUnless(sys.platform.startswith("linux") and shutil.which("dpkg-deb") and shutil.which("dpkg-shlibdeps"), "requires Linux Debian packaging tools")
-    def test_linux_deb_has_installed_shell_layout_and_derived_dependencies(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            source = root / "phase-zero"
-            (source / "bin").mkdir(parents=True)
-            (source / "notices").mkdir()
-            binary = Path(shutil.which("true")).resolve()
-            for name in debian_packaging.BINARIES:
-                shutil.copy2(binary, source / "bin" / name)
-            (source / "notices/LICENSE.txt").write_text("test notice")
-            output = root / "fframes-studio.deb"
-
-            package = debian_packaging.package(
-                source,
-                output,
-                "fframes Studio Tests <test@example.invalid>",
-            )
-            package_bytes = package.read_bytes()
-            with self.assertRaisesRegex(ValueError, "output already exists"):
-                debian_packaging.package(
-                    source,
-                    output,
-                    "fframes Studio Tests <test@example.invalid>",
-                )
-            self.assertEqual(package.read_bytes(), package_bytes, "an existing package must not be replaced")
-            fields = subprocess.run(
-                ["dpkg-deb", "--field", str(package)],
-                check=True,
-                capture_output=True,
-                text=True,
-            ).stdout
-            self.assertIn("Package: fframes-studio", fields)
-            self.assertIn("Architecture: amd64", fields)
-            self.assertIn("Depends: libc6", fields)
-            installed = root / "installed"
-            subprocess.run(["dpkg-deb", "--extract", str(package), str(installed)], check=True)
-            self.assertTrue((installed / "usr/bin/fframes-studio").stat().st_mode & 0o111)
-            self.assertIn("/opt/fframes-studio/bin/fframes-studio studio", (installed / "usr/bin/fframes-studio").read_text())
-            self.assertTrue((installed / "usr/share/applications/fframes-studio.desktop").is_file())
-            self.assertTrue((installed / "opt/fframes-studio/notices/LICENSE.txt").is_file())
-            self.assertFalse((installed / "opt/fframes-studio/sdk").exists(), "the app package must not embed the separate SDK")
 
     def fake_windows_package(self, root):
         source = root / "fframes-studio-x86_64-pc-windows-msvc"
@@ -374,36 +351,18 @@ class ArtifactTests(unittest.TestCase):
 
     def test_release_workflow_requires_native_signing_for_tag_or_opt_in_builds(self):
         workflow = (assembly.ROOT / ".github/workflows/desktop-release.yml").read_text()
-        mac_signing = (assembly.ROOT / "desktop/scripts/sign-macos-package.sh").read_text()
         windows_signing = (assembly.ROOT / "desktop/scripts/sign-windows-package.ps1").read_text()
 
-        for secret in (
-            "APPLE_DEVELOPER_ID_P12_BASE64",
-            "APPLE_DEVELOPER_ID_P12_PASSWORD",
-            "APPLE_DEVELOPER_IDENTITY",
-            "APPLE_NOTARY_KEY_P8_BASE64",
-            "APPLE_NOTARY_KEY_ID",
-            "APPLE_NOTARY_ISSUER_ID",
-        ):
-            self.assertIn(secret, workflow)
-            self.assertIn(secret, mac_signing)
         for secret in ("WINDOWS_CODESIGN_PFX_BASE64", "WINDOWS_CODESIGN_PFX_PASSWORD"):
             self.assertIn(secret, workflow)
             self.assertIn(secret, windows_signing)
 
         self.assertIn("inputs.sign_artifacts == true", workflow)
         self.assertIn("github.event_name == 'push'", workflow)
-        self.assertIn("codesign --verify --deep --strict", mac_signing)
-        self.assertIn("notarytool submit", mac_signing)
-        self.assertIn("stapler staple", mac_signing)
         self.assertIn("verify /pa /all /v", windows_signing)
         self.assertIn("attestations: write", workflow)
         self.assertIn("id-token: write", workflow)
         self.assertIn("actions/attest-build-provenance@v3", workflow)
-        self.assertLess(
-            workflow.index("Sign and notarize macOS app package"),
-            workflow.index("Attest native app package provenance"),
-        )
         self.assertLess(
             workflow.index("Sign Windows executables and FFmpeg DLLs"),
             workflow.index("Attest native app package provenance"),
@@ -428,23 +387,13 @@ class ArtifactTests(unittest.TestCase):
             workflow.index("Attest Windows installer candidate provenance"),
         )
         self.assertLess(
-            workflow.index("Check macOS signing credentials before building"),
-            workflow.index("Focused tests and lint"),
-        )
-        self.assertLess(
             workflow.index("Check Windows signing credentials before building"),
             workflow.index("Focused tests and lint"),
         )
-        mac_preflight = workflow.split("Check macOS signing credentials before building", 1)[1].split(
-            "Check Windows signing credentials before building", 1
-        )[0]
         windows_preflight = workflow.split("Check Windows signing credentials before building", 1)[1].split(
-            "Set native build directory", 1
+            "Assert native architecture", 1
         )[0]
-        self.assertIn("APPLE_DEVELOPER_ID_P12_BASE64", mac_preflight)
-        self.assertNotIn("WINDOWS_CODESIGN_PFX_BASE64", mac_preflight)
         self.assertIn("WINDOWS_CODESIGN_PFX_BASE64", windows_preflight)
-        self.assertNotIn("APPLE_DEVELOPER_ID_P12_BASE64", windows_preflight)
         mac_packager = (assembly.ROOT / "desktop/scripts/package-phase-zero.py").read_text()
         self.assertIn('"CFBundleInfoDictionaryVersion": "6.0"', mac_packager)
         # The bundle version follows the app crate, so a release bump needs no second edit.

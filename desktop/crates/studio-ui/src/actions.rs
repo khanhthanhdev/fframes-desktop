@@ -40,10 +40,26 @@ actions!(
         CycleScene,
         /// Split the clip under the playhead in two.
         SplitAtPlayhead,
-        /// Undo the last timeline edit.
+        /// Undo the last timeline or slide stop edit.
         UndoTimelineEdit,
-        /// Redo the timeline edit last undone.
+        /// Redo the timeline or slide stop edit last undone.
         RedoTimelineEdit,
+        /// Add a slide stop at the playhead.
+        AddStopAtPlayhead,
+        /// Remove the slide stop whose timeline marker was selected last.
+        RemoveStop,
+        /// Present the video as a slide deck, full screen, from its first frame.
+        Present,
+        /// Presenting: play the next slide, or finish the one playing.
+        PresentNext,
+        /// Presenting: hold at the stop before.
+        PresentPrevious,
+        /// Presenting: hold at the start of the first slide.
+        PresentFirst,
+        /// Presenting: hold at the start of the last slide.
+        PresentLast,
+        /// Leave the presentation and return to editing.
+        ExitPresent,
         /// Start the timeline range selection at the playhead.
         MarkRangeStart,
         /// End the timeline range selection at the playhead.

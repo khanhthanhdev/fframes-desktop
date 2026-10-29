@@ -37,11 +37,18 @@ pub fn sdk_pin(manifest: &CompatibilityManifest) -> studio_project::manifest::Sd
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FrameworkSet<'a> {
     pub fframes_version: &'a str,
-    /// Version of `fframes-studio-runtime` and `fframes-studio-protocol`.
+    /// Version of `fframes-studio-runtime`, `fframes-studio-protocol` and
+    /// `fframes-studio-kit`.
     pub runtime_version: &'a str,
+    /// Version of the crates.io `fframes-kit` in the SDK's vendor folder, if it has one.
+    pub kit_version: Option<&'a str>,
     /// The crates' directory inside the SDK.
     pub rel_path: &'a str,
 }
+
+/// The crates.io component kit. Projects take it from the SDK's vendor folder, where its
+/// `fframes` dependency is patched to the SDK's framework.
+const KIT: &str = "fframes-kit";
 
 /// The framework `project` builds against in the SDK described by `compatibility`, or
 /// `None` when the project is pinned to another SDK.
@@ -52,6 +59,7 @@ pub fn framework_for<'a>(
     (project.sdk == sdk_pin(compatibility)).then_some(FrameworkSet {
         fframes_version: &compatibility.fframes_version,
         runtime_version: &compatibility.runtime_version,
+        kit_version: compatibility.kit_version.as_deref(),
         rel_path: FRAMEWORK_REL_PATH,
     })
 }
@@ -314,6 +322,9 @@ pub fn materialize_in_environment(
             "Source changed during materialization; refresh and retry".into(),
         ));
     }
+    let framework_dir = sdk.join(framework.rel_path);
+    let mut manifests = Vec::new();
+    let mut uses_kit = false;
     for file in &project.inventory.files {
         if cancelled() {
             return Err(error(&root, "Materialization cancelled".into()));
@@ -328,9 +339,37 @@ pub fn materialize_in_environment(
             &project.root,
             &root,
             Path::new(file.path.as_str()).parent().unwrap(),
-            &sdk.join(framework.rel_path),
+            &framework_dir,
             framework,
+            &mut uses_kit,
         )?;
+        manifests.push((file, cargo));
+    }
+    // Like project import, only the nearest workspace on the selected package's
+    // ancestor chain owns it; independent tools workspaces do not govern this build.
+    let entry = Path::new(project.manifest.entry.manifest.as_str());
+    let patch_manifest = entry
+        .parent()
+        .unwrap()
+        .ancestors()
+        .find_map(|directory| {
+            let candidate = directory.join("Cargo.toml");
+            manifests
+                .iter()
+                .any(|(file, cargo)| {
+                    Path::new(file.path.as_str()) == candidate && cargo.get("workspace").is_some()
+                })
+                .then_some(candidate)
+        })
+        .unwrap_or_else(|| entry.to_owned());
+    for (file, mut cargo) in manifests {
+        // The kit comes from crates.io and depends on crates.io `fframes`; the workspace root
+        // (or the entry package without one) redirects that to the SDK's framework, so the
+        // graph has one `fframes`. Only this staging copy gets the `[patch]`: projects may
+        // not have one.
+        if uses_kit && Path::new(file.path.as_str()) == patch_manifest {
+            patch_framework(&mut cargo, &framework_dir)?;
+        }
         let cargo_path = root.join(file.path.as_str());
         let cargo_text =
             toml::to_string_pretty(&cargo).map_err(|e| error(&cargo_path, e.to_string()))?;
@@ -392,6 +431,7 @@ fn bind(
     package_dir: &Path,
     framework_dir: &Path,
     framework: FrameworkSet<'_>,
+    uses_kit: &mut bool,
 ) -> Result<(), ProjectError> {
     if let Some(table) = value.as_table_mut() {
         for (key, value) in table {
@@ -414,6 +454,11 @@ fn bind(
                             .and_then(toml::Value::as_str)
                             .unwrap_or(name)
                             .to_owned();
+                        if crate_name == KIT {
+                            check_kit(dep, project_root.join(package_dir), name, framework)?;
+                        }
+                        // fframes-studio-kit depends on the crates.io kit too.
+                        *uses_kit |= matches!(crate_name.as_str(), KIT | "fframes-studio-kit");
                         if let Some(path) = dep.get("path").and_then(toml::Value::as_str) {
                             let path_obj = Path::new(path);
                             let native = if path_obj.is_absolute() {
@@ -452,7 +497,10 @@ fn bind(
                         }
                         if matches!(
                             crate_name.as_str(),
-                            "fframes" | "fframes-studio-runtime" | "fframes-studio-protocol"
+                            "fframes"
+                                | "fframes-studio-runtime"
+                                | "fframes-studio-protocol"
+                                | "fframes-studio-kit"
                         ) && dep.get("workspace").and_then(toml::Value::as_bool) != Some(true)
                         {
                             let expected = if crate_name == "fframes" {
@@ -502,9 +550,251 @@ fn bind(
                     package_dir,
                     framework_dir,
                     framework,
+                    uses_kit,
                 )?;
             }
         }
     }
     Ok(())
+}
+
+/// Refuses an `fframes-kit` dependency the SDK's vendor folder cannot satisfy, naming the
+/// line that works, instead of Cargo's resolution error. A dependency inherited from the
+/// workspace is checked where the workspace declares it.
+fn check_kit(
+    dep: &toml::Value,
+    manifest_dir: PathBuf,
+    name: &str,
+    framework: FrameworkSet<'_>,
+) -> Result<(), ProjectError> {
+    if dep.get("workspace").and_then(toml::Value::as_bool) == Some(true) {
+        return Ok(());
+    }
+    let Some(kit) = framework.kit_version else {
+        return Err(ProjectError::new(
+            manifest_dir,
+            name,
+            "This SDK does not include fframes-kit",
+            "Install an SDK that includes fframes-kit, or remove the dependency",
+        ));
+    };
+    let version = dep
+        .as_str()
+        .or_else(|| dep.get("version").and_then(toml::Value::as_str));
+    let from_crates_io = ["git", "path", "registry"]
+        .iter()
+        .all(|key| dep.get(key).is_none());
+    if !from_crates_io || version.is_none_or(|v| v.trim().trim_start_matches('=') != kit) {
+        return Err(ProjectError::new(
+            manifest_dir,
+            name,
+            format!("This SDK includes fframes-kit {kit}; set `fframes-kit = \"={kit}\"`"),
+            "Use the crates.io release the SDK includes (keep the dependency's features), or select an SDK with the kit version you need",
+        ));
+    }
+    Ok(())
+}
+
+/// Points crates.io `fframes` at the SDK's framework crate in a staging manifest.
+fn patch_framework(cargo: &mut toml::Value, framework_dir: &Path) -> Result<(), ProjectError> {
+    let fframes = framework_dir.join("fframes");
+    if !fframes.join("Cargo.toml").is_file() {
+        return Err(ProjectError::new(
+            fframes,
+            KIT,
+            "SDK crate missing",
+            "Install the complete compatible SDK",
+        ));
+    }
+    let path = toml::Value::String(fframes.to_string_lossy().into_owned());
+    let patch: toml::Value = format!("[crates-io.fframes]\npath = {path}\n")
+        .parse()
+        .expect("a TOML table with one escaped string");
+    // `bind` refused any `[patch]` of the project, so this is the only one.
+    if let Some(table) = cargo.as_table_mut() {
+        table.insert("patch".into(), patch);
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const KIT_LINE: &str = "This SDK includes fframes-kit 0.2.0; set `fframes-kit = \"=0.2.0\"`";
+
+    struct Fixture {
+        temp: tempfile::TempDir,
+        compatibility: CompatibilityManifest,
+    }
+
+    impl Fixture {
+        /// An SDK with stub framework crates, vendoring `kit` when given.
+        fn new(kit: Option<&str>) -> Self {
+            let temp = tempfile::tempdir().unwrap();
+            for name in [
+                "fframes",
+                "fframes-studio-runtime",
+                "fframes-studio-protocol",
+                "fframes-studio-kit",
+            ] {
+                let dir = temp.path().join("sdk").join(FRAMEWORK_REL_PATH).join(name);
+                fs::create_dir_all(&dir).unwrap();
+                fs::write(dir.join("Cargo.toml"), "[package]").unwrap();
+            }
+            fs::create_dir_all(temp.path().join("sdk/framework/vendor")).unwrap();
+            let mut compatibility = CompatibilityManifest::default_linux_x64();
+            compatibility.kit_version = kit.map(str::to_owned);
+            Self {
+                temp,
+                compatibility,
+            }
+        }
+
+        /// A new project whose root `Cargo.toml` gains `extra` (TOML tables).
+        fn project(&self, extra: &str) -> OpenProject {
+            let root = self.temp.path().join("video");
+            studio_project::create(
+                &root,
+                "Video",
+                sdk_pin(&self.compatibility),
+                &self.compatibility.fframes_version,
+                &self.compatibility.runtime_version,
+            )
+            .unwrap();
+            let mut cargo: toml::Table = fs::read_to_string(root.join("Cargo.toml"))
+                .unwrap()
+                .parse()
+                .unwrap();
+            for (key, value) in extra.parse::<toml::Table>().unwrap() {
+                match (cargo.get_mut(&key), value) {
+                    (Some(toml::Value::Table(table)), toml::Value::Table(more)) => {
+                        table.extend(more);
+                    }
+                    (_, value) => {
+                        cargo.insert(key, value);
+                    }
+                }
+            }
+            fs::write(root.join("Cargo.toml"), cargo.to_string()).unwrap();
+            studio_project::open(&root).unwrap()
+        }
+
+        fn materialize(&self, project: &OpenProject) -> Result<MaterializedBuild, ProjectError> {
+            materialize(
+                project,
+                &self.temp.path().join("sdk"),
+                self.compatibility.clone(),
+                &self.temp.path().join("builds"),
+            )
+        }
+
+        fn framework(&self, name: &str) -> String {
+            fs::canonicalize(self.temp.path().join("sdk"))
+                .unwrap()
+                .join(FRAMEWORK_REL_PATH)
+                .join(name)
+                .to_string_lossy()
+                .into_owned()
+        }
+    }
+
+    fn staged(build: &MaterializedBuild) -> toml::Table {
+        fs::read_to_string(build.root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
+
+    #[test]
+    fn kit_binds_and_only_the_staging_manifest_gets_the_fframes_patch() {
+        let sdk = Fixture::new(Some("0.2.0"));
+        let project = sdk.project(
+            "[dependencies]\n\
+             fframes-kit = { version = \"=0.2.0\", features = [\"studio\"] }\n\
+             fframes-studio-kit = \"=0.2.0\"\n",
+        );
+        let source = fs::read(project.root.join("Cargo.toml")).unwrap();
+        let build = sdk.materialize(&project).unwrap();
+        assert_eq!(
+            fs::read(project.root.join("Cargo.toml")).unwrap(),
+            source,
+            "the project's Cargo.toml bytes are unchanged"
+        );
+
+        let cargo = staged(&build);
+        assert_eq!(
+            cargo["patch"]["crates-io"]["fframes"]["path"].as_str(),
+            Some(sdk.framework("fframes").as_str())
+        );
+        let dependencies = &cargo["dependencies"];
+        assert_eq!(
+            dependencies["fframes-studio-kit"]["path"].as_str(),
+            Some(sdk.framework("fframes-studio-kit").as_str())
+        );
+        // The kit stays a crates.io dependency, served by the SDK's vendor folder.
+        let kit = dependencies["fframes-kit"].as_table().unwrap();
+        assert_eq!(kit["version"].as_str(), Some("=0.2.0"));
+        assert!(!kit.contains_key("path"));
+    }
+
+    #[test]
+    fn projects_without_the_kit_get_no_patch() {
+        let sdk = Fixture::new(Some("0.2.0"));
+        let build = sdk.materialize(&sdk.project("")).unwrap();
+        assert!(!staged(&build).contains_key("patch"));
+    }
+
+    #[test]
+    fn studio_kit_alone_also_gets_the_patch() {
+        let sdk = Fixture::new(Some("0.2.0"));
+        let project = sdk.project("[dependencies]\nfframes-studio-kit = \"=0.2.0\"\n");
+        let build = sdk.materialize(&project).unwrap();
+        assert!(staged(&build).contains_key("patch"));
+    }
+
+    #[test]
+    fn a_kit_the_sdk_cannot_serve_names_the_line_to_use() {
+        for dependency in [
+            "fframes-kit = \"=0.0.9\"",
+            "fframes-kit = \"0.2\"",
+            "fframes-kit = { git = \"https://github.com/khanhthanhdev/fframes-kit\" }",
+            "fframes-kit = { git = \"https://github.com/khanhthanhdev/fframes-kit\", version = \"0.2.0\" }",
+            "fframes-kit = { path = \"../fframes-kit\" }",
+            "kit = { package = \"fframes-kit\", path = \"kit\" }",
+        ] {
+            let sdk = Fixture::new(Some("0.2.0"));
+            let project = sdk.project(&format!("[dependencies]\n{dependency}\n"));
+            let error = sdk.materialize(&project).err().expect(dependency);
+            assert_eq!(error.reason, KIT_LINE, "{dependency}");
+        }
+    }
+
+    #[test]
+    fn an_sdk_without_the_kit_says_so() {
+        let sdk = Fixture::new(None);
+        let project = sdk.project("[dependencies]\nfframes-kit = \"=0.2.0\"\n");
+        let error = sdk.materialize(&project).err().unwrap();
+        assert_eq!(error.reason, "This SDK does not include fframes-kit");
+    }
+
+    #[test]
+    fn studio_kit_must_match_the_runtime_version() {
+        let sdk = Fixture::new(Some("0.2.0"));
+        let project = sdk.project("[dependencies]\nfframes-studio-kit = \"=0.1.0\"\n");
+        let error = sdk.materialize(&project).err().unwrap();
+        assert_eq!(error.field, "fframes-studio-kit");
+        assert!(error.reason.contains("0.2.0"), "{}", error.reason);
+    }
+
+    #[test]
+    fn a_project_patch_is_still_refused() {
+        let sdk = Fixture::new(Some("0.2.0"));
+        let project = sdk.project(
+            "[dependencies]\nfframes-kit = \"=0.2.0\"\n\
+             [patch.crates-io]\nfframes = { path = \"fframes\" }\n",
+        );
+        let error = sdk.materialize(&project).err().unwrap();
+        assert_eq!(error.field, "patch");
+    }
 }

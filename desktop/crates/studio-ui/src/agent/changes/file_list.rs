@@ -5,7 +5,7 @@ use gpui::{
     ClickEvent, Context, InteractiveElement, ParentElement, SharedString,
     StatefulInteractiveElement, Styled, div, px,
 };
-use studio_theme::{TextStyle, Theme, text_style};
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::model::FileDiff;
 use super::paint::Colors;
@@ -16,7 +16,7 @@ pub const LIST_W: f32 = 248.0;
 
 /// `+a -d` for a file, or what stands in for it.
 fn counts(file: &FileDiff, colors: &Colors) -> gpui::Div {
-    let row = div().flex().flex_row().gap(px(6.)).flex_none();
+    let row = div().flex().flex_row().gap(px(METRICS.space_1)).flex_none();
     if file.not_shown.is_some() {
         return row.child(div().text_color(colors.faint).child("not shown"));
     }
@@ -49,7 +49,7 @@ impl Changes {
             .overflow_y_scroll()
             .border_r_1()
             .border_color(colors.line)
-            .py(px(4.));
+            .py(px(METRICS.space_1));
         for (ix, file) in self.files.iter().enumerate() {
             let (dir, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
             let jump = file.path.clone();
@@ -58,14 +58,14 @@ impl Changes {
             let mut line = text_style(div(), TextStyle::Label)
                 .id(SharedString::from(format!("changes-list-{ix}")))
                 .w_full()
-                .h(px(28.))
-                .px(px(10.))
+                .h(px(METRICS.size.control_h))
+                .px(px(METRICS.space_3))
                 .flex()
                 .flex_row()
                 .items_center()
-                .gap(px(8.))
+                .gap(px(METRICS.space_2))
                 .text_color(colors.text)
-                .hover(|el| el.bg(gpui::Hsla::from(theme.editor.ctl_hover)))
+                .hover(|el| el.bg(gpui::Hsla::from(theme.colors.ctl_hover)))
                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                     this.reveal(&jump, cx);
                 }));
@@ -74,8 +74,8 @@ impl Changes {
                     div()
                         .debug_selector(move || format!("changes-toggle-{ix}"))
                         .child(
-                            Toggle::plain(theme, format!("changes-accept-{ix}"), accepted)
-                                .disabled(theme, self.busy)
+                            Toggle::new(theme, format!("changes-accept-{ix}"), accepted)
+                                .disabled(self.busy)
                                 .label(format!("Keep {}", file.path))
                                 .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
                                     cx.stop_propagation();

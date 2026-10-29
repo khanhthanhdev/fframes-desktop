@@ -10,7 +10,7 @@ use studio_engine::services::export_service::ExportProgress;
 use studio_theme::{METRICS, TextStyle, text_style};
 
 use super::StudioShell;
-use crate::kit::{EditorButton, Icon, Notice, StatusDot, Tone, selectable};
+use crate::kit::{Button, ButtonSize, Emphasis, Icon, Notice, StatusDot, Tone, selectable};
 
 impl StudioShell {
     /// Warning, error, export and recovery notices; empty when there is nothing to say.
@@ -88,6 +88,12 @@ impl StudioShell {
                 ExportProgress::Verifying => {
                     (Tone::Info, "Verifying the video before publication".into())
                 }
+                ExportProgress::Posters { done, total } => {
+                    (Tone::Info, format!("Slide posters · {done}/{total}"))
+                }
+                ExportProgress::WritingDeck => {
+                    (Tone::Info, "Writing and publishing the deck folder".into())
+                }
                 ExportProgress::Complete {
                     destination,
                     revision,
@@ -162,7 +168,7 @@ impl StudioShell {
         );
         let line = |text: gpui::SharedString| {
             text_style(div(), TextStyle::Small)
-                .text_color(theme.editor.text_2)
+                .text_color(theme.colors.text_2)
                 .child(selectable(text))
         };
         // The summary is shortened, so the full ids are repeated here to copy.
@@ -173,7 +179,7 @@ impl StudioShell {
             .px(px(METRICS.space_4))
             .py(px(METRICS.space_2))
             .border_t_1()
-            .border_color(theme.editor.line)
+            .border_color(theme.colors.line)
             .child(line(format!("Source {}", p.source.as_str()).into()))
             .child(line(format!("Checkpoint {}", p.accepted.as_str()).into()))
             .child(line(
@@ -201,7 +207,7 @@ impl StudioShell {
                 .into(),
             ));
         let entity = cx.entity();
-        let toggle = EditorButton::plain(&theme, "status-details")
+        let toggle = Button::new(&theme, "status-details")
             .label("Details")
             .right_icon(
                 if expanded {
@@ -211,7 +217,8 @@ impl StudioShell {
                 }
                 .path(),
             )
-            .height(px(METRICS.status_bar_h - METRICS.space_1))
+            .size(ButtonSize::Sm)
+            .emphasis(Emphasis::Ghost)
             .pressed(expanded)
             .on_click(move |_, _, cx| {
                 entity.update(cx, |shell, cx| {
@@ -224,7 +231,7 @@ impl StudioShell {
                 .flex_none()
                 .flex()
                 .flex_col()
-                .bg(theme.editor.card)
+                .bg(theme.colors.card)
                 .when(expanded, |bar| bar.child(lines))
                 .child(
                     div()
@@ -235,11 +242,11 @@ impl StudioShell {
                         .h(px(METRICS.status_bar_h))
                         .px(px(METRICS.space_4))
                         .border_t_1()
-                        .border_color(theme.editor.line)
+                        .border_color(theme.colors.line)
                         .child(StatusDot::new(tone))
                         .child(
                             text_style(div().flex_1().min_w_0().truncate(), TextStyle::Small)
-                                .text_color(theme.editor.text_2)
+                                .text_color(theme.colors.text_2)
                                 .child(selectable(summary)),
                         )
                         .child(toggle),

@@ -5,22 +5,10 @@ use std::ops::Range;
 
 use gpui::prelude::FluentBuilder as _;
 use gpui::{Div, Hsla, ParentElement, SharedString, Styled, StyledText, TextRun, div, font, px};
-use studio_theme::Theme;
+use studio_theme::{METRICS, MONO_FAMILY, TextStyle, Theme, text_style};
 
 use super::model::{DiffLine, LineKind, push_expanded};
 use crate::agent::syntax::{self, HighlightSpan};
-
-/// The monospace family code is set in. The theme carries no code font.
-pub const MONO_FAMILY: &str = if cfg!(target_os = "windows") {
-    "Consolas"
-} else if cfg!(target_os = "macos") {
-    "Menlo"
-} else {
-    "DejaVu Sans Mono"
-};
-
-/// Size of code text.
-pub const CODE_SIZE: f32 = 12.0;
 
 pub const LINE_H: f32 = 20.0;
 pub const FILE_HEADER_H: f32 = 32.0;
@@ -32,6 +20,7 @@ pub const SPLIT_MARKER_W: f32 = 16.0;
 pub const UNIFIED_CODE_PAD: f32 = 8.0;
 pub const SPLIT_CODE_PAD: f32 = 4.0;
 const WASH_ALPHA: f32 = 0.10;
+const HUNK_HEADER_ALPHA: f32 = 0.5;
 
 /// The resolved colours the viewer draws with.
 #[derive(Clone, Copy)]
@@ -44,25 +33,27 @@ pub struct Colors {
     pub add_wash: Hsla,
     pub del_wash: Hsla,
     pub line: Hsla,
-    pub header_bg: Hsla,
+    pub header: Hsla,
+    pub hunk_header: Hsla,
     pub filler: Hsla,
 }
 
 impl Colors {
     pub fn new(theme: &Theme) -> Self {
-        let add = Hsla::from(theme.green_11);
-        let del = Hsla::from(theme.red_11);
+        let add = Hsla::from(theme.syntax.added);
+        let del = Hsla::from(theme.syntax.removed);
         Self {
-            text: theme.editor.text_1.into(),
-            muted: theme.editor.text_2.into(),
-            faint: theme.editor.text_3.into(),
+            text: theme.colors.text_1.into(),
+            muted: theme.colors.text_2.into(),
+            faint: theme.colors.text_3.into(),
             add,
             del,
             add_wash: add.opacity(WASH_ALPHA),
             del_wash: del.opacity(WASH_ALPHA),
-            line: theme.editor.line.into(),
-            header_bg: theme.editor.card_2.into(),
-            filler: theme.editor.card_2.into(),
+            line: theme.colors.line.into(),
+            header: theme.colors.card_2.into(),
+            hunk_header: Hsla::from(theme.colors.card_2).opacity(HUNK_HEADER_ALPHA),
+            filler: theme.colors.card_2.into(),
         }
     }
 
@@ -202,14 +193,12 @@ pub fn line_runs(
 
 /// A line-number column.
 fn gutter(number: Option<u32>, width: f32, color: Hsla) -> Div {
-    div()
+    text_style(div(), TextStyle::CodeSmall)
         .w(px(width))
         .flex_none()
         .flex()
         .justify_end()
-        .pr(px(8.))
-        .font_family(MONO_FAMILY)
-        .text_size(px(11.))
+        .pr(px(METRICS.space_2))
         .line_height(px(LINE_H))
         .text_color(color)
         .child(SharedString::from(
@@ -227,15 +216,13 @@ fn code(
     colors: &Colors,
 ) -> Div {
     let (text, runs) = line_runs(&line.text, highlights.spans(line), theme, colors);
-    div()
+    text_style(div(), TextStyle::Code)
         .flex_1()
         .min_w_0()
         .overflow_hidden()
         .when(wrap, |el| el.whitespace_normal())
         .when(!wrap, |el| el.whitespace_nowrap())
         .pl(px(pad))
-        .font_family(MONO_FAMILY)
-        .text_size(px(CODE_SIZE))
         .line_height(px(LINE_H))
         .text_color(colors.text)
         .when(!text.is_empty(), |el| {
@@ -299,13 +286,11 @@ impl Cell<'_> {
             cell = cell.child(gutter(gutter_cell.number, self.gutter_w, color));
         }
         cell.child(
-            div()
+            text_style(div(), TextStyle::Code)
                 .w(px(self.marker_w))
                 .flex_none()
                 .flex()
                 .justify_center()
-                .font_family(MONO_FAMILY)
-                .text_size(px(CODE_SIZE))
                 .line_height(px(LINE_H))
                 .text_color(marker_color)
                 .child(marker),
@@ -322,14 +307,13 @@ impl Cell<'_> {
 }
 /// The no-newline marker: a note, indented past the columns and never tinted.
 pub fn meta_row(text: &str, pad_left: f32, colors: &Colors) -> Div {
-    div()
+    text_style(div(), TextStyle::Small)
         .h(px(LINE_H))
         .w_full()
         .flex_none()
         .flex()
         .items_center()
         .pl(px(pad_left))
-        .text_size(px(10.5))
         .text_color(colors.faint)
         .italic()
         .child(SharedString::from(text.to_owned()))

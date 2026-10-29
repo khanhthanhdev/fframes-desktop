@@ -64,6 +64,55 @@ fn take(log: &Log) -> Vec<String> {
 }
 
 #[gpui::test]
+fn send_popup_accepts_keyboard_activation_and_escape_restores_the_input(cx: &mut TestAppContext) {
+    use crate::kit::test_support::{press, tab};
+
+    let (composer, cx, log) = setup(cx);
+    composer.update(cx, |composer, cx| composer.set_running(true, cx));
+    cx.simulate_input("urgent");
+    cx.run_until_parked();
+    // The file and image controls precede More ways to send.
+    for _ in 0..3 {
+        tab(cx);
+    }
+    press(cx, "enter");
+    assert!(composer.read_with(cx, |composer, _| composer.send_menu_open));
+    press(cx, "escape");
+    assert!(!composer.read_with(cx, |composer, _| composer.send_menu_open));
+    assert!(cx.update(|window, cx| composer.focus_handle(cx).is_focused(window)));
+    assert_eq!(text(&composer, cx), "urgent");
+    assert!(take(&log).is_empty());
+
+    for _ in 0..3 {
+        tab(cx);
+    }
+    press(cx, "enter");
+    press(cx, "space");
+    assert_eq!(take(&log), ["now:urgent:0"]);
+    assert_eq!(text(&composer, cx), "");
+    assert!(cx.update(|window, cx| composer.focus_handle(cx).is_focused(window)));
+}
+
+#[gpui::test]
+fn an_empty_send_popup_cannot_submit_but_can_be_dismissed(cx: &mut TestAppContext) {
+    use crate::kit::test_support::{press, tab};
+
+    let (composer, cx, log) = setup(cx);
+    composer.update(cx, |composer, cx| composer.set_running(true, cx));
+    cx.run_until_parked();
+    for _ in 0..3 {
+        tab(cx);
+    }
+    press(cx, "enter");
+    assert!(composer.read_with(cx, |composer, _| composer.send_menu_open));
+    press(cx, "enter");
+    assert!(take(&log).is_empty());
+    press(cx, "escape");
+    assert!(!composer.read_with(cx, |composer, _| composer.send_menu_open));
+    assert!(cx.update(|window, cx| composer.focus_handle(cx).is_focused(window)));
+}
+
+#[gpui::test]
 fn enter_sends_and_shift_enter_inserts_a_line_break(cx: &mut TestAppContext) {
     let (composer, cx, log) = setup(cx);
     cx.simulate_input("one");

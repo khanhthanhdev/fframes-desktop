@@ -61,9 +61,13 @@ pub const TIMING_FILE: &str = "timeline.json";
 /// gives editable components. Like the timing document it is applied at run time, so
 /// it stays out of the build; its kind is [`FileKind::Other`].
 pub const PROPS_FILE: &str = "props.json";
+/// The project's slides document, at the project root: slide stops and speaker notes.
+/// Studio applies it at run time like the props document; its kind is
+/// [`FileKind::Other`].
+pub const SLIDES_FILE: &str = "slides.json";
 /// Whether `path` is a document the preview and export apply at run time.
 pub fn run_time_document(path: &str) -> bool {
-    path == TIMING_FILE || path == PROPS_FILE
+    path == TIMING_FILE || path == PROPS_FILE || path == SLIDES_FILE
 }
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceFile {
@@ -183,6 +187,12 @@ impl SourceInventory {
         self.files
             .iter()
             .find(|file| file.path.as_str() == PROPS_FILE)
+    }
+    /// The slides document's entry, when the project has one.
+    pub fn slides_file(&self) -> Option<&SourceFile> {
+        self.files
+            .iter()
+            .find(|file| file.path.as_str() == SLIDES_FILE)
     }
     /// Includes all ordinary files except the four exact root-relative exclusions.
     /// Unknown durable files are included to avoid silently dropping imported source.

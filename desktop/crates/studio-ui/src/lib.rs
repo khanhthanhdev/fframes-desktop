@@ -3,14 +3,15 @@ pub mod actions;
 pub mod agent;
 pub mod app_state;
 pub mod canvas_view;
+pub mod create_panel;
 pub mod export;
 pub mod frame_image;
 pub mod kit;
 pub mod preset_panel;
 pub mod probe;
 pub mod props_panel;
-pub mod setup_view;
 pub mod shell;
+pub mod slides_panel;
 pub mod timeline;
 
 #[cfg(test)]

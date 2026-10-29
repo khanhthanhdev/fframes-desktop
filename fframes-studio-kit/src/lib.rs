@@ -10,20 +10,24 @@
 //! let mut ui = Ui::new(frame, ctx, &self.theme).with_props(self.props.view());
 //! let mut ui = Ui::for_scene(frame, ctx, theme, self).with_props(props.scene_view(self));
 //!
+//! // a kit deck: every slide's Ui
+//! let deck = Deck::new(theme, slides).with_props(props.clone(), PropsStore::slide_view);
+//!
 //! // the project's Studio worker
 //! props.listen();
 //! let config = config.with_props_args(&args).with_props(props.hooks());
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use fframes::{EditorObjectKey, Scene};
-use fframes_kit::props::{EditableObject, PropValues, PropsSource};
+use fframes_kit::props::{EditableObject, PropValues, PropsSource, SuggestedStop};
 use fframes_studio_protocol::{
-    EditorObjectIdentity, PropField, PropKind, PropsDocument, PropsInfo, PropsSchema,
+    EditorObjectIdentity, MAX_STOPS_PER_ORIGIN, MAX_SUGGESTED_STOPS, PropField, PropKind,
+    PropsDocument, PropsInfo, PropsSchema, StopSuggestions, SuggestedSlideStop,
 };
 use fframes_studio_runtime::PropsHooks;
 
@@ -39,7 +43,14 @@ pub const VIDEO_SCENE_KEY: &str = "video";
 pub struct PropsStore {
     doc: RwLock<Arc<PropsDocument>>,
     rendered: Mutex<HashMap<EditorObjectIdentity, PropsInfo>>,
+    suggested: Mutex<Suggestions>,
     listening: AtomicBool,
+}
+
+#[derive(Debug, Default)]
+struct Suggestions {
+    origins: BTreeMap<(String, String), Vec<SuggestedSlideStop>>,
+    truncated: bool,
 }
 
 impl PropsStore {
@@ -101,6 +112,12 @@ impl PropsStore {
         self.view_in(scene.editor_instance_key().unwrap_or_else(|| scene.name()))
     }
 
+    /// [`scene_view`](Self::scene_view) as the view of a kit `Deck`:
+    /// `deck.with_props(store.clone(), PropsStore::slide_view)`.
+    pub fn slide_view<'s>(store: &'s Self, scene: &dyn Scene) -> Box<dyn PropsSource + 's> {
+        Box::new(store.scene_view(scene))
+    }
+
     fn view_in(&self, scene: &str) -> PropsView<'_> {
         PropsView {
             store: self,
@@ -112,10 +129,74 @@ impl PropsStore {
     /// The hooks that hand this store to Studio's preview worker and exports.
     pub fn hooks(self: &Arc<Self>) -> PropsHooks {
         let (apply, info) = (self.clone(), self.clone());
+        let (suggestions, clear) = (self.clone(), self.clone());
         PropsHooks::new(
             move |doc| apply.set(doc),
             move |identity| info.info(identity),
         )
+        .with_suggestions(
+            move || suggestions.suggested_stops(),
+            move || clear.clear_suggestions(),
+        )
+    }
+
+    /// The latest bounded reports, replaced per scene and component origin.
+    pub fn suggested_stops(&self) -> StopSuggestions {
+        let suggested = self.suggested.lock().expect("suggestions lock poisoned");
+        StopSuggestions {
+            stops: suggested.origins.values().flatten().cloned().collect(),
+            truncated: suggested.truncated,
+        }
+    }
+
+    /// Starts a fresh scan, discarding earlier render observations.
+    pub fn clear_suggestions(&self) {
+        *self.suggested.lock().expect("suggestions lock poisoned") = Suggestions::default();
+    }
+
+    fn suggest(&self, scene: &str, origin: &str, stops: &[SuggestedStop]) {
+        if !self.listening.load(Ordering::Relaxed) {
+            return;
+        }
+        let mut state = self.suggested.lock().expect("suggestions lock poisoned");
+        if scene.is_empty() || scene.len() > 256 || origin.is_empty() || origin.len() > 1024 {
+            state.truncated = true;
+            return;
+        }
+        let key = (scene.to_owned(), origin.to_owned());
+        state.origins.remove(&key);
+        let available =
+            MAX_SUGGESTED_STOPS.saturating_sub(state.origins.values().map(Vec::len).sum());
+        let limit = available.min(MAX_STOPS_PER_ORIGIN);
+        let mut accepted = Vec::new();
+        for stop in stops {
+            if accepted.len() == limit {
+                state.truncated = true;
+                break;
+            }
+            if !stop.seconds.is_finite()
+                || stop.seconds < 0.0
+                || stop.label.as_ref().is_some_and(|text| text.len() > 256)
+                || stop
+                    .notes
+                    .as_ref()
+                    .is_some_and(|text| text.len() > 8 * 1024)
+            {
+                state.truncated = true;
+                continue;
+            }
+            accepted.push(SuggestedSlideStop {
+                scene: scene.to_owned(),
+                origin: origin.to_owned(),
+                seconds: stop.seconds,
+                label: stop.label.clone(),
+                notes: stop.notes.clone(),
+            });
+        }
+        // Empty reports remove a previous origin instead of growing an unbounded key map.
+        if !accepted.is_empty() {
+            state.origins.insert(key, accepted);
+        }
     }
 
     fn record(&self, identity: EditorObjectIdentity, info: PropsInfo) {
@@ -156,6 +237,10 @@ impl PropsSource for PropsView<'_> {
 
     fn rendered(&self, object: EditableObject<'_>, info: fframes_kit::props::PropsInfo) {
         self.store.record(self.identity(object), props_info(info));
+    }
+
+    fn suggest_stops(&self, origin: &str, stops: &[SuggestedStop]) {
+        self.store.suggest(&self.scene, origin, stops);
     }
 
     fn element_id(&self, object: EditableObject<'_>) -> Option<String> {

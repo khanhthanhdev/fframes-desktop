@@ -1,6 +1,19 @@
-//! `Button` (`packages/ui-solid/src/Button.tsx`) and the icon-only button the
-//! Solid app copy-pastes into three route files instead of sharing
-//! (`TooltipIconButton`, digest section 2.3).
+//! The one button family: [`Button`] (a label with optional icons) and [`IconButton`] (a
+//! glyph alone), after the editor's button (`routes/editor/ui.tsx:317-424`).
+//!
+//! Both take an [`Emphasis`]:
+//!
+//! | emphasis | rest | hover | pressed |
+//! |---|---|---|---|
+//! | `Ghost` (default) | nothing, `text_2` | `ctl_hover`, `text_1` | `ctl_active` |
+//! | `Neutral` | `ctl`, `text_2` | `ctl_hover`, `text_1` | `ctl_active` |
+//! | `Primary` | `accent`, `on_accent` | `accent_2` | `accent` |
+//! | `Danger` | `danger_bg`, `danger` | `danger_hover` | `danger_active` |
+//!
+//! A selected button (`.pressed(true)`) shows `ctl_active` and `text_1`; a primary one
+//! keeps its accent. Disabled buttons drop to `METRICS.opacity.disabled`.
+
+use std::rc::Rc;
 
 use gpui::{
     App, ClickEvent, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement,
@@ -8,224 +21,184 @@ use gpui::{
     prelude::FluentBuilder, px, svg,
 };
 
-use super::interact::{BoundsHandler, bounds_probe, focusable};
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
+
+use super::interact::{BoundsHandler, States, bounds_probe, dim_disabled, focusable, with_tooltip};
 use super::menu::OpenHandler;
-use studio_theme::Theme;
 
 /// The click handler every component takes. `cx.listener(..)` produces exactly
 /// this shape for any window type, so components stay window-agnostic without
 /// a generic parameter.
 pub type ClickHandler = Box<dyn Fn(&ClickEvent, &mut Window, &mut App) + 'static>;
 
-/// The nine `cva` variants. `darkgradient` and `radialblue` are the two the
-/// app only uses for marketing CTAs (upgrade, onboarding) and are not built
-/// until a window needs them.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ButtonVariant {
-    /// `bg-gray-12 text-gray-1`, `disabled:bg-gray-6 disabled:text-gray-9`.
-    Primary,
-    /// `bg-blue-600 text-white border border-blue-800`.
-    Blue,
-    /// `bg-red-500 text-white hover:bg-red-600`.
-    Destructive,
-    /// `border border-gray-4 text-gray-12`, inverting to filled on hover.
-    Outline,
-    /// `bg-gray-1 border border-gray-6 text-gray-12 hover:bg-gray-3`.
-    White,
-    /// Transparent until `hover:bg-white/20` -- only legible on a dark backdrop.
+/// How loudly a button asks to be pressed.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Emphasis {
+    /// A control with the subtle `ctl` fill.
+    Neutral,
+    /// No fill until hovered: toolbars and secondary actions.
+    #[default]
     Ghost,
-    /// `bg-gray-5 hover:bg-gray-7 text-gray-12`, with the `data-selected="true"`
-    /// sub-state at `bg-gray-8` (`dark:bg-gray-9`).
-    Gray,
-    /// `bg-gray-12 hover:bg-gray-11 text-gray-1`.
-    Dark,
+    /// The main action of a view, on the accent.
+    Primary,
+    /// A destructive action: danger text on the soft danger surface.
+    Danger,
 }
 
-/// `size: { xs, sm, md, lg }`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The fills of one emphasis, so the render bodies hold no per-emphasis branching.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Paint {
+    rest: Option<Hsla>,
+    hover: Hsla,
+    active: Hsla,
+    selected: Hsla,
+    text: Hsla,
+    hover_text: Hsla,
+    selected_text: Hsla,
+    disabled_text: Hsla,
+}
+
+impl Paint {
+    fn of(theme: &Theme, emphasis: Emphasis) -> Self {
+        let colors = theme.colors;
+        let states = States::of(theme);
+        let neutral = Self {
+            rest: None,
+            hover: states.hover,
+            active: states.pressed,
+            selected: states.selected,
+            text: colors.text_2.into(),
+            hover_text: colors.text_1.into(),
+            selected_text: colors.text_1.into(),
+            disabled_text: colors.text_3.into(),
+        };
+        match emphasis {
+            Emphasis::Ghost => neutral,
+            Emphasis::Neutral => Self {
+                rest: Some(states.rest),
+                ..neutral
+            },
+            Emphasis::Primary => {
+                let (accent, text) = (Hsla::from(colors.accent), Hsla::from(colors.on_accent));
+                Self {
+                    rest: Some(accent),
+                    hover: colors.accent_2.into(),
+                    active: accent,
+                    selected: accent,
+                    text,
+                    hover_text: text,
+                    selected_text: text,
+                    disabled_text: text,
+                }
+            }
+            Emphasis::Danger => {
+                let text = Hsla::from(colors.danger);
+                Self {
+                    rest: Some(colors.danger_bg.into()),
+                    hover: colors.danger_hover.into(),
+                    active: colors.danger_active.into(),
+                    selected: colors.danger_active.into(),
+                    text,
+                    hover_text: text,
+                    selected_text: text,
+                    disabled_text: text,
+                }
+            }
+        }
+    }
+}
+
+/// A text button's height.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ButtonSize {
-    /// `text-[0.75rem] px-2 h-5`.
-    Xs,
-    /// `text-xs px-3 h-7`.
+    /// 24 px, `Label` text: compact rows and inline actions.
     Sm,
-    /// `text-[13px] px-3 py-2` -- the default, and the only height-less size.
+    /// 28 px, `Body` text: the default.
+    #[default]
     Md,
-    /// `text-[0.875rem] px-4 h-9`.
-    Lg,
 }
 
 impl ButtonSize {
-    fn text_size(self) -> Pixels {
+    fn height(self) -> f32 {
         match self {
-            ButtonSize::Xs => px(12.),
-            ButtonSize::Sm => px(12.),
-            ButtonSize::Md => px(13.),
-            ButtonSize::Lg => px(14.),
+            Self::Sm => METRICS.size.control_sm_h,
+            Self::Md => METRICS.size.control_h,
         }
     }
 
-    fn padding_x(self) -> Pixels {
+    fn text(self) -> TextStyle {
         match self {
-            ButtonSize::Xs => px(8.),
-            ButtonSize::Sm | ButtonSize::Md => px(12.),
-            ButtonSize::Lg => px(16.),
+            Self::Sm => TextStyle::Label,
+            Self::Md => TextStyle::Body,
         }
     }
 
-    /// `md` is `py-2` rather than a fixed height, which is why this is optional.
-    fn height(self) -> Option<Pixels> {
+    fn icon(self) -> f32 {
         match self {
-            ButtonSize::Xs => Some(px(20.)),
-            ButtonSize::Sm => Some(px(28.)),
-            ButtonSize::Md => None,
-            ButtonSize::Lg => Some(px(36.)),
-        }
-    }
-
-    fn padding_y(self) -> Option<Pixels> {
-        match self {
-            ButtonSize::Md => Some(px(8.)),
-            _ => None,
-        }
-    }
-
-    fn icon_size(self) -> Pixels {
-        match self {
-            ButtonSize::Xs => px(12.),
-            ButtonSize::Sm => px(14.),
-            ButtonSize::Md => px(16.),
-            ButtonSize::Lg => px(16.),
+            Self::Sm => METRICS.size.icon_sm,
+            Self::Md => METRICS.size.icon_md,
         }
     }
 }
 
-/// The resolved fills for one variant on one surface, so the render body has
-/// no per-variant branching left in it.
-#[derive(Debug, Clone, Copy)]
-struct ButtonPaint {
-    bg: Option<Hsla>,
-    hover_bg: Option<Hsla>,
-    text: Hsla,
-    hover_text: Option<Hsla>,
-    border: Option<Hsla>,
-    hover_border: Option<Hsla>,
-}
+/// A text button's horizontal padding: Cap's `px-[7px]`.
+const BUTTON_PAD_X: f32 = 7.;
+/// The trailing chevron of a menu trigger.
+const CHEVRON: f32 = 10.;
+/// Space between a button's icons and its label.
+const BUTTON_GAP: f32 = 6.;
 
 #[derive(IntoElement)]
 pub struct Button {
     id: ElementId,
-    label: Option<SharedString>,
-    icon: Option<SharedString>,
-    right_icon: Option<SharedString>,
+    theme: Theme,
+    emphasis: Emphasis,
     size: ButtonSize,
-    paint: ButtonPaint,
-    /// `rounded-full` unless a surface overrides it -- the settings material
-    /// takes every `button[data-variant]` down to `border-radius: 8px`.
-    radius: Option<Pixels>,
-    disabled: bool,
-    gap: Pixels,
-    font_weight: Option<FontWeight>,
+    label: Option<SharedString>,
+    left_icon: Option<SharedString>,
+    right_icon: Option<SharedString>,
+    /// Pushes the right icon to the end, the way select-style triggers park their chevron.
+    right_icon_end: bool,
     width: Option<Pixels>,
     full_width: bool,
-    height: Option<Pixels>,
-    /// Whether the disabled look is the plain surface's `opacity-50` rather
-    /// than the settings surface's repaint.
-    dim_disabled: bool,
+    disabled: bool,
+    /// Selected or expanded.
+    pressed: bool,
+    tooltip: Option<SharedString>,
     on_click: Option<ClickHandler>,
     on_open: Option<OpenHandler>,
+    on_bounds: Option<BoundsHandler>,
 }
 
 impl Button {
-    /// The plain Radix palette: the editor, mode select, and anything else with
-    /// no native material behind it.
-    pub fn plain(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        variant: ButtonVariant,
-        size: ButtonSize,
-    ) -> Self {
+    pub fn new(theme: &Theme, id: impl Into<ElementId>) -> Self {
         Self {
             id: id.into(),
+            theme: *theme,
+            emphasis: Emphasis::default(),
+            size: ButtonSize::default(),
             label: None,
-            icon: None,
+            left_icon: None,
             right_icon: None,
-            size,
-            paint: radix_paint(theme, variant),
-            radius: None,
-            disabled: false,
-            gap: px(6.),
-            font_weight: None,
+            right_icon_end: false,
             width: None,
             full_width: false,
-            height: None,
-            dim_disabled: false,
+            disabled: false,
+            pressed: false,
+            tooltip: None,
             on_click: None,
             on_open: None,
+            on_bounds: None,
         }
     }
 
-    /// The window body: `plain` with the fills read back through
-    /// `Theme::body_*`.
-    pub fn body(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        variant: ButtonVariant,
-        size: ButtonSize,
-    ) -> Self {
-        let mut button = Self::plain(theme, id, variant, size);
-        if variant == ButtonVariant::Gray {
-            // `bg-gray-5 hover:bg-gray-7`.
-            button.paint.bg = Some(theme.body_fill(5));
-            button.paint.hover_bg = Some(theme.body_hover_fill(7));
-            button.paint.text = theme.body_text();
-        }
-        button
+    pub fn emphasis(mut self, emphasis: Emphasis) -> Self {
+        self.emphasis = emphasis;
+        self
     }
 
-    /// The settings window. `theme.css`'s settings block rewrites every
-    /// `button[data-variant]`: `border-radius: 8px`, the grey family onto
-    /// `--macos-settings-control-fill` with a `--macos-settings-border`
-    /// hairline, the filled family onto `--macos-settings-accent`, and
-    /// `:disabled` onto `--macos-settings-fill` / `--macos-settings-muted`.
-    pub fn settings(
-        theme: &Theme,
-        id: impl Into<ElementId>,
-        variant: ButtonVariant,
-        size: ButtonSize,
-    ) -> Self {
-        let control_fill = Hsla::from(theme.gray_5);
-
-        // No `:hover` arm: the settings block's hover rules land on the nav and
-        // profile rows, not on `button[data-variant]`, and the window has never
-        // drawn one.
-        let paint = match variant {
-            ButtonVariant::Gray | ButtonVariant::White | ButtonVariant::Outline => ButtonPaint {
-                bg: Some(control_fill),
-                hover_bg: None,
-                text: theme.settings_text(),
-                hover_text: None,
-                border: Some(theme.settings_border()),
-                hover_border: None,
-            },
-            _ => ButtonPaint {
-                bg: Some(gpui::rgb(Theme::SETTINGS_ACCENT).into()),
-                hover_bg: None,
-                text: gpui::white(),
-                hover_text: None,
-                border: None,
-                hover_border: None,
-            },
-        };
-
-        Self {
-            radius: Some(px(8.)),
-            ..Self::plain(theme, id, variant, size)
-        }
-        .paint(paint)
-    }
-
-    fn paint(mut self, paint: ButtonPaint) -> Self {
-        self.paint = paint;
+    pub fn size(mut self, size: ButtonSize) -> Self {
+        self.size = size;
         self
     }
 
@@ -234,8 +207,8 @@ impl Button {
         self
     }
 
-    pub fn icon(mut self, icon: impl Into<SharedString>) -> Self {
-        self.icon = Some(icon.into());
+    pub fn left_icon(mut self, icon: impl Into<SharedString>) -> Self {
+        self.left_icon = Some(icon.into());
         self
     }
 
@@ -244,44 +217,8 @@ impl Button {
         self
     }
 
-    /// The plain surface's `:disabled`. `@cap/ui-solid`'s `Button` carries
-    /// `disabled:opacity-50 disabled:cursor-not-allowed` on every variant, so
-    /// this dims rather than repainting.
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self.dim_disabled = disabled;
-        self
-    }
-
-    /// `disabled:` per variant. On the settings surface that is one rule for
-    /// every variant, so the fills are replaced wholesale rather than dimmed.
-    pub fn disabled_settings(mut self, theme: &Theme, disabled: bool) -> Self {
-        self.disabled = disabled;
-        if disabled {
-            self.paint = ButtonPaint {
-                bg: Some(theme.settings_fill()),
-                hover_bg: None,
-                text: theme.settings_muted(),
-                hover_text: None,
-                border: None,
-                hover_border: None,
-            };
-        }
-        self
-    }
-
-    pub fn radius(mut self, radius: Pixels) -> Self {
-        self.radius = Some(radius);
-        self
-    }
-
-    pub fn gap(mut self, gap: Pixels) -> Self {
-        self.gap = gap;
-        self
-    }
-
-    pub fn font_weight(mut self, weight: FontWeight) -> Self {
-        self.font_weight = Some(weight);
+    pub fn right_icon_end(mut self, end: bool) -> Self {
+        self.right_icon_end = end;
         self
     }
 
@@ -290,23 +227,33 @@ impl Button {
         self
     }
 
+    /// Stretches across its parent.
     pub fn full_width(mut self) -> Self {
         self.full_width = true;
         self
     }
 
-    pub fn height(mut self, height: Pixels) -> Self {
-        self.height = Some(height);
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
-    pub fn bg(mut self, bg: Hsla) -> Self {
-        self.paint.bg = Some(bg);
+    pub fn pressed(mut self, pressed: bool) -> Self {
+        self.pressed = pressed;
         self
     }
 
-    pub fn text_color(mut self, color: Hsla) -> Self {
-        self.paint.text = color;
+    /// Shows only the icon; the label becomes the tooltip (unless one is set), which also
+    /// names the button.
+    pub fn icon_only(mut self) -> Self {
+        if let Some(label) = self.label.take() {
+            self.tooltip.get_or_insert(label);
+        }
+        self
+    }
+
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
 
@@ -325,240 +272,172 @@ impl Button {
         self.on_open = Some(Box::new(handler));
         self
     }
+
+    /// Reports the painted bounds, in window coordinates, on every prepaint.
+    pub fn on_bounds(mut self, report: impl Fn(gpui::Bounds<Pixels>, &mut App) + 'static) -> Self {
+        self.on_bounds = Some(Rc::new(report));
+        self
+    }
 }
 
-/// The Radix fills for one variant, before any material remap.
-///
-/// `gray`'s `data-selected="true"` sub-state (`bg-gray-8`, `dark:bg-gray-9`) is
-/// not built: no window here uses it -- the main window's mode pill marks its
-/// selection with a ring instead.
-fn radix_paint(theme: &Theme, variant: ButtonVariant) -> ButtonPaint {
-    match variant {
-        ButtonVariant::Primary => ButtonPaint {
-            bg: Some(theme.gray(12)),
-            hover_bg: None,
-            text: theme.gray(1),
-            hover_text: None,
-            border: None,
-            hover_border: None,
-        },
-        // `bg-blue-600 ... hover:bg-blue-700`: Tailwind's blue, not Radix's --
-        // the two scales differ and the class is `blue-600`, not `blue-9`.
-        ButtonVariant::Blue => ButtonPaint {
-            bg: Some(gpui::rgb(0x2563eb).into()),
-            hover_bg: Some(gpui::rgb(0x1d4ed8).into()),
-            text: gpui::white(),
-            hover_text: None,
-            border: Some(gpui::rgb(0x1e40af).into()),
-            hover_border: None,
-        },
-        ButtonVariant::Destructive => ButtonPaint {
-            bg: Some(gpui::rgb(0xef4444).into()),
-            hover_bg: Some(gpui::rgb(0xdc2626).into()),
-            text: gpui::white(),
-            hover_text: None,
-            border: None,
-            hover_border: None,
-        },
-        ButtonVariant::Outline => ButtonPaint {
-            bg: None,
-            hover_bg: Some(theme.gray(12)),
-            text: theme.gray(12),
-            hover_text: Some(theme.gray(1)),
-            border: Some(theme.gray(4)),
-            hover_border: Some(theme.gray(12)),
-        },
-        ButtonVariant::White => ButtonPaint {
-            bg: Some(theme.gray(1)),
-            hover_bg: Some(theme.gray(3)),
-            text: theme.gray(12),
-            hover_text: None,
-            border: Some(theme.gray(6)),
-            hover_border: None,
-        },
-        ButtonVariant::Ghost => ButtonPaint {
-            bg: None,
-            hover_bg: Some(gpui::hsla(0., 0., 1., 0.2)),
-            text: theme.gray(12),
-            hover_text: Some(gpui::white()),
-            border: None,
-            hover_border: None,
-        },
-        ButtonVariant::Gray => ButtonPaint {
-            bg: Some(theme.gray(5)),
-            hover_bg: Some(theme.gray(7)),
-            text: theme.gray(12),
-            hover_text: None,
-            border: None,
-            hover_border: None,
-        },
-        ButtonVariant::Dark => ButtonPaint {
-            bg: Some(theme.gray(12)),
-            hover_bg: Some(theme.gray(11)),
-            text: theme.gray(1),
-            hover_text: None,
-            border: None,
-            hover_border: None,
-        },
+/// The group a button's glyphs hover with: gpui svgs do not inherit a parent's text
+/// colour, so they follow the hover through a group rather than the cascade.
+fn hover_group(prefix: &str, id: &ElementId) -> SharedString {
+    match id {
+        ElementId::Name(name) => SharedString::from(format!("{prefix}-{name}")),
+        other => SharedString::from(format!("{prefix}-{other:?}")),
     }
 }
 
 impl RenderOnce for Button {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = Theme::for_window(window, cx);
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let Button {
             id,
-            label,
-            icon,
-            right_icon,
+            theme,
+            emphasis,
             size,
-            paint,
-            radius,
-            disabled,
-            dim_disabled,
-            gap,
-            font_weight,
+            label,
+            left_icon,
+            right_icon,
+            right_icon_end,
             width,
             full_width,
-            height,
+            disabled,
+            pressed,
+            tooltip,
             on_click,
             on_open,
+            on_bounds,
         } = self;
+        let paint = Paint::of(&theme, emphasis);
+        let foreground = if disabled {
+            paint.disabled_text
+        } else if pressed {
+            paint.selected_text
+        } else {
+            paint.text
+        };
+        let chevron = if disabled || emphasis != Emphasis::Ghost && emphasis != Emphasis::Neutral {
+            foreground
+        } else {
+            Hsla::from(theme.colors.text_3)
+        };
+        let group = hover_group("button", &id);
+        let icon_hover = (!disabled && !pressed).then_some(paint.hover_text);
+        let name = label.clone().or_else(|| tooltip.clone());
+        let height = px(size.height());
 
-        let icon_color = paint.text;
-
-        focusable(div().id(id), &theme, disabled)
+        let element = focusable(div().id(id), &theme, disabled)
             .role(Role::Button)
-            .when_some(label.clone(), |this, label| this.aria_label(label))
+            .when_some(name, |this, name| this.aria_label(name))
+            .group(group.clone())
+            .relative()
             .flex()
             .flex_row()
             .items_center()
             .justify_center()
-            .gap(gap)
+            .px(px(BUTTON_PAD_X))
+            .gap(px(BUTTON_GAP))
+            .h(height)
+            .min_w(height)
+            .rounded(px(METRICS.radius.control))
             .flex_shrink_0()
-            .px(size.padding_x())
-            .when_some(size.padding_y(), |this, py| this.py(py))
-            .when_some(height.or(size.height()), |this, h| this.h(h))
-            .when_some(width, |this, w| this.w(w))
-            .when(full_width, |this| this.w_full())
-            .map(|this| match radius {
-                Some(radius) => this.rounded(radius),
-                None => this.rounded_full(),
+            .when(right_icon_end, |this| this.justify_between())
+            .when_some(width, |this, width| this.w(width))
+            .when(full_width, |this| this.w_full());
+        dim_disabled(text_style(element, size.text()), disabled)
+            .font_weight(FontWeight::MEDIUM)
+            .text_color(foreground)
+            .when_some(paint.rest, |this, bg| this.bg(bg))
+            .when(pressed, |this| this.bg(paint.selected))
+            .when(!disabled && !pressed, |this| {
+                this.cursor_pointer()
+                    .hover(move |style| style.bg(paint.hover).text_color(paint.hover_text))
+                    .active(move |style| style.bg(paint.active))
             })
-            .text_size(size.text_size())
-            .when_some(font_weight, |this, weight| this.font_weight(weight))
-            .text_color(paint.text)
-            .when_some(paint.bg, |this, bg| this.bg(bg))
-            .when_some(paint.border, |this, border| {
-                this.border_1().border_color(border)
-            })
-            .when(dim_disabled, |this| this.opacity(0.5))
-            .when(!disabled, |this| {
-                this.hover(move |style| {
-                    let style = match paint.hover_bg {
-                        Some(bg) => style.bg(bg),
-                        None => style,
-                    };
-                    let style = match paint.hover_text {
-                        Some(color) => style.text_color(color),
-                        None => style,
-                    };
-                    match paint.hover_border {
-                        Some(color) => style.border_color(color),
-                        None => style,
-                    }
-                })
-            })
-            .children(icon.map(|icon| {
+            .children(left_icon.map(|icon| {
+                let group = group.clone();
                 svg()
                     .path(icon)
-                    .size(size.icon_size())
+                    .size(px(size.icon()))
                     .flex_shrink_0()
-                    .text_color(icon_color)
+                    .text_color(foreground)
+                    .when_some(icon_hover, |this, color| {
+                        this.group_hover(group, move |style| style.text_color(color))
+                    })
             }))
-            .children(label)
+            .children(label.map(|label| div().truncate().child(label)))
             .children(right_icon.map(|icon| {
                 svg()
                     .path(icon)
-                    .size(px(14.))
+                    .size(px(CHEVRON))
                     .flex_shrink_0()
-                    .text_color(icon_color)
+                    .when(right_icon_end, |this| this.ml_auto())
+                    .text_color(chevron)
             }))
+            .map(|this| with_tooltip(this, &theme, tooltip))
             .when_some(on_click.filter(|_| !disabled), |this, handler| {
                 this.on_click(move |event, window, cx| handler(event, window, cx))
             })
             .when_some(on_open.filter(|_| !disabled), crate::kit::Menu::trigger)
+            .children(on_bounds.map(bounds_probe))
     }
 }
 
-/// The icon-only button: a square hit area, a circular hover fill and no label.
-///
-/// `TooltipIconButton` in the Solid app is `p-2.5 opacity-70 hover:opacity-100
-/// rounded-full hover:bg-gray-3 dark:hover:bg-gray-5 disabled:opacity-45`,
-/// copy-pasted verbatim into `settings/recordings.tsx`, `settings/screenshots.tsx`
-/// and `recordings-overlay.tsx`; the teleprompter's `ToolButton` is the same
-/// shape at `size-7` with `gray-12`-alpha washes.
-/// fframes' icon-only button boxes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// The square icon buttons.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum IconButtonSize {
-    Small,
-    Medium,
-    Large,
+    /// 24 px box, 14 px glyph.
+    Sm,
+    /// 28 px box, 16 px glyph.
+    #[default]
+    Md,
+    /// 32 px box, 16 px glyph.
+    Lg,
 }
 
 impl IconButtonSize {
     /// The box side and the glyph size, in pixels.
     pub const fn box_and_glyph(self) -> (f32, f32) {
+        let size = METRICS.size;
         match self {
-            Self::Small => (24., 14.),
-            Self::Medium => (28., 16.),
-            Self::Large => (32., 16.),
+            Self::Sm => (size.icon_button_sm, size.icon_sm),
+            Self::Md => (size.icon_button_md, size.icon_md),
+            Self::Lg => (size.icon_button_lg, size.icon_md),
         }
     }
 }
 
+/// An icon-only button. The label is the accessible name; without one the tooltip names it.
 #[derive(IntoElement)]
 pub struct IconButton {
     id: ElementId,
+    theme: Theme,
     icon: SharedString,
-    size: Pixels,
-    icon_size: Pixels,
-    idle: Hsla,
-    active_color: Hsla,
-    hover_color: Option<Hsla>,
-    hover_bg: Option<Hsla>,
-    active_bg: Option<Hsla>,
-    bg: Option<Hsla>,
-    border: Option<Hsla>,
-    active: bool,
+    emphasis: Emphasis,
+    size: IconButtonSize,
+    round: bool,
+    inverted: bool,
+    pressed: bool,
     disabled: bool,
-    occlude: bool,
-    rounded: Option<Pixels>,
-    /// The accessible name; an icon alone says nothing to a screen reader.
     label: Option<SharedString>,
-    tooltip: Option<(Theme, SharedString)>,
+    tooltip: Option<SharedString>,
     on_click: Option<ClickHandler>,
     on_bounds: Option<BoundsHandler>,
 }
 
 impl IconButton {
-    pub fn new(id: impl Into<ElementId>, icon: impl Into<SharedString>) -> Self {
+    pub fn new(theme: &Theme, id: impl Into<ElementId>, icon: impl Into<SharedString>) -> Self {
         Self {
             id: id.into(),
+            theme: *theme,
             icon: icon.into(),
-            size: px(28.),
-            icon_size: px(14.),
-            idle: gpui::white(),
-            active_color: gpui::white(),
-            hover_color: None,
-            hover_bg: None,
-            active_bg: None,
-            bg: None,
-            border: None,
-            active: false,
+            emphasis: Emphasis::default(),
+            size: IconButtonSize::default(),
+            round: false,
+            inverted: false,
+            pressed: false,
             disabled: false,
-            occlude: false,
-            rounded: None,
             label: None,
             tooltip: None,
             on_click: None,
@@ -566,86 +445,37 @@ impl IconButton {
         }
     }
 
-    /// The editor's ghost icon button: `text-2` on nothing, `ctl-hover` and
-    /// `text-1` on hover and while active (selected).
-    pub fn editor(theme: &Theme, id: impl Into<ElementId>, icon: impl Into<SharedString>) -> Self {
-        Self {
-            idle: Hsla::from(theme.editor.text_2),
-            active_color: Hsla::from(theme.editor.text_1),
-            hover_color: Some(Hsla::from(theme.editor.text_1)),
-            hover_bg: Some(Hsla::from(theme.editor.ctl_hover)),
-            active_bg: Some(Hsla::from(theme.editor.ctl_hover)),
-            icon_size: px(16.),
-            rounded: Some(px(7.)),
-            ..Self::new(id, icon)
-        }
-    }
-
-    /// One of fframes' three icon-button boxes, with its glyph size.
-    pub fn editor_size(mut self, size: IconButtonSize) -> Self {
-        let (side, glyph) = size.box_and_glyph();
-        self.size = px(side);
-        self.icon_size = px(glyph);
+    pub fn emphasis(mut self, emphasis: Emphasis) -> Self {
+        self.emphasis = emphasis;
         self
     }
 
-    /// The main action: a white glyph on the accent, the lighter accent on hover.
-    pub fn accent(mut self, theme: &Theme) -> Self {
-        let glyph = Hsla::from(theme.on_accent());
-        self.bg = Some(Hsla::from(theme.editor.accent));
-        self.hover_bg = Some(Hsla::from(theme.editor.accent_2));
-        self.active_bg = None;
-        self.idle = glyph;
-        self.active_color = glyph;
-        self.hover_color = Some(glyph);
+    pub fn size(mut self, size: IconButtonSize) -> Self {
+        self.size = size;
         self
     }
 
-    /// The transport's play button: a `card` glyph on a `text-1` disc.
-    pub fn inverted(mut self, theme: &Theme) -> Self {
-        let glyph = Hsla::from(theme.editor.card);
-        self.bg = Some(Hsla::from(theme.editor.text_1));
-        self.hover_bg = Some(Hsla::from(theme.editor.text_2));
-        self.active_bg = None;
-        self.idle = glyph;
-        self.active_color = glyph;
-        self.hover_color = Some(glyph);
+    /// A circle rather than a rounded square: the composer's send and stop.
+    pub fn round(mut self) -> Self {
+        self.round = true;
         self
     }
 
-    /// A neutral control with the subtle `ctl` fill at rest.
-    pub fn ctl_fill(mut self, theme: &Theme) -> Self {
-        self.bg = Some(Hsla::from(theme.editor.ctl));
-        self.hover_bg = Some(Hsla::from(theme.editor.ctl_hover));
+    /// The transport's play disc: a `card` glyph on `text_1`, round.
+    pub fn inverted(mut self) -> Self {
+        self.inverted = true;
+        self.round = true;
         self
     }
 
-    /// A soft red: a red glyph on the danger surface, deepening on hover.
-    pub fn destructive(mut self, theme: &Theme) -> Self {
-        let glyph = Hsla::from(theme.red_11);
-        self.bg = Some(Hsla::from(theme.red_3));
-        self.hover_bg = Some(Hsla::from(studio_theme::mix(
-            theme.red_3,
-            theme.red_11,
-            0.12,
-        )));
-        self.active_bg = None;
-        self.idle = glyph;
-        self.active_color = glyph;
-        self.hover_color = Some(glyph);
+    /// Selected: `ctl_active` behind a `text_1` glyph.
+    pub fn pressed(mut self, pressed: bool) -> Self {
+        self.pressed = pressed;
         self
     }
 
-    /// Shows `text` on hover after the standard delay; it also names the button
-    /// when no [`label`](Self::label) does.
-    pub fn tooltip(mut self, theme: &Theme, text: impl Into<SharedString>) -> Self {
-        self.tooltip = Some((*theme, text.into()));
-        self
-    }
-
-    /// Reports the painted bounds, in window coordinates, on every prepaint.
-    pub fn on_bounds(mut self, report: impl Fn(gpui::Bounds<Pixels>, &mut App) + 'static) -> Self {
-        self.on_bounds = Some(std::rc::Rc::new(report));
+    pub fn disabled(mut self, disabled: bool) -> Self {
+        self.disabled = disabled;
         self
     }
 
@@ -655,73 +485,16 @@ impl IconButton {
         self
     }
 
-    /// The main window header's action row: a 20px hit box with no fill at
-    /// all, `text-gray-11` going to `text-gray-12` on hover.
-    pub fn header(theme: &Theme, id: impl Into<ElementId>, icon: impl Into<SharedString>) -> Self {
-        Self {
-            occlude: cfg!(target_os = "windows"),
-            size: px(20.),
-            icon_size: px(16.),
-            idle: theme.gray(11),
-            active_color: theme.gray(12),
-            hover_color: Some(theme.gray(12)),
-            ..Self::new(id, icon)
-        }
-    }
-
-    /// A window body button: `hover:bg-gray-4` / `bg-gray-5` through
-    /// `Theme::body_*`.
-    pub fn body(theme: &Theme, id: impl Into<ElementId>, icon: impl Into<SharedString>) -> Self {
-        Self {
-            idle: theme.gray(11),
-            active_color: theme.body_text(),
-            hover_bg: Some(theme.body_hover_fill(4)),
-            active_bg: Some(theme.body_fill(5)),
-            ..Self::new(id, icon)
-        }
-    }
-
-    pub fn size(mut self, size: Pixels) -> Self {
-        self.size = size;
+    /// Shows `text` on hover after the standard delay; it also names the button
+    /// when no [`label`](Self::label) does.
+    pub fn tooltip(mut self, text: impl Into<SharedString>) -> Self {
+        self.tooltip = Some(text.into());
         self
     }
 
-    pub fn icon_size(mut self, size: Pixels) -> Self {
-        self.icon_size = size;
-        self
-    }
-
-    pub fn rounded(mut self, radius: Pixels) -> Self {
-        self.rounded = Some(radius);
-        self
-    }
-
-    pub fn active(mut self, active: bool) -> Self {
-        self.active = active;
-        self
-    }
-
-    /// A resting fill and hairline, for the buttons that have one even when
-    /// idle -- the editor's transport play button is `rounded-full border
-    /// border-gray-300 bg-gray-3 size-9`.
-    pub fn filled(mut self, bg: Hsla, border: Option<Hsla>) -> Self {
-        self.bg = Some(bg);
-        self.border = border;
-        self
-    }
-
-    pub fn hover_bg(mut self, bg: Hsla) -> Self {
-        self.hover_bg = Some(bg);
-        self
-    }
-
-    pub fn disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
-        self
-    }
-
-    pub fn color(mut self, color: Hsla) -> Self {
-        self.idle = color;
+    /// Reports the painted bounds, in window coordinates, on every prepaint.
+    pub fn on_bounds(mut self, report: impl Fn(gpui::Bounds<Pixels>, &mut App) + 'static) -> Self {
+        self.on_bounds = Some(Rc::new(report));
         self
     }
 
@@ -732,113 +505,111 @@ impl IconButton {
         self.on_click = Some(Box::new(handler));
         self
     }
+
+    fn paint(&self) -> Paint {
+        if self.inverted {
+            let colors = self.theme.colors;
+            let glyph = Hsla::from(colors.card);
+            return Paint {
+                rest: Some(colors.text_1.into()),
+                hover: colors.text_2.into(),
+                active: colors.text_2.into(),
+                selected: colors.text_1.into(),
+                text: glyph,
+                hover_text: glyph,
+                selected_text: glyph,
+                disabled_text: glyph,
+            };
+        }
+        Paint::of(&self.theme, self.emphasis)
+    }
 }
 
 impl RenderOnce for IconButton {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = Theme::for_window(window, cx);
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let paint = self.paint();
         let IconButton {
             id,
+            theme,
             icon,
+            emphasis: _,
             size,
-            icon_size,
-            idle,
-            active_color,
-            hover_color,
-            hover_bg,
-            active_bg,
-            bg,
-            border,
-            active,
+            round,
+            inverted: _,
+            pressed,
             disabled,
-            occlude,
-            rounded,
             label,
             tooltip,
             on_click,
             on_bounds,
         } = self;
-        let name = label.or_else(|| tooltip.as_ref().map(|(_, text)| text.clone()));
-        // gpui svgs do not inherit a parent's text colour, so the glyph follows
-        // the hover through a group rather than through the cascade.
-        let group: SharedString = match &id {
-            ElementId::Name(name) => SharedString::from(format!("ib-{name}")),
-            other => SharedString::from(format!("ib-{other:?}")),
-        };
-        let glyph_hover = hover_color.filter(|_| !disabled && !active);
+        let name = label.or_else(|| tooltip.clone());
+        let group = hover_group("icon-button", &id);
+        let glyph_hover = (!disabled && !pressed).then_some(paint.hover_text);
+        let (side, glyph) = size.box_and_glyph();
 
-        focusable(div().id(id), &theme, disabled)
+        let element = focusable(div().id(id), &theme, disabled)
             .group(group.clone())
             .role(Role::Button)
             .when_some(name, |this, name| this.aria_label(name))
             .relative()
-            .when(occlude, |this| this.occlude())
             .flex()
             .items_center()
             .justify_center()
-            .size(size)
+            .size(px(side))
             .flex_shrink_0()
-            .map(|this| match rounded {
-                Some(radius) => this.rounded(radius),
-                None => this.rounded_full(),
+            .map(|this| {
+                if round {
+                    this.rounded_full()
+                } else {
+                    this.rounded(px(METRICS.radius.control))
+                }
             })
-            .when_some(bg, |this, bg| this.bg(bg))
-            .when_some(border, |this, border| this.border_1().border_color(border))
-            .when(active, |this| {
-                this.when_some(active_bg, |this, bg| this.bg(bg))
-            })
-            .when(disabled, |this| this.opacity(0.45))
-            .when(!disabled && on_click.is_some(), |this| {
-                this.cursor_pointer()
+            .when_some(paint.rest, |this, bg| this.bg(bg))
+            .when(pressed, |this| this.bg(paint.selected));
+        dim_disabled(element, disabled)
+            .when(!disabled && !pressed, |this| {
+                this.when(on_click.is_some(), |this| this.cursor_pointer())
+                    .hover(move |style| style.bg(paint.hover))
+                    .active(move |style| style.bg(paint.active))
             })
             .child(
                 svg()
                     .path(icon)
-                    .size(icon_size)
-                    .text_color(if active { active_color } else { idle })
+                    .size(px(glyph))
+                    .text_color(if pressed {
+                        paint.selected_text
+                    } else {
+                        paint.text
+                    })
                     .when_some(glyph_hover, |this, color| {
                         this.group_hover(group, move |style| style.text_color(color))
                     }),
             )
-            .when(
-                !disabled && (hover_bg.is_some() || hover_color.is_some()),
-                |this| {
-                    this.hover(move |style| {
-                        let style = match hover_bg {
-                            Some(bg) => style.bg(bg),
-                            None => style,
-                        };
-                        match hover_color {
-                            Some(color) => style.text_color(color),
-                            None => style,
-                        }
-                    })
-                },
-            )
             .when_some(on_click.filter(|_| !disabled), |this, handler| {
                 this.on_click(move |event, window, cx| handler(event, window, cx))
             })
-            .when_some(tooltip, |this, (theme, text)| {
-                this.tooltip_show_delay(super::TOOLTIP_SHOW_DELAY)
-                    .tooltip(move |_, cx| super::Tooltip::new(&theme, text.clone()).view(cx))
-            })
+            .map(|this| with_tooltip(this, &theme, tooltip))
             .children(on_bounds.map(bounds_probe))
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{cell::RefCell, rc::Rc};
+    use std::{cell::Cell, rc::Rc};
 
-    use gpui::{Context, IntoElement, ParentElement, Render, TestAppContext, VisualTestContext};
+    use gpui::{Bounds, Context, Render, TestAppContext, VisualTestContext};
 
     use super::*;
-    use crate::kit::test_support::{press, tab};
+    use crate::kit::test_support::{Log, log, press, tab};
 
-    /// A disabled button followed by an enabled one and an icon button, each counting its
-    /// clicks.
+    type Seen = Rc<Cell<Option<Bounds<Pixels>>>>;
+
+    /// A disabled button, an 80px one reporting its bounds, a third and an icon button,
+    /// each logging its clicks.
     struct Row {
-        clicks: Rc<RefCell<Vec<&'static str>>>,
+        clicks: Log<&'static str>,
+        seen: Seen,
     }
 
     impl Render for Row {
@@ -848,106 +619,143 @@ mod tests {
                 let clicks = self.clicks.clone();
                 move |_: &ClickEvent, _: &mut Window, _: &mut App| clicks.borrow_mut().push(name)
             };
+            let seen = self.seen.clone();
             div()
+                .flex()
+                .w(px(400.))
                 .child(
-                    Button::plain(&theme, "off", ButtonVariant::Gray, ButtonSize::Sm)
+                    Button::new(&theme, "off")
                         .label("Off")
                         .disabled(true)
                         .on_click(click("off")),
                 )
                 .child(
-                    Button::plain(&theme, "on", ButtonVariant::Gray, ButtonSize::Sm)
+                    Button::new(&theme, "on")
                         .label("On")
+                        .width(px(80.))
+                        .on_bounds(move |bounds, _| seen.set(Some(bounds)))
                         .on_click(click("on")),
                 )
                 .child(
-                    IconButton::body(&theme, "icon", "icons/x.svg")
+                    Button::new(&theme, "go")
+                        .label("Go")
+                        .emphasis(Emphasis::Primary)
+                        .on_click(click("go")),
+                )
+                .child(
+                    IconButton::new(&theme, "icon", "icons/x.svg")
                         .label("Close")
                         .on_click(click("icon")),
                 )
         }
     }
 
-    fn row(cx: &mut TestAppContext) -> (Rc<RefCell<Vec<&'static str>>>, &mut VisualTestContext) {
-        let clicks = Rc::new(RefCell::new(Vec::new()));
-        let shared = clicks.clone();
-        let (_, cx) = cx.add_window_view(|_, _| Row { clicks: shared });
-        (clicks, cx)
+    fn row(cx: &mut TestAppContext) -> (Log<&'static str>, Seen, &mut VisualTestContext) {
+        let clicks = log();
+        let seen = Seen::default();
+        let (shared, bounds) = (clicks.clone(), seen.clone());
+        let (_, cx) = cx.add_window_view(|_, _| Row {
+            clicks: shared,
+            seen: bounds,
+        });
+        cx.run_until_parked();
+        (clicks, seen, cx)
     }
 
     #[gpui::test]
-    fn tab_skips_a_disabled_button_and_enter_activates_the_focused_one(cx: &mut TestAppContext) {
-        let (clicks, cx) = row(cx);
+    fn tab_skips_a_disabled_button_and_enter_or_space_activates(cx: &mut TestAppContext) {
+        let (clicks, _, cx) = row(cx);
         tab(cx);
         press(cx, "enter");
-        assert_eq!(*clicks.borrow(), ["on"]);
         tab(cx);
         press(cx, "space");
-        assert_eq!(*clicks.borrow(), ["on", "icon"]);
+        tab(cx);
+        press(cx, "enter");
+        assert_eq!(*clicks.borrow(), ["on", "go", "icon"]);
     }
 
-    #[test]
-    fn the_editor_preset_paints_from_the_editor_palette() {
-        let theme = Theme::dark();
-        let hsla = Hsla::from;
-        let button = IconButton::editor(&theme, "zoom", "icons/x.svg");
-        assert_eq!(button.idle, hsla(theme.editor.text_2));
-        assert_eq!(button.hover_color, Some(hsla(theme.editor.text_1)));
-        assert_eq!(button.hover_bg, Some(hsla(theme.editor.ctl_hover)));
-        assert_eq!(button.active_bg, Some(hsla(theme.editor.ctl_hover)));
-        assert_eq!(button.active_color, hsla(theme.editor.text_1));
-        assert_eq!(button.rounded, Some(px(7.)));
-        assert_eq!((button.size, button.icon_size), (px(28.), px(16.)));
-    }
-
-    #[test]
-    fn editor_sizes_set_the_box_and_the_glyph() {
-        let theme = Theme::light();
-        let sized = |size| {
-            let button = IconButton::editor(&theme, "b", "icons/x.svg").editor_size(size);
-            (f32::from(button.size), f32::from(button.icon_size))
-        };
-        assert_eq!(sized(IconButtonSize::Small), (24., 14.));
-        assert_eq!(sized(IconButtonSize::Medium), (28., 16.));
-        assert_eq!(sized(IconButtonSize::Large), (32., 16.));
-    }
-
-    #[test]
-    fn icon_fills_match_the_text_buttons() {
-        let theme = Theme::dark();
-        let hsla = Hsla::from;
-        let accent = IconButton::editor(&theme, "a", "icons/x.svg").accent(&theme);
-        assert_eq!(accent.bg, Some(hsla(theme.editor.accent)));
-        assert_eq!(accent.hover_bg, Some(hsla(theme.editor.accent_2)));
+    #[gpui::test]
+    fn the_reported_bounds_are_the_buttons_own(cx: &mut TestAppContext) {
+        let (_, seen, _) = row(cx);
+        let bounds = seen.get().expect("painted");
         assert_eq!(
-            (accent.idle, accent.hover_color),
-            (hsla(theme.on_accent()), Some(hsla(theme.on_accent())))
-        );
-
-        let ctl = IconButton::editor(&theme, "b", "icons/x.svg").ctl_fill(&theme);
-        assert_eq!(ctl.bg, Some(hsla(theme.editor.ctl)));
-        assert_eq!(ctl.hover_bg, Some(hsla(theme.editor.ctl_hover)));
-
-        let destructive = IconButton::editor(&theme, "c", "icons/x.svg").destructive(&theme);
-        assert_eq!(destructive.bg, Some(hsla(theme.red_3)));
-        assert_eq!(destructive.idle, hsla(theme.red_11));
-        // The glyph follows hover now, so the preset keeps it red rather than text_1.
-        assert_eq!(destructive.hover_color, Some(hsla(theme.red_11)));
-        assert_eq!(
-            destructive.hover_bg,
-            Some(hsla(studio_theme::mix(theme.red_3, theme.red_11, 0.12)))
+            (f32::from(bounds.size.width), f32::from(bounds.size.height)),
+            (80., 28.)
         );
     }
 
     #[test]
-    fn an_icon_button_can_carry_a_tooltip() {
+    fn icon_only_moves_the_label_into_the_tooltip() {
         let theme = Theme::light();
-        let button = IconButton::new("zoom", "icons/x.svg").tooltip(&theme, "Zoom in");
-        assert_eq!(button.tooltip.map(|(_, text)| text), Some("Zoom in".into()));
+        let button = Button::new(&theme, "a").label("Open…").icon_only();
+        assert_eq!(button.label, None);
+        assert_eq!(button.tooltip.as_deref(), Some("Open…"));
+
+        let button = Button::new(&theme, "b")
+            .label("Open…")
+            .tooltip("Open a project")
+            .icon_only();
+        assert_eq!(button.label, None);
+        assert_eq!(button.tooltip.as_deref(), Some("Open a project"));
+    }
+
+    #[test]
+    fn emphases_paint_from_the_roles() {
+        for theme in [Theme::light(), Theme::dark()] {
+            let c = theme.colors;
+            let hsla = Hsla::from;
+
+            let ghost = Paint::of(&theme, Emphasis::Ghost);
+            assert_eq!(ghost.rest, None);
+            assert_eq!(ghost.hover, hsla(c.ctl_hover));
+            assert_eq!(ghost.active, hsla(c.ctl_active));
+            assert_eq!(ghost.selected, hsla(c.ctl_active));
+            assert_eq!(
+                (ghost.text, ghost.hover_text),
+                (hsla(c.text_2), hsla(c.text_1))
+            );
+
+            let neutral = Paint::of(&theme, Emphasis::Neutral);
+            assert_eq!(neutral.rest, Some(hsla(c.ctl)));
+            assert_eq!(neutral.hover, hsla(c.ctl_hover));
+
+            let primary = Paint::of(&theme, Emphasis::Primary);
+            assert_eq!(primary.rest, Some(hsla(c.accent)));
+            assert_eq!(primary.hover, hsla(c.accent_2));
+            assert_eq!(primary.text, hsla(c.on_accent));
+
+            let danger = Paint::of(&theme, Emphasis::Danger);
+            assert_eq!(danger.rest, Some(hsla(c.danger_bg)));
+            assert_eq!(danger.hover, hsla(c.danger_hover));
+            assert_eq!(danger.active, hsla(c.danger_active));
+            assert_eq!(
+                (danger.text, danger.hover_text),
+                (hsla(c.danger), hsla(c.danger))
+            );
+        }
+    }
+
+    #[test]
+    fn sizes_follow_the_metrics() {
+        assert_eq!(ButtonSize::Sm.height(), 24.);
+        assert_eq!(ButtonSize::Md.height(), 28.);
+        assert_eq!(IconButtonSize::Sm.box_and_glyph(), (24., 14.));
+        assert_eq!(IconButtonSize::Md.box_and_glyph(), (28., 16.));
+        assert_eq!(IconButtonSize::Lg.box_and_glyph(), (32., 16.));
+    }
+
+    #[test]
+    fn the_inverted_disc_is_a_card_glyph_on_text_1() {
+        let theme = Theme::dark();
+        let button = IconButton::new(&theme, "play", "icons/x.svg").inverted();
+        let paint = button.paint();
+        assert_eq!(paint.rest, Some(Hsla::from(theme.colors.text_1)));
+        assert_eq!(paint.text, Hsla::from(theme.colors.card));
+        assert!(button.round);
     }
 
     struct Probed {
-        seen: Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
+        seen: Seen,
     }
 
     impl Render for Probed {
@@ -955,8 +763,8 @@ mod tests {
             let theme = Theme::for_window(window, cx);
             let seen = self.seen.clone();
             div().w(px(300.)).child(
-                IconButton::editor(&theme, "probed", "icons/x.svg")
-                    .size(px(24.))
+                IconButton::new(&theme, "probed", "icons/x.svg")
+                    .size(IconButtonSize::Sm)
                     .on_bounds(move |bounds, _| seen.set(Some(bounds))),
             )
         }
@@ -964,7 +772,7 @@ mod tests {
 
     #[gpui::test]
     fn an_icon_buttons_reported_bounds_are_its_own(cx: &mut TestAppContext) {
-        let seen = Rc::new(std::cell::Cell::new(None));
+        let seen = Seen::default();
         let shared = seen.clone();
         let (_, cx) = cx.add_window_view(|_, _| Probed { seen: shared });
         cx.run_until_parked();
@@ -973,8 +781,12 @@ mod tests {
     }
 
     #[test]
-    fn an_icon_button_carries_its_accessible_name() {
-        let button = IconButton::new("close", "icons/x.svg").label("Close");
-        assert_eq!(button.label.as_ref().map(|l| l.as_ref()), Some("Close"));
+    fn an_icon_button_carries_its_accessible_name_and_tooltip() {
+        let theme = Theme::light();
+        let button = IconButton::new(&theme, "close", "icons/x.svg")
+            .label("Close")
+            .tooltip("Close the panel");
+        assert_eq!(button.label.as_deref(), Some("Close"));
+        assert_eq!(button.tooltip.as_deref(), Some("Close the panel"));
     }
 }

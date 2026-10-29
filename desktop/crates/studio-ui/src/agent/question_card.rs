@@ -5,7 +5,9 @@
 use gpui::KeyDownEvent;
 use studio_engine::agent::{OpenQuestion, QuestionAnswer};
 
+use super::ui::ActionCard;
 use super::*;
+use crate::kit::{RadioCard, RadioCards};
 
 /// What the user has answered for one item so far.
 pub(super) struct ItemDraft {
@@ -112,14 +114,19 @@ impl ConversationPanel {
         index: usize,
         question: &OpenQuestion,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> ActionCard {
         let theme = self.theme;
         let ready = self.collect_answers(&question.reference, cx).is_some();
-        let mut card = self.section(if question.title.is_empty() {
-            "The agent has a question"
-        } else {
-            question.title.as_str()
-        });
+        let mut card = ActionCard::new(
+            &theme,
+            SharedString::from(format!("question-{index}")),
+            UiTone::Warning,
+            if question.title.is_empty() {
+                "The agent has a question"
+            } else {
+                question.title.as_str()
+            },
+        );
         for (item_index, item) in question.items.iter().enumerate() {
             let Some(draft) = self
                 .host
@@ -131,38 +138,42 @@ impl ConversationPanel {
             };
             let field = draft.text.clone();
             let chosen = draft.selected.clone();
-            let mut block = div().flex().flex_col().gap(px(4.));
+            let mut block = div().flex().flex_col().gap(px(METRICS.space_2));
             if !item.header.is_empty() {
-                block = block.child(self.line(item.header.clone()));
+                block = block.child(self.caption(&item.header));
             }
-            block = block.child(label_text(item.question.clone()));
+            block = block.child(
+                text_style(div(), TextStyle::Label)
+                    .text_color(theme.colors.text_1)
+                    .child(selectable(item.question.clone())),
+            );
             for (option_index, option) in item.options.iter().enumerate() {
+                // One card per option, so several can be chosen when the item allows it.
                 let id: ElementId =
                     format!("question-{index}-{item_index}-opt-{option_index}").into();
                 let probe = Self::bounds_probe(&id, cx);
                 let reference = question.reference.clone();
                 let label = option.label.clone();
                 let multi = item.multi_select;
-                let mut button = EditorButton::plain(&theme, id)
-                    .label(option.label.clone())
-                    .pressed(chosen.contains(&option.label))
-                    .on_click(Self::click(cx, move |this, _, cx| {
+                let entity = cx.entity();
+                let description =
+                    (!option.description.is_empty()).then_some(option.description.as_str());
+                let mut cards = RadioCards::new(
+                    &theme,
+                    id,
+                    vec![RadioCard::new(option.label.clone(), description)],
+                    chosen.contains(&option.label).then_some(0),
+                )
+                .on_select(move |_, _, cx| {
+                    entity.update(cx, |this, cx| {
                         this.toggle_option(&reference, item_index, &label, multi, cx)
-                    }));
+                    });
+                });
                 if let Some(probe) = probe {
-                    button = button.on_bounds(probe.into_bounds_handler());
+                    let report = probe.into_bounds_handler();
+                    cards = cards.on_option_bounds(move |_, bounds, cx| report(bounds, cx));
                 }
-                block = block.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(8.))
-                        .child(button)
-                        .children(
-                            (!option.description.is_empty())
-                                .then(|| self.line(option.description.clone())),
-                        ),
-                );
+                block = block.child(cards);
             }
             let id: ElementId = format!("question-{index}-{item_index}-text").into();
             let mut wrapper = div().relative().on_key_down(cx.listener({
@@ -176,32 +187,26 @@ impl ConversationPanel {
                     probe.into_bounds_handler(),
                 )));
             }
-            block = block.child(wrapper.child(TextInput::plain(&theme, id, &field)));
+            block = block.child(wrapper.child(TextInput::new(&theme, id, &field)));
             card = card.child(block);
         }
         let send_reference = question.reference.clone();
         let decline_reference = question.reference.clone();
-        card.child(
-            div()
-                .flex()
-                .gap(px(6.))
-                .child(self.action_button(
-                    format!("question-{index}-send"),
-                    "Send answers",
-                    ready,
-                    Tone::Primary,
-                    cx,
-                    move |this, _, cx| this.send_answers(&send_reference, cx),
-                ))
-                .child(self.action_button(
-                    format!("question-{index}-cancel"),
-                    "Cancel",
-                    true,
-                    Tone::Normal,
-                    cx,
-                    move |this, _, cx| this.decline_question(&decline_reference, cx),
-                )),
-        )
-        .into_any_element()
+        card.action(self.action_button(
+            format!("question-{index}-cancel"),
+            "Cancel",
+            true,
+            Emphasis::Neutral,
+            cx,
+            move |this, _, cx| this.decline_question(&decline_reference, cx),
+        ))
+        .action(self.action_button(
+            format!("question-{index}-send"),
+            "Send answers",
+            ready,
+            Emphasis::Primary,
+            cx,
+            move |this, _, cx| this.send_answers(&send_reference, cx),
+        ))
     }
 }

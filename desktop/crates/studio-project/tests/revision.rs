@@ -313,6 +313,32 @@ fn timing_document_changes_the_source_but_not_the_build_revision() {
 }
 
 #[test]
+fn slides_document_changes_the_source_but_not_the_build_revision() {
+    use studio_project::revision::{FileKind, SLIDES_FILE};
+    let temp = tempfile::tempdir().unwrap();
+    write(temp.path(), "src/lib.rs", b"rust");
+    let without = SourceInventory::scan(temp.path()).unwrap();
+    write(temp.path(), SLIDES_FILE, br#"{"version":1,"stops":[]}"#);
+    let first = SourceInventory::scan(temp.path()).unwrap();
+    assert_eq!(first.slides_file().unwrap().kind, FileKind::Other);
+    write(
+        temp.path(),
+        SLIDES_FILE,
+        br#"{"version":1,"stops":[{"scene":"a","at":"end"}]}"#,
+    );
+    let second = SourceInventory::scan(temp.path()).unwrap();
+    assert_ne!(first.revision, second.revision);
+    assert_eq!(first.build_revision(), second.build_revision());
+    assert_eq!(without.build_revision(), first.build_revision());
+    // Only the root document is run-time; a nested file of that name is ordinary source.
+    write(temp.path(), "nested/slides.json", b"{}");
+    assert_ne!(
+        SourceInventory::scan(temp.path()).unwrap().build_revision(),
+        first.build_revision()
+    );
+}
+
+#[test]
 fn the_timing_document_is_hashed_as_timing() {
     use studio_project::revision::{FileKind, TIMING_FILE};
     let temp = tempfile::tempdir().unwrap();

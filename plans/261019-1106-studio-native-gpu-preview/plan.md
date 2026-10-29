@@ -192,7 +192,7 @@ None remain. Validation session 1 resolved all four.
    - Options: Skia CPU gated by a cost spike | Skia CPU always | tiny-skia default, Skia CPU when
      forced | Skia CPU for preview, tiny-skia for export
    - **Answer:** Other.
-   - **Custom input:** "If have GPU, alway on GPU, if not CPU by default"
+   - **Custom input:** "If have GPU, always on GPU, if not CPU by default"
    - **Rationale:** This reverses the plan's assumption that the fallback would be Skia CPU.
 3. **[Assumptions, follow-up]** To be precise about "CPU by default": which CPU renderer?
    - Options: The existing built-in CPU renderer (tiny-skia) | Skia on the CPU | tiny-skia by default,

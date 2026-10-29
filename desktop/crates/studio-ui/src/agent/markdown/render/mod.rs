@@ -22,7 +22,7 @@ use std::time::Instant;
 use gpui::{App, Context, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px};
 use studio_engine::agent::{Row, RowKind};
 use studio_markdown::{IncrementalParser, TopBlock};
-use studio_theme::{TextStyle, Theme, reduced_motion, text_style};
+use studio_theme::{METRICS, TextStyle, Theme, reduced_motion, text_style};
 
 use super::inline_code_links::{Probes, Seen, kind_on_disk, link_block};
 use super::link_ui::{Activation, Confirm, LinkSink, accepted, activate, confirm_overlay, os_sink};
@@ -359,7 +359,7 @@ impl RenderOnce for MarkdownRow {
         .text_color(style.text)
         .flex()
         .flex_col()
-        .gap(px(8.))
+        .gap(px(METRICS.space_2))
         .children(built.children);
         if let Some(confirm) = confirm {
             let (on_open, on_cancel) = (state.clone(), state.clone());

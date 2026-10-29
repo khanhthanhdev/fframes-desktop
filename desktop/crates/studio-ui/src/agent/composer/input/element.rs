@@ -49,7 +49,7 @@ impl Element for ComposerTextElement {
             window.request_measured_layout(style, move |known, available, window, cx| {
                 let width = known.width.unwrap_or(match available.width {
                     gpui::AvailableSpace::Definite(width) => width,
-                    _ => px(320.0),
+                    _ => px(FALLBACK_WIDTH),
                 });
                 let content_height =
                     input.update(cx, |input, _| input.layout_text(width, &text_style, window));
@@ -84,8 +84,8 @@ impl Element for ComposerTextElement {
         });
         let input = self.input.read(cx);
         let origin = point(bounds.left(), bounds.top() - px(input.scroll_top));
-        let caret_color: gpui::Hsla = input.theme.blue_9.into();
-        let selection_color = caret_color.opacity(0.3);
+        let caret_color: gpui::Hsla = input.theme.colors.accent.into();
+        let selection_color: gpui::Hsla = input.theme.colors.selection.into();
         let line_height = input.line_height;
 
         let mut selection_quads = Vec::new();
@@ -95,7 +95,7 @@ impl Element for ComposerTextElement {
             cursor = Some(fill(
                 Bounds::new(
                     point(origin.x + caret_at.x, origin.y + caret_at.y),
-                    size(px(2.0), line_height),
+                    size(px(CARET_WIDTH), line_height),
                 ),
                 caret_color,
             ));

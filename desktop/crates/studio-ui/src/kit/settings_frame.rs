@@ -1,28 +1,31 @@
 //! The settings frame, after Cap's settings window (`settings_window.rs`): a 227 px nav
-//! column of icon-and-label rows beside a scrolling content pane that holds the page's
-//! sections.
+//! column on `window` beside a scrolling page on `card` that holds the page's sections.
 //!
-//! Cap's nav rows answer the mouse only. Here every row is a tab stop with the focus
-//! ring, and Enter or Space opens it, like every other control. The frame can start with
-//! a Back row, for a frame shown in place of another view rather than in its own window.
+//! The nav rows look like [`ListRow`](super::ListRow)s: `list_row_h` high with a 16 px
+//! `text_2` icon and a `Label` title, `ctl_hover` under the pointer and `ctl_active` when
+//! selected. Cap's nav rows answer the mouse only. Here every row is a tab stop with the
+//! focus ring, and Enter or Space opens it, like every other control. The frame can start
+//! with a Back row, for a frame shown in place of another view rather than in its own window.
 
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, FontWeight, InteractiveElement, IntoElement, ParentElement,
-    RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Window, div,
-    prelude::FluentBuilder, px, rgb,
+    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, Role,
+    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
 };
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::interact::{BoundsHandler, Handler, bounds_probe, focusable};
+use super::list_row::row_look;
 use super::{Icon, icon};
 
 /// Cap's `SIDEBAR_WIDTH`.
 pub const SETTINGS_NAV_W: f32 = 227.;
-const NAV_PADDING_X: f32 = 10.;
-const CONTENT_PADDING_X: f32 = 16.;
+/// The nav column's padding; a window's title strip above it is the header less this.
+pub const SETTINGS_NAV_PAD: f32 = METRICS.space_2;
+/// The space between nav rows, as in a `List`.
+const NAV_ROW_GAP: f32 = METRICS.space_1 / 2.;
 
 /// One page in the nav column.
 #[derive(Debug, Clone)]
@@ -67,7 +70,7 @@ pub struct SettingsFrame {
 }
 
 impl SettingsFrame {
-    pub fn settings(theme: &Theme, id: impl Into<ElementId>, items: Vec<SettingsNavItem>) -> Self {
+    pub fn new(theme: &Theme, id: impl Into<ElementId>, items: Vec<SettingsNavItem>) -> Self {
         Self {
             id: id.into(),
             theme: *theme,
@@ -116,15 +119,15 @@ impl SettingsFrame {
         self
     }
 
-    /// The page's sections, 28 px apart.
+    /// The page's sections, 32 px apart.
     pub fn children(mut self, content: impl IntoIterator<Item = AnyElement>) -> Self {
         self.content.extend(content);
         self
     }
 }
 
-/// A nav row: Cap's `.cap-settings-nav-item`, 30 px high with a 16 px icon, tinted with
-/// the accent when selected.
+/// A nav row in the look of a `ListRow`: `list_row_h` high, a 16 px `text_2` icon and a
+/// `Label` title; `ctl_active` when selected, `ctl_hover` under the pointer otherwise.
 fn nav_row(
     theme: &Theme,
     id: SharedString,
@@ -132,9 +135,8 @@ fn nav_row(
     row_icon: Icon,
     selected: bool,
 ) -> gpui::Stateful<gpui::Div> {
-    let accent = rgb(Theme::SETTINGS_ACCENT);
-    let hover = theme.settings_hover();
-    focusable(div().id(id), theme, false)
+    let look = row_look(theme, selected, false, false);
+    let row = focusable(div().id(id), theme, false)
         .role(Role::Tab)
         .aria_selected(selected)
         .aria_label(label.clone())
@@ -143,35 +145,20 @@ fn nav_row(
         .flex_row()
         .flex_none()
         .items_center()
-        .h(px(30.))
-        .px(px(6.))
-        .gap(px(8.))
-        .rounded(px(8.))
-        .text_size(px(13.))
-        .cursor_pointer()
-        .when(selected, |row| {
-            row.bg(Theme::with_alpha(
-                accent,
-                if theme.is_dark() { 0.22 } else { 0.12 },
-            ))
-            .font_weight(FontWeight::MEDIUM)
+        .h(px(METRICS.size.list_row_h))
+        .px(px(METRICS.space_2))
+        .gap(px(METRICS.space_2))
+        .rounded(px(METRICS.radius.item))
+        .text_color(look.title)
+        .cursor_pointer();
+    text_style(row, TextStyle::Label)
+        .when_some(look.fill, |row, fill| row.bg(fill))
+        .when_some(look.hover, |row, hover| {
+            row.hover(move |style| style.bg(hover))
         })
-        .when(!selected, |row| row.hover(move |style| style.bg(hover)))
-        .child(
-            icon(
-                row_icon,
-                16.,
-                if selected {
-                    accent.into()
-                } else {
-                    theme.settings_muted()
-                },
-            )
-            .flex_shrink_0(),
-        )
-        .child(label)
+        .child(icon(row_icon, METRICS.size.icon_md, theme.colors.text_2).flex_shrink_0())
+        .child(div().flex_1().min_w_0().truncate().child(label))
 }
-
 impl RenderOnce for SettingsFrame {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let SettingsFrame {
@@ -218,7 +205,7 @@ impl RenderOnce for SettingsFrame {
             .flex()
             .flex_row()
             .overflow_hidden()
-            .text_color(theme.settings_text())
+            .text_color(theme.colors.text_1)
             .child(
                 div()
                     .id("settings-nav")
@@ -228,10 +215,10 @@ impl RenderOnce for SettingsFrame {
                     .flex_none()
                     .h_full()
                     .w(px(SETTINGS_NAV_W))
-                    .p(px(NAV_PADDING_X))
-                    .gap(px(2.))
+                    .p(px(SETTINGS_NAV_PAD))
+                    .gap(px(NAV_ROW_GAP))
                     .overflow_y_scroll()
-                    .bg(theme.settings_sidebar_bg())
+                    .bg(theme.colors.window)
                     .children(nav_header)
                     .children(back)
                     .children(rows),
@@ -244,9 +231,9 @@ impl RenderOnce for SettingsFrame {
                     .min_w_0()
                     .h_full()
                     .overflow_hidden()
-                    .bg(theme.settings_content_bg())
+                    .bg(theme.colors.card)
                     .border_l_1()
-                    .border_color(theme.settings_divider())
+                    .border_color(theme.colors.line)
                     .child(
                         div()
                             .id("settings-page")
@@ -255,10 +242,10 @@ impl RenderOnce for SettingsFrame {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .pt(px(18.))
-                            .px(px(CONTENT_PADDING_X))
-                            .pb(px(28.))
-                            .gap(px(28.))
+                            .pt(px(METRICS.space_6))
+                            .px(px(METRICS.space_6))
+                            .pb(px(METRICS.space_8))
+                            .gap(px(METRICS.space_8))
                             .children(content),
                     ),
             )
@@ -289,7 +276,7 @@ mod tests {
                 .collect();
             let picks = self.picks.clone();
             let back = self.picks.clone();
-            SettingsFrame::settings(&theme, "frame", items)
+            SettingsFrame::new(&theme, "frame", items)
                 .on_select(cx.listener(move |this, index: &usize, _, cx| {
                     picks.borrow_mut().push(["Appearance", "Setup"][*index]);
                     this.selected = *index;

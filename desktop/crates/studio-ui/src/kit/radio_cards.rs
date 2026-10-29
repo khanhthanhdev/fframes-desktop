@@ -9,17 +9,16 @@
 //! containing a `size-4` radio dot (`border-gray-7`, selected `border-blue-9
 //! bg-blue-9`) and a title/description block.
 //!
-//! Kobalte's `RadioGroup` also gives it a roving-tabindex keyboard contract
-//! (arrows move *and* select, Space commits). This rev has no focus ring or key
-//! handling on it -- the same gap `SegmentedControl` has -- so it is
-//! pointer-driven only.
+//! Every card is a tab stop; Enter or Space selects it.
 
 use gpui::{
-    App, ElementId, FontWeight, Hsla, InteractiveElement, IntoElement, ParentElement, RenderOnce,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, svg,
+    App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, Role, SharedString,
+    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px, svg,
 };
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
+
+use super::interact::{States, bounds_probe, dim_disabled, focusable};
 
 #[derive(Debug, Clone)]
 pub struct RadioCard {
@@ -46,49 +45,53 @@ impl RadioCard {
 /// The index arrives by reference, like the other index-dispatching components,
 /// so `cx.listener(..)` builds the handler directly.
 type SelectHandler = Box<dyn Fn(&usize, &mut Window, &mut App) + 'static>;
+/// Receives a card's index and its bounds on every prepaint.
+type OptionBoundsHandler = std::rc::Rc<dyn Fn(usize, gpui::Bounds<gpui::Pixels>, &mut App)>;
 
 #[derive(IntoElement)]
 pub struct RadioCards {
     id: ElementId,
+    theme: Theme,
     items: Vec<RadioCard>,
     selected: Option<usize>,
-    border: Hsla,
-    selected_border: Hsla,
-    selected_bg: Hsla,
-    dot_border: Hsla,
-    dot_fill: Hsla,
-    title: Hsla,
-    description: Hsla,
     on_select: Option<SelectHandler>,
+    on_option_bounds: Option<OptionBoundsHandler>,
 }
 
+/// The radio dot and the check inside it.
+const DOT: f32 = 16.;
+const CHECK: f32 = 12.;
+
 impl RadioCards {
-    /// The editor surface. `data-checked:bg-blue-3/40` is `blue-3` at 40%.
-    pub fn plain(
+    /// Cards behind a `line` hairline; the selected one is outlined in `accent` on
+    /// `ctl_active`, its dot filled with the accent.
+    pub fn new(
         theme: &Theme,
         id: impl Into<ElementId>,
         items: Vec<RadioCard>,
         selected: Option<usize>,
     ) -> Self {
-        let mut selected_bg = Hsla::from(theme.blue_3);
-        selected_bg.a = 0.4;
         Self {
             id: id.into(),
+            theme: *theme,
             items,
             selected,
-            border: Hsla::from(theme.gray_3),
-            selected_border: Hsla::from(theme.blue_8),
-            selected_bg,
-            dot_border: Hsla::from(theme.gray_7),
-            dot_fill: Hsla::from(theme.blue_9),
-            title: Hsla::from(theme.gray_12),
-            description: Hsla::from(theme.gray_11),
             on_select: None,
+            on_option_bounds: None,
         }
     }
 
     pub fn on_select(mut self, handler: impl Fn(&usize, &mut Window, &mut App) + 'static) -> Self {
         self.on_select = Some(Box::new(handler));
+        self
+    }
+
+    /// Reports each card's index and bounds, for controls that are measured.
+    pub fn on_option_bounds(
+        mut self,
+        report: impl Fn(usize, gpui::Bounds<gpui::Pixels>, &mut App) + 'static,
+    ) -> Self {
+        self.on_option_bounds = Some(std::rc::Rc::new(report));
         self
     }
 }
@@ -97,17 +100,14 @@ impl RenderOnce for RadioCards {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let RadioCards {
             id,
+            theme,
             items,
             selected,
-            border,
-            selected_border,
-            selected_bg,
-            dot_border,
-            dot_fill,
-            title,
-            description,
             on_select,
+            on_option_bounds,
         } = self;
+        let colors = theme.colors;
+        let states = States::of(&theme);
 
         let prefix: SharedString = match &id {
             ElementId::Name(name) => name.clone(),
@@ -115,48 +115,66 @@ impl RenderOnce for RadioCards {
         };
         let handler: Option<std::rc::Rc<SelectHandler>> = on_select.map(std::rc::Rc::new);
 
-        // `class="flex flex-col gap-2"`
         div()
             .id(id)
+            .role(Role::RadioGroup)
             .flex()
             .flex_col()
-            .gap(px(8.))
+            .gap(px(METRICS.space_2))
             .children(items.into_iter().enumerate().map(|(index, item)| {
                 let handler = handler.clone();
                 let checked = selected == Some(index);
 
-                div()
-                    .id(SharedString::from(format!("{prefix}-{index}")))
-                    .rounded(px(8.))
-                    .border_1()
-                    .border_color(if checked { selected_border } else { border })
-                    .when(checked, |this| this.bg(selected_bg))
-                    .when(item.disabled, |this| this.opacity(0.5))
+                let card = focusable(
+                    div().id(SharedString::from(format!("{prefix}-{index}"))),
+                    &theme,
+                    item.disabled,
+                )
+                .role(Role::RadioButton)
+                .aria_selected(checked)
+                .aria_label(item.label.clone())
+                .relative()
+                .children(on_option_bounds.clone().map(|report| {
+                    bounds_probe(std::rc::Rc::new(move |bounds, cx: &mut App| {
+                        report(index, bounds, cx)
+                    }))
+                }))
+                .rounded(px(METRICS.radius.segment))
+                .border_1()
+                .border_color(if checked { colors.accent } else { colors.line })
+                .when(checked, |this| this.bg(colors.info_bg))
+                .when(!checked && !item.disabled, |this| {
+                    this.cursor_pointer()
+                        .hover(move |style| style.bg(states.hover))
+                });
+                dim_disabled(card, item.disabled)
                     .child(
-                        // `flex items-start gap-3 p-3`
                         div()
                             .flex()
                             .items_start()
-                            .gap(px(12.))
-                            .p(px(12.))
+                            .gap(px(METRICS.space_3))
+                            .p(px(METRICS.space_3))
                             .child(
-                                // `mt-1 size-4 rounded-full border border-gray-7`
                                 div()
-                                    .mt(px(4.))
-                                    .size(px(16.))
+                                    .mt(px(METRICS.space_1 / 2.))
+                                    .size(px(DOT))
                                     .flex_none()
                                     .flex()
                                     .items_center()
                                     .justify_center()
                                     .rounded_full()
                                     .border_1()
-                                    .border_color(if checked { dot_fill } else { dot_border })
+                                    .border_color(if checked {
+                                        colors.accent
+                                    } else {
+                                        colors.line_strong
+                                    })
                                     .when(checked, |this| {
-                                        this.bg(dot_fill).child(
+                                        this.bg(colors.accent).child(
                                             svg()
                                                 .path("icons/check.svg")
-                                                .size(px(12.))
-                                                .text_color(Hsla::from(gpui::rgb(0xffffff))),
+                                                .size(px(CHECK))
+                                                .text_color(colors.on_accent),
                                         )
                                     }),
                             )
@@ -166,14 +184,15 @@ impl RenderOnce for RadioCards {
                                     .flex_col()
                                     .min_w_0()
                                     .child(
-                                        div()
-                                            .text_size(px(14.))
-                                            .font_weight(FontWeight::MEDIUM)
-                                            .text_color(title)
+                                        text_style(div(), TextStyle::Title)
+                                            .text_color(colors.text_1)
                                             .child(item.label),
                                     )
                                     .children(item.description.map(|text| {
-                                        div().text_size(px(12.)).text_color(description).child(text)
+                                        text_style(div(), TextStyle::Label)
+                                            .font_weight(TextStyle::Body.weight())
+                                            .text_color(colors.text_2)
+                                            .child(text)
                                     })),
                             ),
                     )

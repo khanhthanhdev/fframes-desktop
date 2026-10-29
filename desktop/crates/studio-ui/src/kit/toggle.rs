@@ -1,61 +1,27 @@
-//! `Toggle` -- `apps/desktop/src/components/Toggle.tsx`, a Kobalte `Switch`.
-//!
-//! The `.cap-toggle` / `.cap-toggle-thumb` class names exist in the Solid app
-//! *solely* so the macOS material layer can re-skin the track, which is why
-//! this has one constructor per surface rather than one palette.
+//! `Toggle` -- `apps/desktop/src/components/Toggle.tsx`, a Kobalte `Switch`: a
+//! `ctl_active` track that turns `accent` when on, with a `thumb` knob.
 
 use gpui::{
-    App, ClickEvent, ElementId, Hsla, InteractiveElement, IntoElement, ParentElement, Pixels,
-    RenderOnce, Role, SharedString, StatefulInteractiveElement, Styled, Toggled, Window, div,
-    prelude::FluentBuilder, px,
+    App, ClickEvent, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, Role,
+    SharedString, StatefulInteractiveElement, Styled, Toggled, Window, div, prelude::FluentBuilder,
+    px,
 };
 
 use studio_theme::Theme;
 
-use super::interact::focusable;
+use super::interact::{dim_disabled, focusable};
 
-/// `cva` sizes. `lg` is `w-14 h-7 p-0.75` with a `size-6` thumb; no window
-/// here uses it yet, but the scale is transcribed whole for the same reason
-/// `Theme` carries the unused Radix steps.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ToggleSize {
-    /// `w-9 h-5 p-0.5`, `size-4` thumb.
-    Sm,
-    /// `w-11 h-6 p-0.5`, `size-5` thumb -- the `cva` default.
-    Md,
-    /// `w-14 h-7 p-0.75`, `size-6` thumb.
-    Lg,
-}
-
-impl ToggleSize {
-    fn track(self) -> (Pixels, Pixels, Pixels) {
-        match self {
-            ToggleSize::Sm => (px(34.), px(20.), px(2.)),
-            ToggleSize::Md => (px(44.), px(24.), px(2.)),
-            ToggleSize::Lg => (px(56.), px(28.), px(3.)),
-        }
-    }
-
-    fn thumb(self) -> Pixels {
-        match self {
-            ToggleSize::Sm => px(16.),
-            ToggleSize::Md => px(20.),
-            ToggleSize::Lg => px(24.),
-        }
-    }
-}
+/// The track (`w-9 h-5 p-0.5`, 34 by 20 with a 2 px inset) and its 16 px knob.
+const TRACK_W: f32 = 34.;
+const TRACK_H: f32 = 20.;
+const TRACK_INSET: f32 = 2.;
+const KNOB: f32 = TRACK_H - 2. * TRACK_INSET;
 
 #[derive(IntoElement)]
 pub struct Toggle {
     id: ElementId,
+    theme: Theme,
     checked: bool,
-    size: ToggleSize,
-    /// `bg-gray-6`, or whatever the surface remaps it to.
-    off_fill: Hsla,
-    /// `data-checked:bg-blue-500`, or `--macos-settings-accent`.
-    on_fill: Hsla,
-    /// `bg-white` -- the thumb is white on every surface.
-    thumb: Hsla,
     disabled: bool,
     /// The accessible name.
     label: Option<SharedString>,
@@ -68,44 +34,19 @@ pub fn toggled(checked: bool, disabled: bool) -> Option<bool> {
 }
 
 impl Toggle {
-    /// The editor track: `ed-ctl-active` off, `ed-accent` on, white knob.
-    pub fn plain(theme: &Theme, id: impl Into<ElementId>, checked: bool) -> Self {
+    pub fn new(theme: &Theme, id: impl Into<ElementId>, checked: bool) -> Self {
         Self {
             id: id.into(),
+            theme: *theme,
             checked,
-            size: ToggleSize::Sm,
-            off_fill: Hsla::from(theme.editor.ctl_active),
-            on_fill: Hsla::from(theme.editor.accent),
-            thumb: gpui::white(),
             disabled: false,
             label: None,
             on_click: None,
         }
     }
 
-    /// The settings window: `[data-macos-native-material="settings"]
-    /// .cap-toggle { background: var(--macos-settings-control-fill) }`, checked
-    /// `var(--macos-settings-accent)`. The `inset 0 1px 2px rgba(0,0,0,.16)`
-    /// bevel the same rule adds has no gpui equivalent (README deviation).
-    pub fn settings(theme: &Theme, id: impl Into<ElementId>, checked: bool) -> Self {
-        Self {
-            size: ToggleSize::Sm,
-            off_fill: Hsla::from(theme.gray_6),
-            on_fill: gpui::rgb(Theme::SETTINGS_ACCENT).into(),
-            ..Self::plain(theme, id, checked)
-        }
-    }
-
-    pub fn size(mut self, size: ToggleSize) -> Self {
-        self.size = size;
-        self
-    }
-
-    pub fn disabled(mut self, theme: &Theme, disabled: bool) -> Self {
+    pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
-        if disabled && !self.checked {
-            self.off_fill = Hsla::from(theme.editor.ctl);
-        }
         self
     }
 
@@ -135,22 +76,18 @@ impl Toggle {
 }
 
 impl RenderOnce for Toggle {
-    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
-        let theme = Theme::for_window(window, cx);
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let Toggle {
             id,
+            theme,
             checked,
-            size,
-            off_fill,
-            on_fill,
-            thumb,
             disabled,
             label,
             on_click,
         } = self;
-        let (width, height, padding) = size.track();
+        let colors = theme.colors;
 
-        focusable(div().id(id), &theme, disabled)
+        let element = focusable(div().id(id), &theme, disabled)
             .role(Role::Switch)
             .aria_toggled(if checked {
                 Toggled::True
@@ -158,9 +95,9 @@ impl RenderOnce for Toggle {
                 Toggled::False
             })
             .when_some(label, |this, label| this.aria_label(label))
-            .w(width)
-            .h(height)
-            .p(padding)
+            .w(px(TRACK_W))
+            .h(px(TRACK_H))
+            .p(px(TRACK_INSET))
             .flex()
             .flex_row()
             .flex_shrink_0()
@@ -169,14 +106,18 @@ impl RenderOnce for Toggle {
             // end position a flex justification reaches, without a transform.
             .when(checked, |this| this.justify_end())
             .when(!disabled, |this| this.cursor_pointer())
-            .bg(if checked { on_fill } else { off_fill })
-            .child(div().size(size.thumb()).rounded_full().bg(thumb))
+            .bg(if checked {
+                colors.accent
+            } else {
+                colors.ctl_active
+            })
+            .child(div().size(px(KNOB)).rounded_full().bg(colors.thumb));
+        dim_disabled(element, disabled)
             .when_some(on_click.filter(|_| !disabled), |this, handler| {
                 this.on_click(move |event, window, cx| handler(event, window, cx))
             })
     }
 }
-
 #[cfg(test)]
 mod tests {
     use gpui::{Context, Render, TestAppContext};
@@ -199,13 +140,13 @@ mod tests {
             };
             div()
                 .child(
-                    Toggle::plain(&theme, "locked", false)
-                        .disabled(&theme, true)
+                    Toggle::new(&theme, "locked", false)
+                        .disabled(true)
                         .label("Locked")
                         .on_change(change("locked")),
                 )
                 .child(
-                    Toggle::plain(&theme, "loop", true)
+                    Toggle::new(&theme, "loop", true)
                         .label("Loop")
                         .on_change(change("loop")),
                 )

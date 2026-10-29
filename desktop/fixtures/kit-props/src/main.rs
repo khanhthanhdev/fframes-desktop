@@ -33,6 +33,20 @@ impl Video for KitProps {
 
     fn render_frame<'a>(&'a self, frame: Frame, ctx: &FFramesContext<'a, '_>) -> Svgr<'a> {
         let mut ui = Ui::new(frame, ctx, &self.theme).with_props(self.store.view());
+        ui.suggest_stops(|| {
+            vec![
+                fframes_kit::props::SuggestedStop {
+                    seconds: 0.5,
+                    label: Some("Introduce the dot".into()),
+                    notes: Some("The Props panel changes its radius.".into()),
+                },
+                fframes_kit::props::SuggestedStop {
+                    seconds: 1.25,
+                    label: Some("Edit the radius".into()),
+                    notes: None,
+                },
+            ]
+        });
         let dot = ui!(<Circle editable="dot" cx={320.0} cy={180.0} radius={40.0} />);
         svgr!(
             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" width="640" height="360">

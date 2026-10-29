@@ -7,10 +7,12 @@ use std::path::Path;
 use std::sync::Arc;
 
 use fframes::{RenderOptions, Video};
-use fframes_studio_protocol::{EditorObjectIdentity, PropsDocument, PropsInfo};
+use fframes_studio_protocol::{EditorObjectIdentity, PropsDocument, PropsInfo, StopSuggestions};
 
 type ApplyFn = dyn Fn(Option<PropsDocument>) + Send + Sync;
 type InfoFn = dyn Fn(&EditorObjectIdentity) -> Option<PropsInfo> + Send + Sync;
+type SuggestionsFn = dyn Fn() -> StopSuggestions + Send + Sync;
+type ClearSuggestionsFn = dyn Fn() + Send + Sync;
 
 /// `apply` replaces the video's props document (`None` restores the code's values) and
 /// takes effect from the next rendered frame. `info` describes an editable object as it
@@ -19,6 +21,7 @@ type InfoFn = dyn Fn(&EditorObjectIdentity) -> Option<PropsInfo> + Send + Sync;
 pub struct PropsHooks {
     apply: Arc<ApplyFn>,
     info: Arc<InfoFn>,
+    suggestions: Option<(Arc<SuggestionsFn>, Arc<ClearSuggestionsFn>)>,
 }
 
 impl fmt::Debug for PropsHooks {
@@ -35,6 +38,33 @@ impl PropsHooks {
         Self {
             apply: Arc::new(apply),
             info: Arc::new(info),
+            suggestions: None,
+        }
+    }
+
+    /// Enables optional stop scans. Clearing starts a fresh scan without old observations.
+    pub fn with_suggestions(
+        mut self,
+        read: impl Fn() -> StopSuggestions + Send + Sync + 'static,
+        clear: impl Fn() + Send + Sync + 'static,
+    ) -> Self {
+        self.suggestions = Some((Arc::new(read), Arc::new(clear)));
+        self
+    }
+
+    pub fn supports_suggestions(&self) -> bool {
+        self.suggestions.is_some()
+    }
+
+    pub fn suggested_stops(&self) -> StopSuggestions {
+        self.suggestions
+            .as_ref()
+            .map_or_else(StopSuggestions::default, |(read, _)| read())
+    }
+
+    pub fn clear_suggestions(&self) {
+        if let Some((_, clear)) = &self.suggestions {
+            clear();
         }
     }
 

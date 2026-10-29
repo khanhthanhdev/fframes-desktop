@@ -3,8 +3,9 @@
 //!
 //! Key contexts, most specific first: `TextInput` (a focused field, bound by the kit) and
 //! `AgentComposer` (the agent prompt, bound by the composer), then
-//! `Player` (the preview surface) and `Timeline` (its tracks), then `Workspace` (the window).
-//! Plain keys are bound only in `Player` and `Timeline`, which hold no text field, so typing
+//! `Player` (the preview surface), `Timeline` (its tracks) and `Present` (the presentation
+//! stage, which replaces both while presenting), then `Workspace` (the window). Plain keys
+//! are bound only in `Player`, `Timeline` and `Present`, which hold no text field, so typing
 //! in a field never reaches them; `Workspace` has no bindings of its own.
 
 use gpui::{App, Context, InteractiveElement, KeyBinding};
@@ -21,6 +22,9 @@ use crate::actions;
 pub(super) const PLAYER: &str = "Player";
 /// The timeline tracks' key context.
 const TIMELINE: &str = crate::timeline::KEY_CONTEXT;
+/// The presentation stage's key context. The stage has no `Player` context, so its
+/// arrows, space, Home, End and Escape navigate the deck.
+pub(super) const PRESENT: &str = "Present";
 /// The window's key context, around every other one.
 pub(super) const WORKSPACE: &str = "Workspace";
 /// The window's keys that must leave a focused text field alone.
@@ -39,6 +43,7 @@ fn key_bindings() -> Vec<KeyBinding> {
     let player = Some(PLAYER);
     let timeline = Some(TIMELINE);
     let outside_fields = Some(WORKSPACE_OUTSIDE_FIELDS);
+    let present = Some(PRESENT);
     vec![
         KeyBinding::new("space", actions::TogglePlayback, player),
         KeyBinding::new("left", actions::StepBackward, player),
@@ -72,6 +77,18 @@ fn key_bindings() -> Vec<KeyBinding> {
         ),
         KeyBinding::new("[", actions::MarkRangeStart, timeline),
         KeyBinding::new("]", actions::MarkRangeEnd, timeline),
+        KeyBinding::new("k", actions::AddStopAtPlayhead, timeline),
+        KeyBinding::new("delete", actions::RemoveStop, timeline),
+        KeyBinding::new("backspace", actions::RemoveStop, timeline),
+        KeyBinding::new("f5", actions::Present, outside_fields),
+        KeyBinding::new("right", actions::PresentNext, present),
+        KeyBinding::new("space", actions::PresentNext, present),
+        KeyBinding::new("pagedown", actions::PresentNext, present),
+        KeyBinding::new("left", actions::PresentPrevious, present),
+        KeyBinding::new("pageup", actions::PresentPrevious, present),
+        KeyBinding::new("home", actions::PresentFirst, present),
+        KeyBinding::new("end", actions::PresentLast, present),
+        KeyBinding::new("escape", actions::ExitPresent, present),
     ]
 }
 
@@ -187,6 +204,20 @@ impl StudioShell {
             .on_action(cx.listener(|s, _: &actions::RedoTimelineEdit, _, cx| {
                 s.timeline_history(TimelineCommand::Redo, cx)
             }))
+            .on_action(cx.listener(|s, _: &actions::AddStopAtPlayhead, _, cx| {
+                s.timeline.update(cx, |t, cx| t.add_stop_at_playhead(cx))
+            }))
+            .on_action(cx.listener(|s, _: &actions::RemoveStop, _, cx| {
+                s.timeline.update(cx, |t, cx| t.remove_selected_stop(cx))
+            }))
+            .on_action(cx.listener(|s, _: &actions::Present, _, cx| s.present(None, cx)))
+            .on_action(cx.listener(|s, _: &actions::PresentNext, _, cx| s.present_next(cx)))
+            .on_action(cx.listener(|s, _: &actions::PresentPrevious, _, cx| s.present_previous(cx)))
+            .on_action(cx.listener(|s, _: &actions::PresentFirst, _, cx| s.present_slide(1, cx)))
+            .on_action(
+                cx.listener(|s, _: &actions::PresentLast, _, cx| s.present_slide(usize::MAX, cx)),
+            )
+            .on_action(cx.listener(|s, _: &actions::ExitPresent, _, cx| s.exit_present(cx)))
             .on_action(cx.listener(|s, _: &actions::MarkRangeStart, _, cx| {
                 s.timeline.update(cx, |t, cx| t.mark_range_start(cx))
             }))
@@ -245,7 +276,10 @@ mod tests {
         // A binding in a wider context would win over a focused text field's typing.
         for (context, keys, action) in bound() {
             assert!(
-                context == PLAYER || context == TIMELINE || context == WORKSPACE_OUTSIDE_FIELDS,
+                context == PLAYER
+                    || context == TIMELINE
+                    || context == PRESENT
+                    || context == WORKSPACE_OUTSIDE_FIELDS,
                 "{keys} -> {action} is bound in {context:?}"
             );
         }
@@ -291,6 +325,18 @@ mod tests {
             ),
             (TIMELINE, "[", "studio::MarkRangeStart"),
             (TIMELINE, "]", "studio::MarkRangeEnd"),
+            (TIMELINE, "k", "studio::AddStopAtPlayhead"),
+            (TIMELINE, "delete", "studio::RemoveStop"),
+            (TIMELINE, "backspace", "studio::RemoveStop"),
+            (WORKSPACE_OUTSIDE_FIELDS, "f5", "studio::Present"),
+            (PRESENT, "right", "studio::PresentNext"),
+            (PRESENT, "space", "studio::PresentNext"),
+            (PRESENT, "pagedown", "studio::PresentNext"),
+            (PRESENT, "left", "studio::PresentPrevious"),
+            (PRESENT, "pageup", "studio::PresentPrevious"),
+            (PRESENT, "home", "studio::PresentFirst"),
+            (PRESENT, "end", "studio::PresentLast"),
+            (PRESENT, "escape", "studio::ExitPresent"),
         ] {
             let keys = gpui::Keystroke::parse(keys).unwrap().unparse();
             assert!(

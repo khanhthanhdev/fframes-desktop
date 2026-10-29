@@ -13,17 +13,16 @@
 //! for the life of the view, so switching sessions and back keeps it.
 
 use std::collections::HashMap;
-use std::f32::consts::TAU;
-use std::time::Duration;
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, Context, Empty, FontWeight, InteractiveElement as _,
-    IntoElement, ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _,
-    Styled as _, Transformation, Window, div, prelude::FluentBuilder as _, px, radians,
+    AnyElement, Context, Empty, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _, px,
 };
-use studio_theme::{TextStyle, Theme, text_style};
+use studio_theme::{METRICS, Theme};
 
-use crate::kit::{Icon, focusable, icon};
+use super::ui::{STATUS_MARK, TRAY_MAX_H, TrayHeader, TrayRow, TrayRowState};
+use crate::kit::{Icon, Spinner, icon};
 
 /// Where an item stands. Same variants as the driver's plan status, so a
 /// `From` impl on the host side is a one-to-one match.
@@ -117,14 +116,8 @@ impl TodoSummary {
     }
 }
 
-const HEADER_HEIGHT: f32 = 32.0;
-const ROW_PAD_X: f32 = 8.0;
-const GLYPH_SLOT: f32 = 14.0;
-/// An expanded list longer than this scrolls instead of growing the panel.
-const LIST_MAX_HEIGHT: f32 = 220.0;
-/// A long item wraps up to this many lines, then ends in an ellipsis.
-const ITEM_MAX_LINES: usize = 3;
-const SPIN_PERIOD: Duration = Duration::from_millis(1100);
+/// The empty ring of a pending item and the ring of an item paused mid-way.
+const RING: f32 = 10.0;
 
 /// The panel view. Hosts keep one entity and call [`TodoPanel::set_plan`]
 /// whenever the session's plan changes.
@@ -214,154 +207,74 @@ impl TodoPanel {
         cx.notify();
     }
 
-    fn header(&self, expanded: bool, theme: &Theme, cx: &mut Context<Self>) -> AnyElement {
+    fn header(&self, expanded: bool, theme: &Theme, cx: &mut Context<Self>) -> TrayHeader {
         let summary = self.summary();
-        let label = if expanded {
-            "Collapse todo list"
-        } else {
-            "Expand todo list"
-        };
-        let headline: Option<(SharedString, gpui::Hsla)> = if summary.finished() {
-            Some(("All done".into(), theme.editor.text_3.into()))
-        } else {
-            summary.headline().map(|ix| {
-                (
-                    self.items[ix].text.clone().into(),
-                    theme.editor.text_2.into(),
-                )
-            })
-        };
-        let lead = if summary.finished() {
-            icon(Icon::Check, 14., theme.green_11)
-        } else {
-            icon(Icon::Layers, 14., theme.editor.text_2)
-        };
-
-        let toggle = div()
-            .id("todo-panel-toggle")
-            .debug_selector(|| "todo-panel-toggle".into())
-            .role(Role::Button)
-            .aria_label(label)
-            .w_full()
-            .h(px(HEADER_HEIGHT))
-            .px(px(ROW_PAD_X))
-            .rounded(px(6.))
-            .flex()
-            .items_center()
-            .gap(px(8.))
-            .cursor_pointer()
-            .hover({
-                let hover = theme.editor.ctl_hover;
-                move |style| style.bg(hover)
-            })
-            .on_click(cx.listener(|this, _, _, cx| this.toggle(cx)))
-            .child(lead)
-            .child(
-                text_style(
-                    div().flex_none().flex().items_baseline().gap(px(6.)),
-                    TextStyle::Label,
-                )
-                .child(div().text_color(theme.editor.text_1).child("Todo"))
-                .child(
-                    div()
-                        .debug_selector(|| "todo-panel-count".into())
-                        .text_color(theme.editor.text_3)
-                        .child(SharedString::from(summary.label())),
-                ),
-            )
-            // The expanded list already names every item; the headline is the
-            // collapsed state's whole point.
-            .when(!expanded, |row| {
-                row.when_some(headline, |row, (text, color)| {
-                    row.child(
-                        text_style(div().flex_1().min_w_0().truncate(), TextStyle::Label)
-                            .font_weight(FontWeight::NORMAL)
-                            .text_color(color)
-                            .child(text),
-                    )
-                })
-            })
-            .when(expanded, |row| row.child(div().flex_1()))
-            .child(icon(
-                if expanded {
-                    Icon::ChevronDown
-                } else {
-                    Icon::ChevronRight
-                },
-                13.,
-                theme.editor.text_3,
-            ));
-        focusable(toggle, theme, false).into_any_element()
+        let colors = theme.colors;
+        let entity = cx.entity();
+        let mut header = TrayHeader::new(theme, "todo-panel-toggle", Icon::Layers, "Todo")
+            .count(summary.label())
+            .open(expanded)
+            .selectors("todo-panel-toggle", "todo-panel-count")
+            .on_toggle(move |_, cx| entity.update(cx, |this, cx| this.toggle(cx)));
+        if summary.finished() {
+            header = header
+                .icon_color(colors.success)
+                .current("All done", colors.text_3);
+        } else if let Some(ix) = summary.headline() {
+            header = header.current(self.items[ix].text.clone(), colors.text_2);
+        }
+        header
     }
 
-    fn item_row(&self, ix: usize, item: &TodoItem, theme: &Theme) -> AnyElement {
-        let (color, weight) = match item.status {
-            TodoStatus::Completed => (theme.editor.text_3, FontWeight::NORMAL),
-            TodoStatus::InProgress => (theme.editor.text_1, FontWeight::MEDIUM),
-            TodoStatus::Pending => (theme.editor.text_2, FontWeight::NORMAL),
-        };
-        let text = text_style(
-            div().flex_1().min_w_0().line_clamp(ITEM_MAX_LINES),
-            TextStyle::Label,
-        )
-        .font_weight(weight)
-        .text_color(color)
-        .when(item.status == TodoStatus::Completed, |el| el.line_through())
-        .child(SharedString::from(item.text.clone()));
-        div()
-            .id(("todo-item", ix))
-            .debug_selector(move || format!("todo-item-{ix}"))
-            .px(px(ROW_PAD_X))
-            .py(px(4.))
-            .flex()
-            .items_start()
-            .gap(px(8.))
-            .child(
-                div()
-                    .w(px(GLYPH_SLOT))
-                    .h(px(TextStyle::Label.line_height()))
-                    .flex_none()
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(self.status_glyph(ix, item.status, theme)),
-            )
-            .child(text)
-            .into_any_element()
+    fn item_row(&self, ix: usize, item: &TodoItem, theme: &Theme) -> TrayRow {
+        TrayRow::new(theme, ("todo-item", ix), item.text.clone())
+            .selector(format!("todo-item-{ix}"))
+            .state(match item.status {
+                TodoStatus::Completed => TrayRowState::Done,
+                TodoStatus::InProgress => TrayRowState::Current,
+                TodoStatus::Pending => TrayRowState::Pending,
+            })
+            .mark(self.status_glyph(ix, item.status, theme))
     }
 
     /// Check, spinner (or a still ring when the agent is idle), empty ring.
     fn status_glyph(&self, ix: usize, status: TodoStatus, theme: &Theme) -> AnyElement {
+        let colors = theme.colors;
         match status {
-            TodoStatus::Completed => icon(Icon::Check, 12., theme.green_11).into_any_element(),
-            TodoStatus::InProgress if self.live => icon(Icon::RefreshCw, 12., theme.editor.accent)
-                .with_animation(
-                    ("todo-spin", ix),
-                    Animation::new(SPIN_PERIOD).repeat(),
-                    |glyph, t| glyph.with_transformation(Transformation::rotate(radians(t * TAU))),
-                )
-                .into_any_element(),
+            TodoStatus::Completed => {
+                icon(Icon::Check, STATUS_MARK, colors.success).into_any_element()
+            }
+            TodoStatus::InProgress if self.live => {
+                Spinner::new(theme, ("todo-spin", ix)).into_any_element()
+            }
             TodoStatus::InProgress => div()
-                .size(px(10.))
+                .size(px(RING))
                 .rounded_full()
                 .border_1()
-                .border_color(theme.editor.accent)
+                .border_color(colors.accent)
                 .flex()
                 .items_center()
                 .justify_center()
-                .child(div().size(px(4.)).rounded_full().bg(theme.editor.accent))
+                .child(
+                    div()
+                        .size(px(METRICS.space_1))
+                        .rounded_full()
+                        .bg(colors.accent),
+                )
                 .into_any_element(),
             TodoStatus::Pending => div()
-                .size(px(10.))
+                .size(px(RING))
                 .rounded_full()
                 .border_1()
-                .border_color(theme.editor.text_3)
+                .border_color(colors.text_3)
                 .into_any_element(),
         }
     }
 }
 
 impl Render for TodoPanel {
+    /// The header and the rows, without a frame: the dock sets them on the tray above the
+    /// composer.
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if !self.is_visible() {
             return Empty.into_any_element();
@@ -372,11 +285,6 @@ impl Render for TodoPanel {
             .id("todo-panel")
             .debug_selector(|| "todo-panel".into())
             .w_full()
-            .p(px(2.))
-            .rounded(px(8.))
-            .border_1()
-            .border_color(theme.editor.line)
-            .bg(theme.editor.card)
             .flex()
             .flex_col()
             .child(self.header(expanded, &theme, cx))
@@ -384,7 +292,7 @@ impl Render for TodoPanel {
                 panel.child(
                     div()
                         .id("todo-panel-rows")
-                        .max_h(px(LIST_MAX_HEIGHT))
+                        .max_h(px(TRAY_MAX_H))
                         .overflow_y_scroll()
                         .flex()
                         .flex_col()

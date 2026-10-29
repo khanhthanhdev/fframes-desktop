@@ -6,11 +6,11 @@ use gpui::{
     AnyElement, ClickEvent, Context, InteractiveElement, IntoElement, ParentElement, SharedString,
     Styled, div, px,
 };
-use studio_theme::{TextStyle, Theme, text_style};
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::paint::Colors;
 use super::{Changes, ChangesEvent};
-use crate::kit::{Button, ButtonSize, ButtonVariant};
+use crate::kit::{Button, Emphasis};
 
 impl Changes {
     /// "Reject N" for some files; "Discard all" when every file is toggled off, because the
@@ -26,20 +26,16 @@ impl Changes {
             return div()
                 .debug_selector(|| "changes-reject".into())
                 .child(
-                    Button::plain(
-                        theme,
-                        "changes-reject-button",
-                        ButtonVariant::Destructive,
-                        ButtonSize::Sm,
-                    )
-                    .label("Discard all…")
-                    .disabled(busy)
-                    .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
-                        if !this.busy {
-                            this.confirm_discard = true;
-                            cx.notify();
-                        }
-                    })),
+                    Button::new(theme, "changes-reject-button")
+                        .emphasis(Emphasis::Danger)
+                        .label("Discard all…")
+                        .disabled(busy)
+                        .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
+                            if !this.busy {
+                                this.confirm_discard = true;
+                                cx.notify();
+                            }
+                        })),
                 )
                 .into_any_element();
         }
@@ -48,23 +44,19 @@ impl Changes {
         div()
             .debug_selector(|| "changes-reject".into())
             .child(
-                Button::plain(
-                    theme,
-                    "changes-reject-button",
-                    ButtonVariant::Destructive,
-                    ButtonSize::Sm,
-                )
-                .label(if paths.is_empty() {
-                    SharedString::from("Reject")
-                } else {
-                    SharedString::from(format!("Reject {}", paths.len()))
-                })
-                .disabled(paths.is_empty() || busy)
-                .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
-                    if !this.busy && !paths.is_empty() {
-                        cx.emit(ChangesEvent::Reject(paths.clone()));
-                    }
-                })),
+                Button::new(theme, "changes-reject-button")
+                    .emphasis(Emphasis::Danger)
+                    .label(if paths.is_empty() {
+                        SharedString::from("Reject")
+                    } else {
+                        SharedString::from(format!("Reject {}", paths.len()))
+                    })
+                    .disabled(paths.is_empty() || busy)
+                    .on_click(cx.listener(move |this, _: &ClickEvent, _, cx| {
+                        if !this.busy && !paths.is_empty() {
+                            cx.emit(ChangesEvent::Reject(paths.clone()));
+                        }
+                    })),
             )
             .into_any_element()
     }
@@ -84,13 +76,13 @@ impl Changes {
                 .id("changes-confirm")
                 .w_full()
                 .flex_none()
-                .px(px(10.))
-                .py(px(6.))
+                .px(px(METRICS.space_3))
+                .py(px(METRICS.space_2))
                 .flex()
                 .flex_row()
                 .flex_wrap()
                 .items_center()
-                .gap(px(8.))
+                .gap(px(METRICS.space_2))
                 .bg(colors.del_wash)
                 .border_b_1()
                 .border_color(colors.line)
@@ -103,12 +95,7 @@ impl Changes {
                 )
                 .child(
                     div().debug_selector(|| "changes-discard-confirm".into()).child(
-                        Button::plain(
-                            theme,
-                            "changes-discard-confirm-button",
-                            ButtonVariant::Destructive,
-                            ButtonSize::Sm,
-                        )
+                        Button::new(theme, "changes-discard-confirm-button").emphasis(Emphasis::Danger)
                         .label("Discard candidate")
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.confirm_discard = false;
@@ -119,12 +106,7 @@ impl Changes {
                 )
                 .child(
                     div().debug_selector(|| "changes-discard-cancel".into()).child(
-                        Button::plain(
-                            theme,
-                            "changes-discard-cancel-button",
-                            ButtonVariant::Gray,
-                            ButtonSize::Sm,
-                        )
+                        Button::new(theme, "changes-discard-cancel-button").emphasis(Emphasis::Neutral)
                         .label("Keep reviewing")
                         .on_click(cx.listener(|this, _: &ClickEvent, _, cx| {
                             this.confirm_discard = false;
@@ -147,8 +129,8 @@ impl Changes {
                 .debug_selector(|| "changes-more".into())
                 .w_full()
                 .flex_none()
-                .h(px(28.))
-                .px(px(12.))
+                .h(px(METRICS.size.control_h))
+                .px(px(METRICS.space_3))
                 .flex()
                 .items_center()
                 .border_t_1()

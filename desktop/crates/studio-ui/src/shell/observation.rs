@@ -296,6 +296,10 @@ impl StudioShell {
         value["panel"] = self.panel.read(cx).telemetry(cx);
         value["export"] = export_telemetry(self.export_status.as_ref());
         value["export"]["panel_open"] = self.export_panel.open.into();
+        value["create_template"] = self
+            .create_choice
+            .map(|template| format!("{template:?}"))
+            .into();
         value["export"]["support"] = self.export_panel.support.name().into();
         value["export"]["settings"] =
             serde_json::to_value(self.export_settings()).unwrap_or_default();
@@ -401,6 +405,10 @@ fn export_telemetry(status: Option<&ExportProgress>) -> serde_json::Value {
         Some(ExportProgress::Audio) => ("audio", None),
         Some(ExportProgress::Warning(warning)) => ("warning", Some(warning.clone())),
         Some(ExportProgress::Verifying) => ("verifying", None),
+        Some(ExportProgress::Posters { done, total }) => {
+            ("posters", Some(format!("{done}/{total}")))
+        }
+        Some(ExportProgress::WritingDeck) => ("writing_deck", None),
         Some(ExportProgress::Complete { destination, .. }) => (
             "complete",
             destination

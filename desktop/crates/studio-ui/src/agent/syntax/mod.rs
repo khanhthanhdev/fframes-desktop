@@ -127,16 +127,17 @@ pub fn highlight_language(language: Language, code: &str) -> Vec<HighlightSpan> 
 /// The text colour for a token class under `theme`.
 pub fn token_color(class: TokenClass, theme: &Theme) -> Rgba {
     use TokenClass::*;
+    let syntax = &theme.syntax;
     match class {
-        Comment => theme.gray_10,
-        Keyword | Operator | Tag => theme.red_11,
-        String | StringSpecial | Raw | Escape => theme.green_11,
-        Number | Boolean | Constant | Attribute | Embedded => theme.amber_11,
-        Type | TypeBuiltin | Constructor | Label | Link | Reference => theme.blue_11,
-        Function | FunctionBuiltin | Macro | Heading | Strong => theme.blue_10,
-        Property | Variable | VariableBuiltin | Parameter | Emphasis => theme.gray_12,
-        Punctuation => theme.gray_11,
-        Invalid => theme.red_10,
+        Comment => syntax.comment,
+        Keyword | Operator | Tag => syntax.keyword,
+        String | StringSpecial | Raw | Escape => syntax.string,
+        Number | Boolean | Constant | Attribute | Embedded => syntax.number,
+        Type | TypeBuiltin | Constructor | Label | Link | Reference => syntax.type_name,
+        Function | FunctionBuiltin | Macro | Heading | Strong => syntax.function,
+        Property | Variable | VariableBuiltin | Parameter | Emphasis => syntax.variable,
+        Punctuation => syntax.punctuation,
+        Invalid => syntax.invalid,
     }
 }
 

@@ -24,9 +24,8 @@ gh workflow run "Desktop self-hosted validation" -R khanhthanhdev/fframes-deskto
 | tests and clippy on macOS (`desktop-macos`) | hosted `macos-15` (Desktop CI) | pull requests that touch desktop paths, and **Run workflow** |
 | dependency sources and advisories (`cargo deny`) | hosted Ubuntu (Desktop CI) | pull requests that touch desktop paths, and **Run workflow** |
 
-There is no self-hosted macOS runner. macOS is covered only by the hosted Desktop CI job and the
-macOS build in [Desktop Release](../../.github/workflows/desktop-release.yml); it is not checked by
-hand.
+There is no self-hosted macOS runner. macOS is covered only by the hosted Desktop CI job; it is not
+checked by hand, and [Desktop Release](../../.github/workflows/desktop-release.yml) builds Windows only.
 
 The repository is public, so the self-hosted workflow runs only on `push` and **Run workflow**.
 Never add a `pull_request` trigger to it: anyone could then run code on these machines, as root.

@@ -5,6 +5,7 @@
 use studio_engine::timing::{ResolvedClip, TrimEdge};
 
 use super::model::ClipSegment;
+use super::stops::StopClip;
 
 /// How close, in pixels, a dragged edge must come to a target to snap to it.
 pub const DRAG_SNAP_PX: f64 = 8.;
@@ -36,6 +37,17 @@ impl SnapTargets {
             .filter(|segment| segment.clip.is_some_and(|other| other < clip))
         {
             targets.extend([segment.start as f64 / fps, segment.end as f64 / fps]);
+        }
+        Self(targets)
+    }
+
+    /// The targets of a dragged slide stop: the playhead, and every clip's first frame
+    /// and the frame of its `"end"` stop. A stop moves nothing else, so all stay put.
+    pub fn for_stop(clips: &[StopClip], playhead: f64, fps: f64) -> Self {
+        let mut targets = vec![playhead];
+        for clip in clips {
+            targets.push(clip.start as f64 / fps);
+            targets.extend(clip.end_frame().map(|end| end as f64 / fps));
         }
         Self(targets)
     }
@@ -166,6 +178,30 @@ mod tests {
         ];
         let SnapTargets(targets) = SnapTargets::for_trim(1, &segments, [(0.5, 2.5)], 1.25, 30.);
         assert_eq!(targets, [0., 1.25, 0.5, 2.5, 0., 1.]);
+    }
+
+    #[test]
+    fn a_stop_targets_the_playhead_and_every_clips_start_and_end_stop() {
+        let clips = [
+            StopClip {
+                key: "a".into(),
+                occurrence: 0,
+                start: 0,
+                end: 30,
+                end_before_next: 25,
+                trim_start: 0,
+            },
+            StopClip {
+                key: "b".into(),
+                occurrence: 0,
+                start: 25,
+                end: 60,
+                end_before_next: 60,
+                trim_start: 0,
+            },
+        ];
+        let SnapTargets(targets) = SnapTargets::for_stop(&clips, 1.25, 10.);
+        assert_eq!(targets, [1.25, 0., 2.4, 2.5, 5.9]);
     }
 
     #[test]

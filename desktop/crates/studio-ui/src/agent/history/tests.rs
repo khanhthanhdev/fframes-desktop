@@ -104,7 +104,7 @@ fn times_and_outcomes_have_labels() {
     assert_eq!(outcome_chip(OutcomeKind::Failed), ("Failed", Tone::Danger));
     assert_eq!(
         outcome_chip(OutcomeKind::AwaitingReview),
-        ("In review", Tone::Info)
+        ("In review", Tone::Warning)
     );
 }
 

@@ -1,6 +1,6 @@
 //! Scoped editing through the native workflow against the scripted ACP peer and the
 //! deterministic fake worker: the frozen scope, the before-evidence paragraph of the first
-//! prompt and refusal of a stale queued scope. Same harness as `agent_workflow.rs`. The
+//! prompt and refusal of a stale queued scope. The
 //! peer proves workflow behaviour only, never a provider.
 #![allow(dead_code, unused_imports)]
 include!("../../crates/studio-engine/tests/support/workflow_world.rs");

@@ -52,6 +52,8 @@ pub enum Icon {
     Undo,
     Redo,
     Scissors,
+    /// Slides (the Slides tab).
+    Presentation,
     /// Windows caption glyphs, from Cap.
     CaptionMinimize,
     CaptionMaximize,
@@ -60,7 +62,7 @@ pub enum Icon {
 }
 
 impl Icon {
-    pub const ALL: [Icon; 49] = [
+    pub const ALL: [Icon; 50] = [
         Icon::Play,
         Icon::Pause,
         Icon::SkipBack,
@@ -106,6 +108,7 @@ impl Icon {
         Icon::Undo,
         Icon::Redo,
         Icon::Scissors,
+        Icon::Presentation,
         Icon::CaptionMinimize,
         Icon::CaptionMaximize,
         Icon::CaptionRestore,
@@ -160,6 +163,7 @@ impl Icon {
             Icon::Undo => "icons/undo-2.svg",
             Icon::Redo => "icons/redo-2.svg",
             Icon::Scissors => "icons/scissors.svg",
+            Icon::Presentation => "icons/presentation.svg",
             Icon::CaptionMinimize => "icons/caption-minimize-windows.svg",
             Icon::CaptionMaximize => "icons/caption-maximize-windows.svg",
             Icon::CaptionRestore => "icons/caption-restore-windows.svg",

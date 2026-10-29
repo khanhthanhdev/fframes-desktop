@@ -3,6 +3,7 @@ resolver = "2"
 members = [
     "fframes-studio-protocol",
     "fframes-studio-runtime",
+    "fframes-studio-kit",
     "e2e",
     "svgr-macro",
     "webvtt-parser",
@@ -55,7 +56,6 @@ members = [
     "examples/made-of-motion",
     "examples/shader-mode",
     "examples/fframes-studio-intro",
-    "examples/vinuni-future-rises",
     "examples/lottie-launch",
     "examples/svg-in-3d",
     "examples/projectile-motion",
@@ -130,7 +130,8 @@ fframes_three_d = { path = "fframes-three-d", version = "1.3.0" }
 fframes-studio-protocol = { path = "fframes-studio-protocol", version = "0.2.0" }
 fframes-studio-runtime = { path = "fframes-studio-runtime", version = "0.2.0" }
 
-# fframes-components (crates.io) builds against the workspace fframes, so its
-# `Svgr` trees are the same type the examples render.
+# Crates from crates.io that depend on fframes (fframes-kit, fframes-components) build
+# against the workspace fframes, so their `Svgr` trees are the same type the examples and
+# fframes-studio-kit render.
 [patch.crates-io]
 fframes = { path = "fframes" }

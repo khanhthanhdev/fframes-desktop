@@ -1,0 +1,140 @@
+//! {{title}}: a slide deck that is also a video, made with fframes-kit's `slides` module.
+//!
+//! Each slide is a scene: its parts come in one after another, then it holds. Bullets come
+//! in one at a time; `reveal_times()` says when each is in, the places a presenter stops at.
+//! The slides are laid out on a 1920x1080 canvas and scaled to the output size.
+//! Check your work with the CLI in `main.rs` (`cargo run --release -- --help`), e.g.
+//! `strip agenda -n 8` shows the bullets of the agenda coming in.
+use fframes::{AudioMap, Color, Duration, FFramesContext, Frame, Scenes, Svgr, Video, include_media_dir};
+use fframes_kit::slides::{Deck, Slide, SlideLayout};
+use fframes_kit::theme::Theme;
+
+// Every file of `media/` is embedded into the binary. Fonts are used by family name; the
+// kit's theme draws in DM Sans. A `SlideLayout::Code` slide needs JetBrains Mono in `media/`.
+include_media_dir!(pub struct {{Struct}}Media, "{{media_path}}");
+
+pub const WIDTH: usize = {{width}};
+pub const HEIGHT: usize = {{height}};
+
+/// The slides in play order. A slide's key is its scene name: `frame agenda@end` finds it.
+fn slides(title: &str) -> Vec<Slide<'_>> {
+    vec![
+        Slide::new(
+            "intro",
+            SlideLayout::Title {
+                title,
+                subtitle: Some("Slides that are also a video"),
+            },
+        ),
+        Slide::new(
+            "agenda",
+            SlideLayout::bullets(
+                "What a slide does",
+                vec![
+                    "Every slide is a scene of the video",
+                    "Bullets come in one at a time",
+                    "A presenter stops after each bullet",
+                ],
+            ),
+        ),
+        Slide::new(
+            "present",
+            SlideLayout::Section {
+                title: "Present it, or export an HTML deck",
+            },
+        ),
+        Slide::new(
+            "outputs",
+            SlideLayout::TwoColumns {
+                title: "One source, two outputs",
+                left: "Video\nRender an MP4 with the fframes command line",
+                right: "Deck\nPresent in Studio or share an HTML deck",
+            },
+        ),
+        Slide::new(
+            "edit",
+            SlideLayout::bullets(
+                "Make it yours",
+                vec![
+                    "Change the text of a slide in src/lib.rs",
+                    "Add a slide with its own key",
+                    "Pick another transition for the deck",
+                ],
+            ),
+        ),
+        Slide {
+            // Speaker notes are not drawn; a presenter reads them with `notes()`.
+            notes: Some("Take questions."),
+            ..Slide::new(
+                "thanks",
+                SlideLayout::Quote {
+                    text: "Thank you",
+                    author: Some("Your name"),
+                },
+            )
+        },
+    ]
+}
+
+pub struct {{Struct}}Video<'a> {
+    pub media: &'a {{Struct}}Media,
+    /// The slides with a fade between them (`.transition(..)` picks another, `.no_transition()` cuts).
+    pub deck: Deck<'a>,
+}
+
+impl<'a> {{Struct}}Video<'a> {
+    pub fn new(media: &'a {{Struct}}Media, title: &'a str) -> Self {
+        Self {
+            media,
+            deck: Deck::new(Theme::default(), slides(title)),
+        }
+    }
+}
+
+impl std::fmt::Debug for {{Struct}}Video<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("{{Struct}}Video").field("deck", &self.deck).finish()
+    }
+}
+
+impl Video for {{Struct}}Video<'_> {
+    const FPS: usize = {{fps}};
+    const WIDTH: usize = WIDTH;
+    const HEIGHT: usize = HEIGHT;
+    const BACKGROUND_COLOR: Color = Color::BLACK;
+
+    fn duration(&self) -> Duration<'_> {
+        // The sum of the slides, minus the transitions they overlap by.
+        Duration::Auto
+    }
+
+    fn audio(&self) -> AudioMap<'_> {
+        AudioMap::none()
+    }
+
+    fn define_scenes(&self) -> Scenes<'_> {
+        self.deck.scenes()
+    }
+
+    fn render_frame<'a>(&'a self, frame: Frame, ctx: &FFramesContext<'a, '_>) -> Svgr<'a> {
+        fframes::svgr!(
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width={Self::WIDTH} height={Self::HEIGHT}>
+                {ctx.render_scenes(&frame)}
+            </svg>
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_slide_has_its_own_key() {
+        let deck = Deck::new(Theme::default(), slides("{{title}}"));
+        let mut keys: Vec<&str> = deck.slides().map(|slide| slide.key).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), deck.slides().len());
+    }
+}

@@ -75,7 +75,7 @@ use gpui::{
 use smallvec::SmallVec;
 use unicode_segmentation::UnicodeSegmentation;
 
-use studio_theme::Theme;
+use studio_theme::{METRICS, TextStyle, Theme};
 
 mod element;
 mod ime;
@@ -324,6 +324,8 @@ struct LayoutKey {
     line_height: Pixels,
     weight: FontWeight,
     marked: Option<Range<usize>>,
+    /// The text colour is shaped into the runs, so a theme switch must reshape.
+    color: Hsla,
 }
 
 impl InputLayout {

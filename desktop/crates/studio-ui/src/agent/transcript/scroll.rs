@@ -8,6 +8,8 @@ use gpui::ListState;
 
 /// Rows measured and painted beyond the viewport, above and below.
 pub const OVERDRAW_PX: f32 = 320.;
+/// How far above the end the reader is before the jump-to-latest pill shows.
+pub const JUMP_DISTANCE_PX: f32 = 320.;
 /// How far above the end the reader may be for new content to pin the list again.
 pub const STICK_THRESHOLD_PX: f32 = 70.;
 

@@ -1,277 +1,58 @@
-//! Surfaces: the card, the popover, and the two
-//! label-plus-control row families the Solid app keeps deliberately distinct
-//! (`Setting.tsx`'s bordered card list and `editor/ui.tsx`'s stacked fields).
+//! Surfaces: the card, the hairline and the popover.
 
-use gpui::{
-    AnyElement, Div, FontWeight, Hsla, IntoElement, ParentElement, RenderOnce, SharedString,
-    Styled, Window, div, prelude::FluentBuilder, px,
-};
+use gpui::{Div, Styled, div, px};
 
 use studio_theme::{METRICS, Shadow, Theme, shadow_for};
 
-use super::text::label;
-
-/// `<SectionCard>` / `<SectionRows>` -- `rounded-xl border border-gray-3
-/// bg-gray-2`.
+/// A card: `card` behind a `line` hairline at the card radius.
 pub struct Card;
 
 impl Card {
-    /// The editor card: card fill, a 1 px line border, the card radius and the
-    /// card shadow.
-    pub fn editor(theme: &Theme) -> Div {
+    /// A panel on the window: the card fill and the card shadow.
+    pub fn raised(theme: &Theme) -> Div {
         div()
-            .rounded(px(METRICS.radius_card))
+            .rounded(px(METRICS.radius.card))
             .border_1()
-            .border_color(theme.editor.line)
-            .bg(theme.editor.card)
+            .border_color(theme.colors.line)
+            .bg(theme.colors.card)
             .shadow(shadow_for(theme.appearance, Shadow::Card).into_vec())
     }
 
-    /// A surface nested inside an editor card: no shadow.
-    pub fn editor_nested(theme: &Theme) -> Div {
+    /// A surface nested inside a card: `card_2`, no shadow.
+    pub fn nested(theme: &Theme) -> Div {
         div()
-            .rounded(px(METRICS.radius_card))
+            .rounded(px(METRICS.radius.card))
             .border_1()
-            .border_color(theme.editor.line)
-            .bg(theme.editor.card_2)
-    }
-
-    pub fn settings(theme: &Theme, padded: bool) -> Div {
-        div()
-            .rounded(px(12.))
-            .overflow_hidden()
-            .bg(theme.settings_card_bg())
-            .when(padded, |this| this.px(px(16.)).py(px(16.)))
-    }
-
-    pub fn settings_rows(theme: &Theme, children: Vec<AnyElement>) -> Div {
-        let border = theme.settings_border();
-        let last = children.len().saturating_sub(1);
-        Card::settings(theme, false).flex().flex_col().children(
-            children.into_iter().enumerate().map(|(index, child)| {
-                div().child(child).when(index != last, |this| {
-                    this.child(div().mx(px(12.)).h(px(1.)).bg(border))
-                })
-            }),
-        )
+            .border_color(theme.colors.line)
+            .bg(theme.colors.card_2)
     }
 }
 
-/// A 1 px horizontal rule in the editor's line colour.
+/// A 1 px horizontal rule in the `line` colour.
 pub fn divider(theme: &Theme) -> Div {
-    div().h(px(1.)).w_full().flex_none().bg(theme.editor.line)
-}
-
-/// A titled editor group: a `Label` title in `text_2` above a column of
-/// children.
-pub fn titled_group(theme: &Theme, title: impl Into<SharedString>) -> Div {
     div()
-        .flex()
-        .flex_col()
-        .gap(px(METRICS.space_2))
-        .child(label(theme, title).text_color(theme.editor.text_2))
+        .h(px(METRICS.size.divider))
+        .w_full()
+        .flex_none()
+        .bg(theme.colors.line)
 }
 
-/// An anchored floating panel: `KPopover`'s content, not a modal.
-///
-/// Positioning stays with the caller -- every popover in this app is placed
-/// against a known edge of its own window (`absolute bottom-12 right-2` for the
-/// teleprompter's), not flipped against a viewport.
+/// An anchored floating panel, not a modal: `card` behind a `line` hairline with the
+/// popover shadow. Positioning stays with the caller.
 pub struct Popover;
 
 impl Popover {
-    /// `PopperContent` on the plain palette: `rounded-xl border border-gray-3
-    /// bg-gray-1 shadow-s`.
-    pub fn plain(theme: &Theme) -> Div {
+    // A styled `Div` the caller positions and fills, like `Card::raised`.
+    #[allow(clippy::new_ret_no_self)]
+    pub fn new(theme: &Theme) -> Div {
         div()
             .absolute()
             .flex()
             .flex_col()
-            .rounded(px(12.))
+            .rounded(px(METRICS.radius.popover))
             .border_1()
-            .border_color(theme.gray(3))
-            .bg(theme.gray(1))
-            .shadow_lg()
-    }
-}
-
-/// `<SettingItem>` / `.cap-setting-row { min-height: 46px; padding: 12px }` over
-/// `flex flex-row gap-4 justify-between items-center`.
-#[derive(IntoElement)]
-pub struct SettingRow {
-    label: SharedString,
-    description: Option<SharedString>,
-    control: AnyElement,
-    muted: Hsla,
-}
-
-impl SettingRow {
-    pub fn settings(
-        theme: &Theme,
-        label: impl Into<SharedString>,
-        description: Option<&'static str>,
-        control: AnyElement,
-    ) -> Self {
-        Self {
-            label: label.into(),
-            description: description.map(SharedString::from),
-            control,
-            muted: theme.settings_muted(),
-        }
-    }
-
-    pub fn description(mut self, description: impl Into<SharedString>) -> Self {
-        self.description = Some(description.into());
-        self
-    }
-}
-
-impl RenderOnce for SettingRow {
-    fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
-        let SettingRow {
-            label,
-            description,
-            control,
-            muted,
-        } = self;
-
-        div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .gap(px(16.))
-            .min_h(px(46.))
-            .p(px(12.))
-            .child(
-                div()
-                    .flex()
-                    .flex_col()
-                    .flex_1()
-                    .min_w_0()
-                    .gap(px(2.))
-                    .child(div().text_size(px(13.)).child(label))
-                    .children(description.map(|description| {
-                        div()
-                            .text_size(px(12.))
-                            .line_height(px(16.))
-                            .text_color(muted)
-                            .child(description)
-                    })),
-            )
-            .child(div().flex().items_center().flex_shrink_0().child(control))
-    }
-}
-
-/// `<Section>`: a title (with an optional `Pro` pill), an optional description
-/// and an optional right-aligned slot, above the section's children.
-#[derive(IntoElement)]
-pub struct Section {
-    title: SharedString,
-    description: Option<SharedString>,
-    right: Option<AnyElement>,
-    children: Vec<AnyElement>,
-    pro: bool,
-    muted: Hsla,
-    accent: Hsla,
-}
-
-impl Section {
-    pub fn settings(
-        theme: &Theme,
-        title: impl Into<SharedString>,
-        description: Option<&'static str>,
-        right: Option<AnyElement>,
-        children: Vec<AnyElement>,
-    ) -> Self {
-        Self {
-            title: title.into(),
-            description: description.map(SharedString::from),
-            right,
-            children,
-            pro: false,
-            muted: theme.settings_muted(),
-            accent: Hsla::from(theme.blue_9),
-        }
-    }
-
-    /// The `Pro` badge: `bg-blue-9 text-white uppercase`.
-    pub fn pro(mut self) -> Self {
-        self.pro = true;
-        self
-    }
-}
-
-impl RenderOnce for Section {
-    fn render(self, _window: &mut Window, _cx: &mut gpui::App) -> impl IntoElement {
-        let Section {
-            title,
-            description,
-            right,
-            children,
-            pro,
-            muted,
-            accent,
-        } = self;
-
-        div()
-            .flex()
-            .flex_col()
-            // `space-y-2.5`
-            .gap(px(10.))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .justify_between()
-                    .items_end()
-                    .gap(px(12.))
-                    .px(px(4.))
-                    .child(
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap(px(2.))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .flex()
-                                    .flex_row()
-                                    .items_center()
-                                    .gap(px(8.))
-                                    .child(
-                                        div()
-                                            .text_size(px(13.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child(title),
-                                    )
-                                    .when(pro, |this| {
-                                        // `text-[10px] font-medium uppercase
-                                        //  tracking-wide px-1.5 py-0.5
-                                        //  rounded-md bg-blue-9 text-white`
-                                        this.child(
-                                            div()
-                                                .px(px(6.))
-                                                .py(px(2.))
-                                                .rounded(px(6.))
-                                                .bg(accent)
-                                                .text_size(px(10.))
-                                                .font_weight(FontWeight::MEDIUM)
-                                                .text_color(gpui::white())
-                                                .child("PRO"),
-                                        )
-                                    }),
-                            )
-                            .children(description.map(|description| {
-                                div()
-                                    .text_size(px(12.))
-                                    .line_height(px(18.))
-                                    .text_color(muted)
-                                    .child(description)
-                            })),
-                    )
-                    .children(right),
-            )
-            .children(children)
+            .border_color(theme.colors.line)
+            .bg(theme.colors.card)
+            .shadow(shadow_for(theme.appearance, Shadow::Pop).into_vec())
     }
 }

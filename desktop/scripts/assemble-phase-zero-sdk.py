@@ -17,7 +17,14 @@ import urllib.request
 import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
-CRATES = ["fframes", "fframes-media", "svgr-macro", "media-dir-macro", "webvtt-parser", "fframes-studio-protocol", "fframes-studio-runtime", "fframes-skia-renderer"]
+# fframes-three-d backs fframes' `3d` feature, which fframes-kit's `3d` feature turns on.
+CRATES = ["fframes", "fframes-media", "svgr-macro", "media-dir-macro", "webvtt-parser", "fframes-three-d", "fframes-studio-protocol", "fframes-studio-runtime", "fframes-studio-kit", "fframes-skia-renderer"]
+# fframes-kit features the qualification worker enables, so the vendor folder holds every
+# optional dependency a project may turn on. `skia` is left out: it only marks code for the
+# Skia backend and adds no dependency. A kit release with other features fails assembly.
+KIT_FEATURES = ["3d", "biology", "chemistry", "cs", "gif", "latex", "lottie", "math", "ml", "physics", "studio"]
+# The qualification frame of the kit, copied into the worker as an example.
+KIT_FRAME = "desktop/scripts/sdk-kit-frame.rs"
 # This bundle's release. Projects pin it; those of earlier releases are not built by it.
 SDK_RELEASE = "v5"
 OVERLAY = "desktop/fixtures/annotated-video-overlay"
@@ -207,8 +214,18 @@ def write_framework(framework, workspace_toml):
     configure_bundled_ffmpeg(framework)
     configure_bundled_skia(framework)
     workspace = tomllib.loads(workspace_toml)["workspace"]
-    dependencies = {k: v for k, v in workspace["dependencies"].items() if not isinstance(v, dict) or "path" not in v or v["path"] in CRATES}
+    dependencies = {}
+    for name, dependency in workspace["dependencies"].items():
+        if isinstance(dependency, dict) and "path" in dependency and dependency["path"] not in CRATES:
+            # Development paths outside the framework do not ship. Keep their explicit
+            # registry version, rather than dropping a dependency inherited by a crate.
+            if "version" not in dependency:
+                raise ValueError(f"Cannot bundle local workspace dependency {name} without a registry version")
+            dependency = {key: value for key, value in dependency.items() if key != "path"}
+        dependencies[name] = dependency
     content = '[workspace]\nresolver = "2"\nmembers = ' + toml_value(CRATES) + "\ndependencies = " + toml_value(dependencies) + "\nlints = " + toml_value(workspace["lints"]) + "\n"
+    # fframes-kit (crates.io) builds against this fframes, as in the source workspace.
+    content += '\n[patch.crates-io]\nfframes = { path = "fframes" }\n'
     (framework / "Cargo.toml").write_text(content)
 
 
@@ -216,11 +233,31 @@ def crate_version(manifest):
     return tomllib.loads(manifest.read_text())["package"]["version"]
 
 
-def worker_manifest(tree):
+def kit_version():
+    """The exact fframes-kit release fframes-studio-kit is built with, which the SDK vendors."""
+    requirement = tomllib.loads((ROOT / "fframes-studio-kit/Cargo.toml").read_text())["dependencies"]["fframes-kit"]["version"]
+    if not re.fullmatch(r"=\d+\.\d+\.\d+", requirement):
+        raise ValueError(f"fframes-studio-kit must pin fframes-kit exactly, found {requirement!r}")
+    return requirement.removeprefix("=")
+
+
+def check_kit_features(vendor_dir, kit):
+    """Fail when the vendored kit has features the worker does not enable (their optional
+    dependencies would be missing from the SDK) or lost one it does."""
+    features = set(tomllib.loads((vendor_dir / f"fframes-kit-{kit}/Cargo.toml").read_text()).get("features", {}))
+    if features - {"default", "skia"} != set(KIT_FEATURES):
+        raise ValueError(f"fframes-kit {kit} has features {sorted(features)}; update KIT_FEATURES")
+
+
+def worker_manifest(tree, kit):
     return ('[package]\nname="sdk-qualification-worker"\nversion="0.1.0"\nedition="2024"\n[workspace]\n[dependencies]\n'
             f'fframes={{path="../framework/{tree}/fframes",features=["cli","compile-time-svgtree"]}}\n'
             f'fframes-studio-runtime={{path="../framework/{tree}/fframes-studio-runtime"}}\n'
-            f'fframes-studio-protocol={{path="../framework/{tree}/fframes-studio-protocol"}}\nsha2="0.10"\n')
+            f'fframes-studio-protocol={{path="../framework/{tree}/fframes-studio-protocol"}}\nsha2="0.10"\n'
+            f'fframes-kit={{version="={kit}",features={toml_value(KIT_FEATURES)}}}\n'
+            f'fframes-studio-kit={{path="../framework/{tree}/fframes-studio-kit"}}\n'
+            # What build materialization adds to a project that uses the kit.
+            f'[patch.crates-io]\nfframes={{path="../framework/{tree}/fframes"}}\n')
 
 
 def check_backend(hello, renderer):
@@ -357,12 +394,16 @@ def assemble(output, ffmpeg_root, vendor=None):
         skia = stage_skia(target, skia_dir)
         worker = staging / "worker"
         shutil.copytree(ROOT / OVERLAY, worker, ignore=shutil.ignore_patterns("target"))
-        (worker / "Cargo.toml").write_text(worker_manifest("framework"))
+        kit = kit_version()
+        (worker / "Cargo.toml").write_text(worker_manifest("framework", kit))
+        (worker / "examples").mkdir()
+        shutil.copy(ROOT / KIT_FRAME, worker / "examples/kit_frame.rs")
         vendor_dir = staging / "framework/vendor"
         if vendor:
             shutil.copytree(vendor, vendor_dir)
         else:
             run(["cargo", "vendor", "--versioned-dirs", "--manifest-path", str(worker / "Cargo.toml"), str(vendor_dir)], stdout=subprocess.DEVNULL)
+        check_kit_features(vendor_dir, kit)
         # Prove the archive inputs can compile without ambient Cargo downloads.
         (worker / ".cargo").mkdir(exist_ok=True)
         (worker / ".cargo/config.toml").write_text('[source.crates-io]\nreplace-with="vendored-sources"\n[source.vendored-sources]\ndirectory=' + json.dumps(str(vendor_dir)) + '\n')
@@ -385,11 +426,18 @@ def assemble(output, ffmpeg_root, vendor=None):
             png = directory / "frames/0.png"
             if not png.is_file() or png.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
                 raise ValueError("Candidate SDK did not produce a valid frame PNG")
+            # A kit component through fframes-studio-kit, from the vendored kit.
+            run([cargo, "run", "--offline", "--example", "kit_frame", "--", "frame", "0", "-o", "kit-frames"], cwd=directory, env=environment)
+            png = directory / "kit-frames/0.png"
+            if not png.is_file() or png.read_bytes()[:8] != b"\x89PNG\r\n\x1a\n":
+                raise ValueError("Candidate SDK did not render the fframes-kit frame")
             binary = Path(environment["CARGO_TARGET_DIR"]) / "debug" / ("sdk-qualification-worker.exe" if os.name == "nt" else "sdk-qualification-worker")
             verify_preview_worker(binary, directory, environment, "skia-cpu")
             verify_preview_worker(binary, directory, environment)
         artifacts = [archive(staging / name, output, f"{name}-{target}", name) for name in ["toolchain", "ffmpeg", "framework"]]
-    manifest.update(sdk_id=f"studio-sdk-{target}-{SDK_RELEASE}", runtime_version=crate_version(ROOT / "fframes-studio-runtime/Cargo.toml"), target_triple=target, arch=target.split("-")[0], artifacts=artifacts,
+    if crate_version(ROOT / "fframes-studio-kit/Cargo.toml") != crate_version(ROOT / "fframes-studio-runtime/Cargo.toml"):
+        raise ValueError("fframes-studio-kit is released with fframes-studio-runtime; give both the same version")
+    manifest.update(sdk_id=f"studio-sdk-{target}-{SDK_RELEASE}", runtime_version=crate_version(ROOT / "fframes-studio-runtime/Cargo.toml"), kit_version=kit, target_triple=target, arch=target.split("-")[0], artifacts=artifacts,
                     preview_contract_versions=[1], preview_capabilities=["preview_identity_v1", "scaled_frame_v1", "inspect_v1", "prepared_audio_v1"])
     manifest["rust_toolchain"]["targets"] = [target]
     manifest["ffmpeg"]["link_mode"] = link_mode
@@ -403,7 +451,7 @@ def assemble(output, ffmpeg_root, vendor=None):
     (output / "compatibility.json").write_text(json.dumps(manifest, indent=2) + "\n")
     shutil.copytree(ROOT / "desktop/packaging/sdk/notices", output / "notices")
     shutil.copy(ROOT / "desktop/fixtures/annotated-video-overlay/media/OFL.txt", output / "notices/DM-Sans-OFL.txt")
-    (output / "provenance.json").write_text(json.dumps({"rustc": version, "target": target, "ffmpeg_observed_version": observed_ffmpeg, "offline_worker_builds": 2, "frame_png_verified": True, "skia_archive": skia, "preview_contract_verified": True, "qualification": "PENDING: sterile clean-account native run required; local build evidence is not that gate"}, indent=2) + "\n")
+    (output / "provenance.json").write_text(json.dumps({"rustc": version, "target": target, "ffmpeg_observed_version": observed_ffmpeg, "offline_worker_builds": 2, "frame_png_verified": True, "kit_frame_png_verified": True, "skia_archive": skia, "preview_contract_verified": True, "qualification": "PENDING: sterile clean-account native run required; local build evidence is not that gate"}, indent=2) + "\n")
     return output
 
 
