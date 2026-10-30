@@ -35,6 +35,3 @@ __pycache__/
 *.pyc
 .agents/
 skills-lock.json
-
-# Generated from examples/the-why/landing by build:landing
-/landing/the-why/

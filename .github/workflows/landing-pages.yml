@@ -6,10 +6,8 @@ on:
     paths:
       - "landing/**"
       - "landing-worker/**"
-      - "examples/the-why/landing/**"
       - "skills/**"
       - "scripts/build-skills-index.mjs"
-      - "scripts/build-movie-landing.mjs"
       - "scripts/build-studio-delivery.mjs"
       - ".github/workflows/landing-pages.yml"
   workflow_dispatch:

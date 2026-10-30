@@ -10,18 +10,12 @@ use studio_sdk::CompatibilityManifest;
 
 type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
-const EXAMPLES: [(&str, &str, &str, &str); 5] = [
+const EXAMPLES: [(&str, &str, &str, &str); 4] = [
     (
         "hello-world",
         "HelloWorldMedia",
         "HelloWorldVideo<'_>",
         "example_video::HelloWorldVideo { media: &media, slug: \"Studio!\" }",
-    ),
-    (
-        "motion-graphics",
-        "MotionGraphicsMedia",
-        "MotionGraphicsVideo<'_>",
-        "example_video::MotionGraphicsVideo { media: &media }",
     ),
     (
         "signal-lab",
@@ -62,7 +56,7 @@ fn main() -> Result<()> {
                     "prepare_examples --out <folder outside checkout> [--example <name>] [--sdk <installed-sdk>] [--check]"
                 );
                 println!(
-                    "Creates Hello World, Motion Graphics, Signal Lab, fframes-studio-intro and projectile-motion without changing the originals."
+                    "Creates Hello World, Signal Lab, fframes-studio-intro and projectile-motion without changing the originals."
                 );
                 println!(
                     "Projectile Motion requires --example projectile-motion and an SDK with kit 0.3.0."
@@ -83,7 +77,7 @@ fn main() -> Result<()> {
         .collect();
     if examples.is_empty() {
         return Err(
-            "Unknown example; use hello-world, motion-graphics, signal-lab, fframes-studio-intro or projectile-motion"
+            "Unknown example; use hello-world, signal-lab, fframes-studio-intro or projectile-motion"
                 .into(),
         );
     }

@@ -95,6 +95,8 @@ struct VideoStreamInfo {
     codec_ctx: *mut AVCodecContext,
     width: i32,
     height: i32,
+    display_width: i32,
+    display_height: i32,
     pixel_format: AVPixelFormat,
     color_space: AVColorSpace,
     color_range: AVColorRange,
@@ -125,6 +127,7 @@ impl Drop for SwsScaler {
 }
 
 const PIX_FMT_SIZE: usize = size_of::<i32>();
+const MAX_PIXEL_STRETCH: i64 = 4;
 
 /// Bytes `sws_scale` may write past the end of an RGBA image whose rows are `width * 4` bytes
 /// apart. The x86 YUV to RGB converter of `FFmpeg` (`yuv2rgb_fn` in
@@ -244,15 +247,18 @@ impl SwsScaler {
     }
 
     fn new(video_stream_info: VideoStreamInfo) -> Self {
-        let frame_data_len =
-            video_stream_info.width as usize * video_stream_info.height as usize * PIX_FMT_SIZE;
+        let (width, height) = (
+            video_stream_info.display_width,
+            video_stream_info.display_height,
+        );
+        let frame_data_len = width as usize * height as usize * PIX_FMT_SIZE;
 
-        let linesize: [i32; 7] = Self::calculate_linesize(video_stream_info.width);
+        let linesize: [i32; 7] = Self::calculate_linesize(width);
         SwsScaler {
             linesize,
             frame_data_len,
-            height: video_stream_info.height,
-            width: video_stream_info.width,
+            height,
+            width,
             sws_ctx: std::ptr::null_mut(),
             options: None,
             source_format: None,
@@ -267,8 +273,12 @@ impl SwsScaler {
         source_color: (AVColorSpace, AVColorRange),
         options: Option<FrameConvertOptions>,
     ) -> Result<()> {
-        let new_width = options.map_or(self.video_stream_info.width, |o| o.resize.width as i32);
-        let new_height = options.map_or(self.video_stream_info.height, |o| o.resize.height as i32);
+        let new_width = options.map_or(self.video_stream_info.display_width, |o| {
+            o.resize.width as i32
+        });
+        let new_height = options.map_or(self.video_stream_info.display_height, |o| {
+            o.resize.height as i32
+        });
 
         let ctx = Self::init_sws_context(
             &self.video_stream_info,
@@ -497,17 +507,11 @@ impl FFmpegFrameBuf {
     }
 
     pub fn get_stream_width(&self) -> u32 {
-        unsafe { self.sws_scaler.get().as_ref() }
-            .expect("Critical mememroy error: SWS scale is not allocated")
-            .video_stream_info
-            .width as u32
+        self.video_stream_info.display_width as u32
     }
 
     pub fn get_stream_height(&self) -> u32 {
-        unsafe { self.sws_scaler.get().as_ref() }
-            .expect("Critical mememroy error: SWS scale is not allocated")
-            .video_stream_info
-            .height as u32
+        self.video_stream_info.display_height as u32
     }
 
     pub fn get_width(&self) -> u32 {
@@ -831,12 +835,36 @@ impl FFmpegDecoder {
                 )));
             }
 
+            let (width, height) = ((*video_dec_ctx).width, (*video_dec_ctx).height);
+            let (display_width, display_height) = match [
+                (*stream).sample_aspect_ratio,
+                (*video_dec_ctx).sample_aspect_ratio,
+            ]
+            .into_iter()
+            .find(|ratio| {
+                let (num, den) = (i64::from(ratio.num), i64::from(ratio.den));
+                num > 0
+                    && den > 0
+                    && num <= MAX_PIXEL_STRETCH * den
+                    && den <= MAX_PIXEL_STRETCH * num
+            }) {
+                Some(AVRational { num, den }) => {
+                    let ratio = f64::from(num) / f64::from(den);
+                    (
+                        (f64::from(width) * ratio.max(1.0)).round() as i32,
+                        (f64::from(height) / ratio.min(1.0)).round() as i32,
+                    )
+                }
+                None => (width, height),
+            };
             Ok(VideoStreamInfo {
                 hw_pix_fmt,
                 stream_index: video_stream_idx,
                 codec_ctx: video_dec_ctx,
-                width: (*video_dec_ctx).width,
-                height: (*video_dec_ctx).height,
+                width,
+                height,
+                display_width,
+                display_height,
                 pixel_format: (*video_dec_ctx).pix_fmt,
                 color_space: (*video_dec_ctx).colorspace,
                 color_range: (*video_dec_ctx).color_range,
@@ -1257,6 +1285,8 @@ mod color_tests {
             codec_ctx: ptr::null_mut(),
             width: WIDTH,
             height: HEIGHT,
+            display_width: WIDTH,
+            display_height: HEIGHT,
             pixel_format: AVPixelFormat::AV_PIX_FMT_YUV444P,
             color_space: space,
             color_range: range,
