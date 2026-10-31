@@ -15,7 +15,7 @@ const LIB_SINGLE_SCENE: &str = include_str!("../templates/lib_single_scene.rs.tm
 const LIB_MULTI_SCENE: &str = include_str!("../templates/lib_multi_scene.rs.tmpl");
 const LIB_SLIDES: &str = include_str!("../templates/lib_slides.rs.tmpl");
 /// The fframes-kit release the `slides` template depends on, from crates.io.
-const KIT_VERSION: &str = "0.3";
+const KIT_VERSION: &str = "0.2";
 const MAIN_CPU: &str = include_str!("../templates/main_cpu.rs.tmpl");
 const MAIN_SKIA: &str = include_str!("../templates/main_skia.rs.tmpl");
 const CARGO_TOML: &str = include_str!("../templates/Cargo.toml.tmpl");
@@ -660,7 +660,7 @@ mod tests {
         let cargo = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
         let lib = std::fs::read_to_string(dir.join("src/lib.rs")).unwrap();
         std::fs::remove_dir_all(&dir).unwrap();
-        assert!(cargo.contains("fframes-kit = \"0.3\"\n"), "{cargo}");
+        assert!(cargo.contains("fframes-kit = \"0.2\"\n"), "{cargo}");
         // The kit's crates.io fframes is the checkout's.
         assert!(
             cargo.contains("[patch.crates-io]\nfframes = { path = "),

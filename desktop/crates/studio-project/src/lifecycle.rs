@@ -250,7 +250,7 @@ impl ProjectTemplate {
 
 /// The fframes-kit release of the Slide deck template (`fframes-studio-kit`'s, which the
 /// SDK vendors).
-pub const SLIDES_KIT_VERSION: &str = "0.3.0";
+pub const SLIDES_KIT_VERSION: &str = "0.2.1";
 
 /// Scaffold exact portable versions. Managed SDK paths are bound only in build materialization.
 pub fn create(

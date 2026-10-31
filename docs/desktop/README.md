@@ -86,11 +86,11 @@ external footage or extra dependencies are not yet adapted by this command.
 
 ### Use fframes-kit in a project
 
-The managed SDK vendors one [fframes-kit](https://github.com/khanhthanhdev/fframes-kit) release (its `kit_version` in `compatibility.json`) with every feature except `skia`, and `fframes-studio-kit`, Studio's props store for kit components. The slide-stop suggestions release requires kit 0.3.0 and a rebuilt SDK; older installed SDKs do not gain it automatically. A Studio project adds them to its `Cargo.toml` with exact versions, like the framework crates:
+The managed SDK vendors one [fframes-kit](https://github.com/khanhthanhdev/fframes-kit) release (its `kit_version` in `compatibility.json`) with every feature except `skia`, and `fframes-studio-kit`, Studio's props store for kit components. The slide-stop suggestions release requires kit 0.2.1 and a rebuilt SDK; older installed SDKs do not gain it automatically. A Studio project adds them to its `Cargo.toml` with exact versions, like the framework crates:
 
 ```toml
 [dependencies]
-fframes-kit = { version = "=0.3.0", features = ["studio"] }  # plus "latex", "3d", "physics", ... as needed
+fframes-kit = { version = "=0.2.1", features = ["studio"] }  # plus "latex", "3d", "physics", ... as needed
 fframes-studio-kit = "=0.2.0"                                 # the fframes-studio-runtime version
 ```
 

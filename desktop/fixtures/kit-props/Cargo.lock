@@ -598,9 +598,9 @@ dependencies = [
 
 [[package]]
 name = "fframes-kit"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4a6d9ce4e0b2bad9bd8569d45f8fa433c8833359c5cf4838e89170a84269242b"
+checksum = "d8746602a8875f8c329261e6d72dfa491267f74683c5339b9a7b20038dd2e57a"
 dependencies = [
  "fframes",
  "fframes-kit-macros",

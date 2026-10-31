@@ -14,7 +14,7 @@ fn kit_patch_belongs_to_the_selected_packages_workspace_not_independent_tools() 
         let root = temp.path().join("project");
         let sdk = temp.path().join("sdk");
         let mut compatibility = CompatibilityManifest::default_linux_x64();
-        compatibility.kit_version = Some("0.3.0".into());
+        compatibility.kit_version = Some("0.2.1".into());
         for name in [
             "fframes",
             "fframes-studio-runtime",
@@ -41,7 +41,7 @@ fn kit_patch_belongs_to_the_selected_packages_workspace_not_independent_tools() 
         cargo["dependencies"]
             .as_table_mut()
             .unwrap()
-            .insert("fframes-kit".into(), toml::Value::String("=0.3.0".into()));
+            .insert("fframes-kit".into(), toml::Value::String("=0.2.1".into()));
         let entry = std::path::Path::new(entry_dir).join("Cargo.toml");
         if owner.is_some_and(|owner| std::path::Path::new(owner) == entry) {
             cargo

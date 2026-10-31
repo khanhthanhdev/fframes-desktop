@@ -713,7 +713,7 @@ mod tests {
     fn the_slide_deck_template_needs_the_sdk_kit() {
         use studio_project::ProjectTemplate::{Blank, SlideDeck};
         assert!(template_supported(Blank, None).is_ok());
-        assert!(template_supported(SlideDeck, Some("0.3.0")).is_ok());
+        assert!(template_supported(SlideDeck, Some("0.2.1")).is_ok());
         assert!(template_supported(SlideDeck, Some("0.2.0")).is_err());
         assert!(
             template_supported(SlideDeck, None)

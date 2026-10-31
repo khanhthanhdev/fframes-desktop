@@ -41,7 +41,7 @@ notes 8 KiB; unknown fields and other versions are refused. Stops must land on
 frames the video plays, or validation fails. Notes are copied into exported
 decks that are shared, so write nothing private in them.
 Component kit: Studio's SDK includes fframes-kit and fframes-studio-kit. To use
-them add `fframes-kit = { version = "=0.3.0", features = ["studio"] }` (plus
+them add `fframes-kit = { version = "=0.2.1", features = ["studio"] }` (plus
 features such as "latex", "3d" or "physics" as needed) and
 `fframes-studio-kit = "=0.2.0"` to Cargo.toml. Use exactly the kit version the
 SDK names; never a git or path dependency and never a [patch] section (Studio

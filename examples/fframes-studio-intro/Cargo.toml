@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 fframes = { workspace = true, features = ["compile-time-svgtree", "cli"] }
 serde_json = "1.0"
-fframes-kit = "=0.2.0"
+fframes-kit = "=0.2.1"
 fframes-components = { version = "0.1.2", default-features = false, features = ["prompt-zoom", "strike-through", "tracking-in", "typing-code-block", "word-flip"] }
 
 # Metal on macOS, Vulkan everywhere else

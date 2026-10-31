@@ -59,7 +59,7 @@ fn main() -> Result<()> {
                     "Creates Hello World, Signal Lab, fframes-studio-intro and projectile-motion without changing the originals."
                 );
                 println!(
-                    "Projectile Motion requires --example projectile-motion and an SDK with kit 0.3.0."
+                    "Projectile Motion requires --example projectile-motion and an SDK with kit 0.2.1."
                 );
                 println!("--check builds and exercises each project's real Studio preview worker.");
                 return Ok(());
@@ -90,9 +90,9 @@ fn main() -> Result<()> {
     if examples
         .iter()
         .any(|(name, ..)| *name == "projectile-motion")
-        && compatibility.kit_version.as_deref() != Some("0.3.0")
+        && compatibility.kit_version.as_deref() != Some("0.2.1")
     {
-        return Err("Projectile Motion needs an SDK containing fframes-kit 0.3.0; select that SDK with --sdk".into());
+        return Err("Projectile Motion needs an SDK containing fframes-kit 0.2.1; select that SDK with --sdk".into());
     }
     let repository = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
     fs::create_dir_all(&out)?;
@@ -219,7 +219,7 @@ fn prepare(
             fs::OpenOptions::new()
                 .append(true)
                 .open(root.join("Cargo.toml"))?,
-            "fframes-kit = {{ version = \"=0.3.0\", features = [\"studio\"] }}\nfframes-studio-kit = \"={}\"\n",
+            "fframes-kit = {{ version = \"=0.2.1\", features = [\"studio\"] }}\nfframes-studio-kit = \"={}\"\n",
             compatibility.runtime_version
         )?;
     }
