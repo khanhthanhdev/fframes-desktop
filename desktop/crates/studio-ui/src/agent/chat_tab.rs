@@ -4,6 +4,8 @@
 use super::ui::metrics::{status, transcript as inset};
 use super::ui::{ActionCard, JumpPill, StatusLine, WorkingTrailer, elapsed_label, panel_home};
 use super::*;
+use crate::kit::{focusable, with_tooltip};
+use studio_engine::agent::model::{ToolNote, ToolNoteKind};
 use studio_harness::AdapterStatus;
 use studio_harness::driver::ConfigOption;
 
@@ -43,6 +45,21 @@ fn adapter_status(
             ),
             _ => (format!("{provider} · {}", g.headline), UiTone::Danger),
         },
+    }
+}
+
+/// Where a task's tool note points in Settings → Agent: a server of the user's that was left
+/// out (MCP servers, at that server), servers this agent cannot take (MCP servers), or every
+/// project tool turned off (Tools). Other notes have no link.
+fn note_link(note: &ToolNote) -> Option<(SettingsLink, &'static str)> {
+    match &note.kind {
+        ToolNoteKind::ServerLeftOut { name } => Some((
+            SettingsLink::new(AgentTab::Mcp).target(name.as_str()),
+            "MCP servers",
+        )),
+        ToolNoteKind::NoMcp { .. } => Some((SettingsLink::new(AgentTab::Mcp), "MCP servers")),
+        ToolNoteKind::ToolsOff => Some((SettingsLink::new(AgentTab::Tools), "Tools")),
+        ToolNoteKind::Other => None,
     }
 }
 
@@ -314,6 +331,7 @@ impl ConversationPanel {
             .px(px(status::PAD_X))
             .pt(px(status::PAD_Y))
             .child(self.status_line(&snapshot, controls, &g, cx));
+        top = top.children(self.tool_note(&snapshot, cx));
         top = top.children(self.task_well(&snapshot, controls, cx));
         let setup = self.setup_notice(&snapshot, controls, &g, cx);
         let needs_setup = setup.is_some();
@@ -444,8 +462,30 @@ impl ConversationPanel {
                 g,
             ),
         };
-        let mut line = StatusLine::new(&self.theme, tone, summary)
-            .trailing(policy_badge(self.permission_policy));
+        let mut line = StatusLine::new(&self.theme, tone, summary);
+        // "No agent set up" needs no link of its own: the setup card under it opens CLI
+        // agents. The policy opens Settings → Agent → Permissions.
+        let theme = self.theme;
+        let policy = focusable(div().id("agent-policy"), &theme, false)
+            .role(gpui::Role::Link)
+            .aria_label(format!(
+                "Permissions: {}. Open the settings",
+                self.permission_policy.label()
+            ))
+            .flex_none()
+            .rounded_full()
+            .cursor_pointer()
+            .on_click(Self::click(cx, |_, _, cx| {
+                cx.emit(PanelEvent::OpenSettings(SettingsLink::new(
+                    AgentTab::Permissions,
+                )))
+            }))
+            .child(policy_badge(self.permission_policy));
+        line = line.trailing(with_tooltip(
+            policy,
+            &theme,
+            Some("Permission settings".into()),
+        ));
         // The composer's own Stop covers a live turn; this one every other state a task can
         // be in (waiting, reviewing, queued briefs).
         if !snapshot.composer.turn_live
@@ -472,6 +512,43 @@ impl ConversationPanel {
             ));
         }
         line
+    }
+
+    /// The task's note about its tools when it points at a setting: a server of the user's
+    /// left out, or the project tools turned off, with a link to that Settings tab.
+    fn tool_note(&self, snapshot: &WorkflowSnapshot, cx: &mut Context<Self>) -> Option<gpui::Div> {
+        snapshot.task.as_ref()?;
+        let notes = snapshot.mcp.note.as_ref()?;
+        let (link, tab) = notes.0.iter().find_map(note_link)?;
+        let note = notes.to_string();
+        let theme = self.theme;
+        let button = self
+            .action_button(
+                "agent-tool-note-settings",
+                tab,
+                true,
+                Emphasis::Ghost,
+                cx,
+                move |_, _, cx| cx.emit(PanelEvent::OpenSettings(link.clone())),
+            )
+            .size(crate::kit::ButtonSize::Sm);
+        Some(
+            div()
+                .flex()
+                .items_start()
+                .gap(px(METRICS.space_2))
+                .child(crate::kit::icon(
+                    Icon::Info,
+                    METRICS.size.icon_sm,
+                    theme.colors.text_2,
+                ))
+                .child(
+                    text_style(div().flex_1().min_w_0(), TextStyle::Small)
+                        .text_color(theme.colors.text_2)
+                        .child(selectable(note)),
+                )
+                .child(div().flex_none().child(button)),
+        )
     }
 
     /// The task's well under the status line: its details while open, a blocked Apply, a
@@ -562,7 +639,14 @@ impl ConversationPanel {
                     Emphasis::Primary
                 },
                 cx,
-                |_, _, cx| cx.emit(PanelEvent::OpenSetup),
+                move |this, _, cx| {
+                    // A configured agent that is not ready opens on its own card.
+                    let mut link = SettingsLink::new(AgentTab::Agents);
+                    if configured && let Some(id) = this.registry.selected_profile_id.clone() {
+                        link = link.target(id);
+                    }
+                    cx.emit(PanelEvent::OpenSettings(link))
+                },
             ));
         if configured {
             card = card.action(self.action_button(
@@ -779,6 +863,33 @@ impl ConversationPanel {
 mod tests {
     use super::*;
 
+    #[test]
+    fn tool_notes_link_to_the_setting_they_name() {
+        // The link comes from what the note is about, never from its wording.
+        let left_out = ToolNote::new(
+            ToolNoteKind::ServerLeftOut {
+                name: "github".into(),
+            },
+            "GitHub is not in this session.",
+        );
+        let (link, _) = note_link(&left_out).unwrap();
+        assert_eq!(link, SettingsLink::new(AgentTab::Mcp).target("github"));
+        let (link, _) = note_link(&ToolNote::new(
+            ToolNoteKind::NoMcp { count: 2 },
+            "No servers.",
+        ))
+        .unwrap();
+        assert_eq!(link, SettingsLink::new(AgentTab::Mcp));
+        let (link, _) = note_link(&ToolNote::new(ToolNoteKind::ToolsOff, "Tools off.")).unwrap();
+        assert_eq!(link, SettingsLink::new(AgentTab::Tools));
+        assert!(
+            note_link(&ToolNote::other(
+                "The MCP server `github` was left out: this project tool is turned off and it takes no MCP servers."
+            ))
+            .is_none(),
+            "text that reads like a linked note links nowhere"
+        );
+    }
     #[test]
     fn the_trailer_shows_only_while_the_agent_works() {
         assert_eq!(working_label(TaskPhase::Starting), Some("Sending"));

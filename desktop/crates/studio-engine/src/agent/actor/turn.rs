@@ -260,15 +260,45 @@ impl Actor {
         self.shared.live.set(Some(identity.clone()));
         let policy = self.shared.controller.lock().review_policy();
         self.policy = policy;
+        let agent_tools = self.agent_tools.clone();
+        let (user_mcp, mut user_notes) =
+            agent_tools.launch_servers(|name| std::env::var(name).ok());
+        // Which servers the session takes is known only once it starts (an ACP agent says
+        // at `initialize` whether it takes HTTP servers): see `on_session_ready`.
+        if !user_mcp.is_empty() && adapter.mcp != McpStdioSupport::Baseline {
+            user_notes.push(ToolNote::new(
+                ToolNoteKind::NoMcp {
+                    count: user_mcp.len(),
+                },
+                format!(
+                    "This agent takes no MCP servers, so your {} server(s) are not used.",
+                    user_mcp.len()
+                ),
+            ));
+        }
         self.secrets = launch
             .secrets
             .iter()
+            .map(String::as_str)
+            .chain(
+                user_mcp
+                    .iter()
+                    .flat_map(studio_harness::UserMcpLaunch::secrets),
+            )
             .filter(|s| !s.is_empty())
-            .cloned()
+            .map(str::to_owned)
             .collect();
         self.secrets.sort_by_key(|s| std::cmp::Reverse(s.len()));
         self.secrets.dedup();
-        let offer = self.offer_tools(&build, &adapter, tools_settings.as_ref(), &context);
+        let offer = self.offer_tools(
+            &build,
+            &adapter,
+            tools_settings.as_ref(),
+            &context,
+            &agent_tools.enabled_tools(),
+        );
+        self.tool_notes.0.extend(user_notes);
+        self.session_notes.clear();
         self.shared
             .evidence_images
             .lock()
@@ -321,6 +351,9 @@ impl Actor {
             phase: TaskPhase::Starting,
             policy,
             permission_policy: self.permission_policy,
+            approvals: self.shared.approvals.lock().clone(),
+            agent_tools,
+            user_mcp,
             adapter,
             launch,
             gate: Gate::new(),
@@ -408,11 +441,22 @@ impl Actor {
         adapter: &AdapterSettings,
         tools: Option<&ToolSettings>,
         context: &AgentTaskContext,
+        enabled: &[&'static str],
     ) -> ToolOffer {
         let mut offer = ToolOffer::default();
-        self.mcp_note = None;
+        self.tool_notes = ToolNotes::default();
+        let mut note = |kind, text: String| self.tool_notes.0.push(ToolNote::new(kind, text));
+        if enabled.is_empty() {
+            note(
+                ToolNoteKind::ToolsOff,
+                "Every project tool is turned off in Settings → Agent → Tools; the agent has no project tools in this task."
+                    .into(),
+            );
+            return offer;
+        }
         let Some(tools) = tools else {
-            self.mcp_note = Some(
+            note(
+                ToolNoteKind::Other,
                 "No project tool helpers are configured; the agent has no project tools in this task."
                     .into(),
             );
@@ -423,26 +467,29 @@ impl Actor {
         let cli_binary = tools.studio_tools.clone().filter(|p| p.is_file());
         let want_mcp = policy_allows && mcp_binary.is_some();
         if !want_mcp && cli_binary.is_none() {
-            self.mcp_note = Some(if policy_allows {
-                "Neither the MCP helper nor the `studio-tools` command was found; the agent has no project tools in this task.".to_owned()
-            } else {
-                "Project tools over MCP are disabled by host policy and no `studio-tools` command was found; the agent has no project tools in this task.".to_owned()
-            });
+            note(
+                ToolNoteKind::Other,
+                if policy_allows {
+                    "Neither the MCP helper nor the `studio-tools` command was found; the agent has no project tools in this task.".to_owned()
+                } else {
+                    "Project tools over MCP are disabled by host policy and no `studio-tools` command was found; the agent has no project tools in this task.".to_owned()
+                },
+            );
             return offer;
         }
         if let Err(error) = self.ensure_tools(build, tools.runtime_dir.clone()) {
-            self.mcp_note = Some(format!(
+            self.tool_notes = ToolNotes(vec![ToolNote::other(format!(
                 "Project tools are unavailable ({error}); the agent has no project tools in this task."
-            ));
+            ))]);
             return offer;
         }
         let runtime = self.tools.as_ref().expect("tools started");
-        let grant = match runtime.grant(context) {
+        let grant = match runtime.grant(context, enabled) {
             Ok(grant) => grant,
             Err(error) => {
-                self.mcp_note = Some(format!(
+                self.tool_notes = ToolNotes(vec![ToolNote::other(format!(
                     "Project tools are unavailable for this task ({error})."
-                ));
+                ))]);
                 return offer;
             }
         };
@@ -474,10 +521,9 @@ impl Actor {
             notes.push("The agent has no project tools in this task.".into());
         } else {
             offer.capability = Some(grant.capability_file);
+            offer.tools = enabled.to_vec();
         }
-        if !notes.is_empty() {
-            self.mcp_note = Some(notes.join(" "));
-        }
+        self.tool_notes = ToolNotes(notes.into_iter().map(ToolNote::other).collect());
         offer
     }
 
@@ -519,6 +565,7 @@ impl Actor {
             ownership: active.adapter.ownership.clone(),
             mode: DriverMode::Full,
             mcp_servers: active.mcp.iter().cloned().collect(),
+            user_mcp_servers: active.user_mcp.clone(),
             mcp_stdio: active.adapter.mcp,
         };
         let driver = studio_harness::start_driver(active.adapter.wire, config, &scope)

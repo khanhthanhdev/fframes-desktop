@@ -28,24 +28,17 @@ impl AcpDriver {
             ownership,
             mode,
             mcp_servers,
+            user_mcp_servers,
             mcp_stdio,
         } = config;
-        for server in &mcp_servers {
-            server.validate().map_err(|error| {
-                AgentFailure::new(
-                    FailureKind::SpawnFailed,
-                    Phase::Spawn,
-                    format!("invalid MCP server configuration: {error}"),
-                )
-            })?;
-        }
-        let redactor = Arc::new(Redactor::new(
-            launch.secrets.iter().cloned().chain(
-                mcp_servers
-                    .iter()
-                    .flat_map(|s| s.secrets().map(str::to_owned)),
-            ),
-        ));
+        super::check_mcp_servers(&mcp_servers, &user_mcp_servers).map_err(|message| {
+            AgentFailure::new(FailureKind::SpawnFailed, Phase::Spawn, message)
+        })?;
+        let redactor = Arc::new(Redactor::new(super::mcp_secrets(
+            &launch.secrets,
+            &mcp_servers,
+            &user_mcp_servers,
+        )));
         let spawned = spawn_owned(&launch, &launch.args, &cwd, processes, &redactor)?;
         let (shared, line_rx, sink, io) = Shared::start(
             spawned,
@@ -58,17 +51,50 @@ impl AcpDriver {
             },
         );
         let (command_tx, command_rx) = mpsc::channel(COMMAND_QUEUE);
-        let params = DriveParams {
-            cwd,
-            mode,
-            resume: resume_session,
-            auth_method: launch.auth_method.clone(),
-            mcp_servers: match mcp_stdio {
-                McpStdioSupport::Baseline => mcp_servers.iter().map(wire_server).collect(),
+        let user_names = |http: bool| -> Vec<String> {
+            match mcp_stdio {
+                McpStdioSupport::Baseline => user_mcp_servers
+                    .iter()
+                    .filter(|server| matches!(server.transport, McpTransport::Http(_)) == http)
+                    .map(|server| server.name().to_owned())
+                    .collect(),
                 McpStdioSupport::Unsupported => Vec::new(),
-            },
-            mcp_stdio: mcp_stdio == McpStdioSupport::Baseline,
+            }
         };
+        let params =
+            DriveParams {
+                cwd,
+                mode,
+                resume: resume_session,
+                auth_method: launch.auth_method.clone(),
+                // ACP cannot filter a server's tools: `disabled_tools` has no wire form here.
+                mcp_servers: match mcp_stdio {
+                    McpStdioSupport::Baseline => mcp_servers
+                        .iter()
+                        .map(wire_server)
+                        .chain(user_mcp_servers.iter().filter_map(
+                            |server| match &server.transport {
+                                McpTransport::Stdio(stdio) => Some(wire_server(stdio)),
+                                McpTransport::Http(_) => None,
+                            },
+                        ))
+                        .collect(),
+                    McpStdioSupport::Unsupported => Vec::new(),
+                },
+                mcp_http_servers: match mcp_stdio {
+                    McpStdioSupport::Baseline => user_mcp_servers
+                        .iter()
+                        .filter_map(|server| match &server.transport {
+                            McpTransport::Http(http) => Some(wire_http_server(http)),
+                            McpTransport::Stdio(_) => None,
+                        })
+                        .collect(),
+                    McpStdioSupport::Unsupported => Vec::new(),
+                },
+                user_stdio_names: user_names(false),
+                user_http_names: user_names(true),
+                mcp_stdio: mcp_stdio == McpStdioSupport::Baseline,
+            };
         let watchdog = {
             let shared = shared.clone();
             std::thread::Builder::new()

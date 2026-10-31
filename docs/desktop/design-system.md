@@ -157,6 +157,8 @@ The style guard enforces this. `desktop/crates/studio-ui/tests/style_guard.rs` f
 
 Every control is a tab stop (disabled ones are skipped), shows a 2 px `focus` (accent) ring while it has keyboard focus, and activates on Enter and Space. Disabled controls ignore clicks and keys and drop to 50 % opacity.
 
+A modal (`kit::modal`, the settings dialog) and the composer's Tools and approval popovers keep Tab and Shift+Tab to their own stops and wrap at their ends (`kit::focus_within`); closing the settings dialog gives the focus back to what had it. gpui does not scroll to a focused control, so a control Tab reaches is sent `RevealFocused` and answers with where it was painted; the settings page and the Tools list scroll it into view. A deep link to an agent or an MCP server scrolls the settings page to its card the same way (`reveal_probe`), and a linked server's card wears the focus ring for a moment.
+
 ## Telemetry ids
 
 Tests find controls by the bounds the app reports, through the observation telemetry described in [architecture, production probes](architecture.md#13-production-probes). Element ids and labels are chosen by the caller and must not change. A control that is measured passes `.on_bounds(BoundsProbe::new(..).into_bounds_handler())` (`BoundsProbe` is in `desktop/crates/studio-ui/src/probe.rs`), and the callback receives `[left, top, width, height]` on every prepaint. Components never invent ids that a test looks up.
@@ -178,7 +180,7 @@ Studio's window layout and workflows come from Cap's editor, not from Oleafly; o
 - **Focus ring kept.** Every control shows a 2 px accent ring under keyboard focus and activates on Enter and Space; Oleafly's global outline and ring suppression is not copied. The Windows caption buttons are the one exception (above).
 - **Bundled fonts.** Oleafly names Geist but ships no font files, so its typeface depends on what is installed; Studio bundles the full Geist and Geist Mono builds and applies them at the window roots.
 - **No letter spacing.** gpui has no tracking, so `Overline` headings are capitals without Oleafly's wide spacing, at 12 px rather than its 11.
-- **Hairlines.** Borders are 0.5 px as in Oleafly; gpui snaps a border to whole device pixels and never below one, so a hairline draws as one device pixel at the usual 100–200 % scales.
+- **Hairlines.** Borders are 0.5 px as in Oleafly; gpui snaps a border to whole device pixels and never below one, so a hairline draws as one device pixel at the usual 100–200 % scales. A filled box gets no such floor (its edges round to device pixels, and a 0.5 px box rounds to nothing at 100 %), so `Divider` fills a box `max(0.5 px, one device pixel)` thick: 1 px at 100 %, 0.5 px at 200 %.
 - **Translucent control fills** over Studio's opaque surfaces, and a slightly stronger light `text_2` and field outline (`line_strong`), for visible controls and contrast on nested surfaces.
 - **52 px header**, against Oleafly's 48 px toolbar, holding Cap's header layout and the Windows caption buttons; the editor splits and their limits stay Studio's.
 - **Composer**: the input stops growing at 160 px (8 lines) rather than Oleafly's 224 px or 60 % of the panel, attachment thumbnails stay 56 px (Oleafly's are 24) so a video frame stays legible, and Send and Stop are both shown while the agent runs, with the queue and steer actions in the send menu, instead of Stop alone.

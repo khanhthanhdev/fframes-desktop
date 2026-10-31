@@ -3,8 +3,8 @@
 //! and the home dock's open it.
 //!
 //! The pages, after Oleafly's settings: General (the audio output and setup again),
-//! Appearance (theme and motion), Agent (Review, Permissions and the agent panel's Adapter
-//! setup, on a pill tab bar), SDK (the managed SDK), Presets (the project's style presets),
+//! Appearance (theme and motion), Agent (CLI agents, MCP servers, Tools, Permissions and
+//! Review, on a pill tab bar), SDK (the managed SDK), Presets (the project's style presets),
 //! Export (the defaults every export starts from), Keyboard Shortcuts (the keymap's
 //! bindings, read from [`SHORTCUTS`](super::keymap::SHORTCUTS)) and Help & About (the
 //! version, updates and links). The nav column's search field keeps the pages whose name or
@@ -27,10 +27,10 @@ use super::StudioShell;
 use super::keymap::{SHORTCUTS, ShortcutScope};
 use super::sections::box_probe;
 use crate::kit::{
-    Icon, KbdChip, MODAL_RADIUS, PanelSection, PictureCard, PictureCards, RadioCard, RadioCards,
-    SegmentOption, SegmentedControl, SettingRow, SettingsFooterLink, SettingsFrame,
-    SettingsNavItem, TextInput, TextInputState, Toggle, appearance_picture, keystroke_caps,
-    selectable, setting_card, setting_note,
+    Button, ButtonSize, Emphasis, Icon, KbdChip, List, ListRow, MODAL_RADIUS, PanelSection,
+    PictureCard, PictureCards, RadioCard, RadioCards, SegmentOption, SegmentedControl, SettingRow,
+    SettingsFooterLink, SettingsFrame, SettingsNavItem, TextInput, TextInputState, Toggle,
+    appearance_picture, keystroke_caps, selectable, setting_card, setting_note,
 };
 
 /// The check for a newer Studio release.
@@ -135,6 +135,18 @@ impl SettingsPage {
                 "Animations",
             ],
             SettingsPage::Agent => &[
+                "CLI agents",
+                "Claude Code",
+                "Codex",
+                "Sign in",
+                "Install adapter",
+                "MCP servers",
+                "Add server",
+                "Import",
+                "Environment variables",
+                "Tools",
+                "Project tools",
+                "Render frame",
                 "Review",
                 "Apply automatically",
                 "Review before Apply",
@@ -190,23 +202,34 @@ impl SettingsPage {
     }
 }
 
-/// The sub-pages of the Agent page, on its pill tab bar; tab `i` is `agent-tab-{i}`.
+/// The sub-pages of the Agent page, on its pill tab bar; tab `i` is `agent-tab-{i}`. In
+/// Oleafly's order: the agents first, then what they may use, then how their work lands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum AgentTab {
+pub enum AgentTab {
     #[default]
-    Review,
+    Agents,
+    Mcp,
+    Tools,
     Permissions,
-    Adapter,
+    Review,
 }
 
 impl AgentTab {
-    const ALL: [AgentTab; 3] = [AgentTab::Review, AgentTab::Permissions, AgentTab::Adapter];
+    const ALL: [AgentTab; 5] = [
+        AgentTab::Agents,
+        AgentTab::Mcp,
+        AgentTab::Tools,
+        AgentTab::Permissions,
+        AgentTab::Review,
+    ];
 
     fn label(self) -> &'static str {
         match self {
-            AgentTab::Review => "Review",
+            AgentTab::Agents => "CLI agents",
+            AgentTab::Mcp => "MCP servers",
+            AgentTab::Tools => "Tools",
             AgentTab::Permissions => "Permissions",
-            AgentTab::Adapter => "Adapter",
+            AgentTab::Review => "Review",
         }
     }
 }
@@ -314,6 +337,7 @@ pub(super) struct SettingsWriter {
     latest_export: AtomicU64,
     latest_setup: AtomicU64,
     latest_update_check: AtomicU64,
+    latest_agent_tools: AtomicU64,
     write: parking_lot::Mutex<()>,
 }
 
@@ -358,14 +382,55 @@ impl StudioShell {
         self.open_settings(cx);
     }
 
-    /// Opens the settings window on the Agent page.
-    pub(super) fn open_agent_setup(&mut self, cx: &mut Context<Self>) {
+    /// Opens the settings window on the Agent page at `tab`, or turns an open one there: the
+    /// deep link of the agent panel's settings buttons and links. `target` names what to
+    /// show on that tab: an agent's profile id opens its card on CLI agents, a server's name
+    /// highlights its card on MCP servers, and either card is scrolled into view. Other
+    /// targets open the tab only.
+    pub(super) fn open_agent_settings(
+        &mut self,
+        tab: AgentTab,
+        target: Option<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.open_settings_page(SettingsPage::Agent, cx);
+        if !self.settings_open {
+            return;
+        }
+        let dialog = match &self.settings_dialog {
+            Some(dialog) => dialog.clone(),
+            None => {
+                let dialog = super::settings_dialog::SettingsDialog::open(
+                    cx.entity(),
+                    &self.panel,
+                    tab,
+                    window,
+                    cx,
+                );
+                self.settings_dialog = Some(dialog.clone());
+                dialog
+            }
+        };
+        dialog.update(cx, |dialog, cx| dialog.show_agent_tab(tab, cx));
+        let scroll = self.settings_scroll.clone();
+        match (tab, target) {
+            (AgentTab::Agents, Some(id)) => self
+                .panel
+                .update(cx, |panel, cx| panel.expand_agent(id, scroll, cx)),
+            (AgentTab::Mcp, Some(name)) => self
+                .agent_tools
+                .update(cx, |page, cx| page.show_server(&name, cx)),
+            _ => {}
+        }
     }
 
     pub(super) fn close_settings(&mut self, cx: &mut Context<Self>) {
         self.settings_open = false;
-        self.settings_dialog = None;
+        // The next render hands the focus back (it needs the window).
+        if let Some(dialog) = self.settings_dialog.take() {
+            self.settings_return_focus = dialog.read(cx).return_focus.clone();
+        }
         cx.notify();
     }
 
@@ -459,6 +524,70 @@ impl StudioShell {
             }
         })
         .detach();
+    }
+
+    /// Settings → Agent → MCP servers or Tools changed: hands the effective settings (with
+    /// the open project's override) to the project's agent (for its next task) and saves the
+    /// settings for all projects, and the open project's override, in the background.
+    pub(super) fn apply_agent_tools(
+        &mut self,
+        settings: studio_engine::agent_settings::AgentToolSettings,
+        cx: &mut Context<Self>,
+    ) {
+        self.hand_agent_tools(cx);
+        let Some(paths) = self.presentation.paths.clone() else {
+            self.error =
+                Some("Cannot save the agent settings: the app's storage is unavailable".into());
+            return;
+        };
+        let project = self.agent_tools.read(cx).project_override();
+        let writer = self.settings_writer.clone();
+        let generation = writer.latest_agent_tools.fetch_add(1, Ordering::AcqRel) + 1;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    let _write = writer.write.lock();
+                    if writer.latest_agent_tools.load(Ordering::Acquire) != generation {
+                        return Ok(());
+                    }
+                    if let Some((id, overrides)) = &project {
+                        overrides.save(&paths, id)?;
+                    }
+                    let mut saved = AppSettings::load(&paths);
+                    saved.agent = settings;
+                    saved.save(&paths)
+                })
+                .await;
+            if let Err(error) = result {
+                let _ = this.update(cx, |shell, cx| {
+                    shell.error = Some(error);
+                    cx.notify();
+                });
+            }
+        })
+        .detach();
+    }
+
+    /// Hands the current MCP servers and tool choices, with the open project's override, to
+    /// the project's agent.
+    pub(super) fn hand_agent_tools(&self, cx: &Context<Self>) {
+        if let Some(workflow) = &self.agent.workflow {
+            let _ = workflow.set_agent_tools(self.agent_tools.read(cx).effective());
+        }
+    }
+
+    /// Points the MCP and Tools pages at the open project, reading its override when the
+    /// project changed.
+    pub(super) fn follow_agent_tools_project(&self, cx: &mut Context<Self>) {
+        let project = self
+            .presentation
+            .project
+            .as_ref()
+            .map(|project| (project.id.clone(), project.name.clone()));
+        let paths = self.presentation.paths.clone();
+        self.agent_tools
+            .update(cx, |page, _| page.follow_project(project, paths.as_ref()));
     }
 
     /// Asks GitHub for a newer Studio in the background; the answer shows on the
@@ -744,6 +873,7 @@ impl StudioShell {
         .empty("No settings match")
         .footer(footer)
         .nav_header(chrome.nav_header)
+        .scroll(&self.settings_scroll)
         .children([page]);
         if let Some(search) = &chrome.search {
             frame = frame.search(
@@ -790,7 +920,14 @@ impl StudioShell {
     }
 
     /// The settings frame in the gallery's fixture `state` (0 General … 7 Help & About, in
-    /// nav order; 8 the Agent page's Adapter tab; 9 a search for "frame"), drawn with
+    /// nav order; 8 the Agent page's CLI agents tab; 9 a search for "frame"; 10 and 11 its
+    /// MCP servers and Tools tabs with sample servers; 12, 13 and 14 its Permissions tab
+    /// with saved rules, with none, and with no project open; 17 the MCP import panel, 18
+    /// the MCP registry browser, 19 and 20 the MCP servers and Tools tabs in This project;
+    /// 21 and 22 Find more agents loading and failed, 23 and 24 the MCP registry browser
+    /// searching and failed, 25 the MCP servers after a link to one, 26 Permissions while
+    /// an open project's agent attaches, 27 CLI agents after a link to Antigravity, low on the
+    /// page), drawn with
     /// `theme` the way the settings window draws it. For the UI gallery's captures.
     pub fn render_settings_fixture(
         &mut self,
@@ -804,11 +941,95 @@ impl StudioShell {
             input.set_placeholder(SEARCH_PLACEHOLDER);
             input
         });
-        let mut agent_tab = AgentTab::default();
+        let mut agent_tab = AgentTab::Review;
+        self.approvals_fixture = None;
+        // Only the attaching Permissions state has a project open.
+        self.presentation.project = (state == 26).then(|| super::fixture::sample_project(1));
         match state {
+            26 => {
+                self.settings_page = SettingsPage::Agent;
+                agent_tab = AgentTab::Permissions;
+            }
+            // Without the link's reveal ending: the gallery draws the fixture on every frame.
+            27 => {
+                self.settings_page = SettingsPage::Agent;
+                agent_tab = AgentTab::Agents;
+                let scroll = self.settings_scroll.clone();
+                self.panel.update(cx, |panel, cx| {
+                    panel.setup_fixture(cx);
+                    panel.expand_agent("antigravity".into(), scroll, cx);
+                });
+            }
+            // 21 and 22 Find more agents loading and failed.
+            21 | 22 => {
+                self.settings_page = SettingsPage::Agent;
+                agent_tab = AgentTab::Agents;
+                self.panel.update(cx, |panel, cx| {
+                    panel.registry_state_fixture(state == 22, window, cx)
+                });
+            }
+            12..=14 => {
+                self.settings_page = SettingsPage::Agent;
+                agent_tab = AgentTab::Permissions;
+                let now = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.as_secs());
+                let rule = |kind: &str, title: Option<&str>, ago: u64| {
+                    studio_engine::agent::ApprovalRule {
+                        kind: kind.to_owned(),
+                        title: title.map(str::to_owned),
+                        saved_unix: now - ago,
+                    }
+                };
+                self.approvals_fixture = match state {
+                    12 => Some(vec![
+                        rule("edit", None, 3 * 86_400),
+                        rule("other", Some("mcp__github__list_issues"), 2 * 3600),
+                        rule("read", None, 5 * 60),
+                    ]),
+                    13 => Some(Vec::new()),
+                    _ => None,
+                };
+            }
             8 => {
                 self.settings_page = SettingsPage::Agent;
-                agent_tab = AgentTab::Adapter;
+                agent_tab = AgentTab::Agents;
+                self.panel.update(cx, |panel, cx| panel.setup_fixture(cx));
+            }
+            // 15 the CLI agents tab with Find more agents loaded, 16 with Register a custom
+            // agent open.
+            15 | 16 => {
+                self.settings_page = SettingsPage::Agent;
+                agent_tab = AgentTab::Agents;
+                self.panel.update(cx, |panel, cx| {
+                    if state == 15 {
+                        panel.registry_fixture(window, cx);
+                    } else {
+                        panel.custom_agent_fixture(cx);
+                    }
+                });
+            }
+            // 10 and 11 the MCP servers and Tools tabs with sample servers; 17 the import
+            // panel, 18 the registry browser, 19 and 20 the two tabs in This project.
+            10 | 11 | 17..=20 | 23..=25 => {
+                use super::agent_tools::Fixture;
+                self.settings_page = SettingsPage::Agent;
+                agent_tab = if matches!(state, 11 | 20) {
+                    AgentTab::Tools
+                } else {
+                    AgentTab::Mcp
+                };
+                let fixture = match state {
+                    17 => Fixture::Import,
+                    18 => Fixture::Registry,
+                    19 | 20 => Fixture::Project,
+                    23 => Fixture::RegistryLoading,
+                    24 => Fixture::RegistryFailed,
+                    25 => Fixture::Linked,
+                    _ => Fixture::Servers,
+                };
+                self.agent_tools
+                    .update(cx, |page, cx| page.fixture(fixture, window, cx));
             }
             9 => {
                 search.update(cx, |input, cx| input.set_text("frame", cx));
@@ -868,22 +1089,96 @@ impl StudioShell {
         }
         let content = match tab {
             AgentTab::Review => self.render_review_policy(cx),
-            AgentTab::Permissions => PanelSection::new(&theme, "Permissions")
-                .description(
-                    "How the agent's permission requests are answered. A running task keeps \
-                     the choice it started with.",
+            AgentTab::Permissions => PanelSection::column()
+                .child(
+                    PanelSection::new(&theme, "Permissions")
+                        .description(
+                            "How the agent's permission requests are answered. A running task \
+                             keeps the choice it started with.",
+                        )
+                        .children([self.permission_choice(
+                            self.permission_policy,
+                            |shell, policy, cx| shell.choose_permission_policy(policy, cx),
+                            cx,
+                        )]),
                 )
-                .children([self.permission_choice(
-                    self.permission_policy,
-                    |shell, policy, cx| shell.choose_permission_policy(policy, cx),
-                    cx,
-                )])
+                .child(self.render_saved_approvals(cx))
                 .into_any_element(),
-            AgentTab::Adapter => self.setup_page.clone().into_any_element(),
+            AgentTab::Agents => self.setup_page.clone().into_any_element(),
+            AgentTab::Mcp | AgentTab::Tools => {
+                let view = if tab == AgentTab::Mcp {
+                    super::agent_tools::ToolsView::Mcp
+                } else {
+                    super::agent_tools::ToolsView::Tools
+                };
+                self.follow_agent_tools_project(cx);
+                self.agent_tools.update(cx, |page, _| page.view = view);
+                self.agent_tools.clone().into_any_element()
+            }
         };
         settings_page()
             .child(tabs)
             .child(content)
+            .into_any_element()
+    }
+
+    /// The Permissions tab's "Saved for this project": the open project's "Always in this
+    /// project" rules, each with when it was saved and a Remove button.
+    fn render_saved_approvals(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme;
+        let section = PanelSection::new(&theme, "Saved for this project");
+        let rules = match &self.approvals_fixture {
+            Some(rules) => Some(rules.clone()),
+            None => self.panel.read(cx).approval_rules(),
+        };
+        let Some(rules) = rules else {
+            // A project is open but its agent has not attached yet.
+            let note = if self.presentation.project.is_some() {
+                "Loading this project's saved rules…"
+            } else {
+                "Open a project to see its saved rules."
+            };
+            return section.child(setting_note(&theme, note)).into_any_element();
+        };
+        if rules.is_empty() {
+            return section
+                .child(setting_note(
+                    &theme,
+                    "No saved rules yet. Use \"Always in this project\" on a request.",
+                ))
+                .into_any_element();
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let shell = cx.entity();
+        let rows = rules.into_iter().enumerate().map(|(ix, rule)| {
+            let saved = crate::agent::history::relative_time(now, rule.saved_unix);
+            let panel = self.panel.clone();
+            let shell = shell.clone();
+            let description = rule.description();
+            ListRow::new(&theme, ("approval-rule", ix))
+                .icon(Icon::ShieldQuestion)
+                .title(description.clone())
+                .meta(if saved.is_empty() {
+                    "Saved".to_owned()
+                } else {
+                    format!("Saved {saved}")
+                })
+                .label(description)
+                .trailing(
+                    Button::new(&theme, ("approval-rule-remove", ix))
+                        .label("Remove")
+                        .size(ButtonSize::Sm)
+                        .emphasis(Emphasis::Neutral)
+                        .on_click(move |_, _, cx| {
+                            panel.update(cx, |panel, cx| panel.forget_approval(&rule, cx));
+                            shell.update(cx, |_, cx| cx.notify());
+                        }),
+                )
+        });
+        section
+            .child(setting_card(&theme).child(List::new().children(rows)))
             .into_any_element()
     }
 

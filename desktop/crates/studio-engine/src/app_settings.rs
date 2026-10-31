@@ -9,6 +9,7 @@ use fframes_studio_protocol::export::ExportSettings;
 use serde::{Deserialize, Serialize};
 use studio_proto::{AppTheme, MotionPreference, PermissionPolicy};
 
+use crate::agent_settings::AgentToolSettings;
 use crate::app_paths::AppPaths;
 
 pub const APP_SETTINGS_FILE: &str = "app-settings.json";
@@ -36,6 +37,9 @@ pub struct AppSettings {
     /// Whether the check for a newer Studio at launch is turned off (it is on by default).
     #[serde(deserialize_with = "lenient")]
     pub update_check_disabled: bool,
+    /// The user's own MCP servers and the project tools they turned off.
+    #[serde(deserialize_with = "lenient")]
+    pub agent: AgentToolSettings,
 }
 
 /// A value that no longer reads (for example one this app dropped) is the default, instead

@@ -12,7 +12,7 @@
 //! `child`; `child` may be held while taking `core`.
 
 use super::{
-    McpStdioServer,
+    McpHttpServer, McpStdioServer, McpTransport, UserMcpLaunch,
     events::*,
     redact::{Redactor, StreamRedactor},
     transcript::{Transcript, TranscriptPage},
@@ -29,11 +29,11 @@ use agent_client_protocol::{
         v1::{
             AuthenticateRequest, AvailableCommandInput, BlobResourceContents, CancelNotification,
             ClientCapabilities, ContentBlock, EmbeddedResource, EmbeddedResourceResource,
-            EnvVariable, ImageContent, Implementation, InitializeRequest, InitializeResponse,
-            LoadSessionRequest, McpServer, McpServerStdio, NewSessionRequest, PlanEntryStatus,
-            PromptRequest, PromptResponse, RequestId, RequestPermissionOutcome,
-            RequestPermissionRequest, RequestPermissionResponse, ResourceLink,
-            ResumeSessionRequest, SelectedPermissionOutcome, SessionConfigKind,
+            EnvVariable, HttpHeader, ImageContent, Implementation, InitializeRequest,
+            InitializeResponse, LoadSessionRequest, McpServer, McpServerHttp, McpServerStdio,
+            NewSessionRequest, PlanEntryStatus, PromptRequest, PromptResponse, RequestId,
+            RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+            ResourceLink, ResumeSessionRequest, SelectedPermissionOutcome, SessionConfigKind,
             SessionConfigOption, SessionConfigOptionValue, SessionConfigSelectOptions,
             SessionModeState, SessionNotification, SessionUpdate, SetSessionConfigOptionRequest,
             SetSessionModeRequest, StopReason, TextContent, TextResourceContents, ToolCallStatus,
@@ -156,7 +156,50 @@ pub struct DriverConfig {
     pub mode: DriverMode,
     /// Task-specific stdio MCP servers; env values are added to the redaction set.
     pub mcp_servers: Vec<McpStdioServer>,
+    /// The user's own MCP servers (stdio or streamable HTTP). They launch beside
+    /// [`Self::mcp_servers`] (and only when those may), but their tools are never
+    /// pre-approved: every call asks. Their secrets join the redaction set.
+    pub user_mcp_servers: Vec<UserMcpLaunch>,
     pub mcp_stdio: McpStdioSupport,
+}
+
+/// Checks every server before anything starts: each one's own invariants, and that no
+/// two share a name (a user server must never replace the studio's).
+pub(super) fn check_mcp_servers(
+    studio: &[McpStdioServer],
+    user: &[UserMcpLaunch],
+) -> Result<(), String> {
+    let mut names = std::collections::HashSet::new();
+    let all = studio
+        .iter()
+        .map(|server| (server.name.as_str(), server.validate()))
+        .chain(
+            user.iter()
+                .map(|server| (server.name(), server.transport.validate())),
+        );
+    for (name, valid) in all {
+        valid.map_err(|error| format!("invalid MCP server configuration: {error}"))?;
+        if !names.insert(name) {
+            return Err(format!(
+                "invalid MCP server configuration: two servers are named '{name}'"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Every secret a driver must redact: the launch's own, the studio servers' environment
+/// values and the user servers' environment or header values.
+pub(super) fn mcp_secrets<'a>(
+    launch: &'a [String],
+    studio: &'a [McpStdioServer],
+    user: &'a [UserMcpLaunch],
+) -> impl Iterator<Item = String> + 'a {
+    launch
+        .iter()
+        .cloned()
+        .chain(studio.iter().flat_map(|s| s.secrets().map(str::to_owned)))
+        .chain(user.iter().flat_map(|s| s.secrets().map(str::to_owned)))
 }
 
 /// Where a driver's writer ownership comes from.
@@ -726,6 +769,33 @@ mod tests {
             message,
         )
         .data(serde_json::json!({ "errorKind": "incomplete_tool_call" }))
+    }
+
+    #[test]
+    fn a_user_server_cannot_take_the_name_of_a_studio_server() {
+        let server = |name: &str| {
+            McpStdioServer::new(name, std::env::current_exe().unwrap(), vec![], vec![]).unwrap()
+        };
+        let studio = [server("fframes-studio")];
+        assert!(check_mcp_servers(&studio, &[server("github").into()]).is_ok());
+        let error = check_mcp_servers(&studio, &[server("fframes-studio").into()]).unwrap_err();
+        assert!(
+            error.contains("two servers are named 'fframes-studio'"),
+            "{error}"
+        );
+        let http = |name: &str, url: &str| {
+            UserMcpLaunch::from(McpHttpServer {
+                name: name.into(),
+                url: url.into(),
+                headers: vec![],
+            })
+        };
+        let error = check_mcp_servers(&studio, &[http("fframes-studio", "https://x.test/mcp")])
+            .unwrap_err();
+        assert!(error.contains("two servers"), "{error}");
+        let error = check_mcp_servers(&studio, &[http("docs", "file:///etc/passwd")]).unwrap_err();
+        assert!(error.contains("http"), "{error}");
+        assert!(check_mcp_servers(&studio, &[http("docs", "https://x.test/mcp")]).is_ok());
     }
 
     #[test]

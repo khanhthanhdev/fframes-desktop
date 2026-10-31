@@ -38,7 +38,7 @@
 //! is revoked or expires, or the broker shuts down. A panicking backend becomes an
 //! `internal` error and the worker survives.
 use super::{
-    MAX_QUEUED_CALLS, MAX_REQUEST_BYTES, MAX_TEXT_REPLY_BYTES, TOOL_WORKERS, ToolError,
+    MAX_QUEUED_CALLS, MAX_REQUEST_BYTES, MAX_TEXT_REPLY_BYTES, TOOL_NAMES, TOOL_WORKERS, ToolError,
     ToolErrorCode,
     client::{LineRead, LineReader},
     transport::{self, Accepted, Stream},
@@ -207,6 +207,8 @@ mod imp {
 
     struct Grant {
         binding: ToolBinding,
+        /// The tool names this capability may call.
+        tools: Vec<String>,
         secret: Secret,
         deadline: Instant,
         revoked: AtomicBool,
@@ -445,7 +447,19 @@ mod imp {
         /// Create a capability for `binding`, valid for `ttl` (clamped to
         /// [`MAX_GRANT_TTL`]).
         pub fn grant(&self, binding: ToolBinding, ttl: Duration) -> Result<ToolGrant, BrokerError> {
+            self.grant_tools(binding, ttl, &TOOL_NAMES)
+        }
+
+        /// [`Self::grant`] for only `tools`: a call to any other tool is refused, and the
+        /// capability file lists them so `studio-mcp` offers no others.
+        pub fn grant_tools(
+            &self,
+            binding: ToolBinding,
+            ttl: Duration,
+            tools: &[&str],
+        ) -> Result<ToolGrant, BrokerError> {
             let ttl = ttl.min(MAX_GRANT_TTL);
+            let tools: Vec<String> = tools.iter().map(|tool| (*tool).to_owned()).collect();
             let id = uuid::Uuid::new_v4().simple().to_string();
             let secret = random_bytes_32();
             let file = self.shared.runtime_dir.join(format!("cap-{id}.json"));
@@ -459,6 +473,7 @@ mod imp {
                 "socket": socket,
                 "capability": id,
                 "secret": hex(&secret),
+                "tools": tools,
             }))
             .map_err(|error| BrokerError::Io {
                 context: "encode capability",
@@ -496,6 +511,7 @@ mod imp {
                 id,
                 Arc::new(Grant {
                     binding,
+                    tools,
                     secret: Secret(secret),
                     deadline: Instant::now() + ttl,
                     revoked: AtomicBool::new(false),
@@ -869,6 +885,17 @@ mod imp {
         if let Err(error) = grant.check(&*shared.liveness) {
             ready(pending, Some(id), error);
             return true;
+        }
+        if TOOL_NAMES.contains(&method) && !grant.tools.iter().any(|tool| tool == method) {
+            ready(
+                pending,
+                Some(id),
+                ToolError::new(
+                    ToolErrorCode::MethodNotFound,
+                    format!("`{method}` is turned off in Studio's settings"),
+                ),
+            );
+            return false;
         }
         let (sender, receiver) = mpsc::channel();
         {

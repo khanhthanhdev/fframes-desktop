@@ -556,6 +556,61 @@ impl Actor {
         }
     }
 
+    /// The notes about the task's tools the snapshot shows: those made at task start, then
+    /// those made when the session said which of the user's servers it got.
+    pub(super) fn tool_notes_view(&self) -> Option<ToolNotes> {
+        let notes: Vec<ToolNote> = self
+            .tool_notes
+            .0
+            .iter()
+            .chain(&self.session_notes)
+            .cloned()
+            .collect();
+        (!notes.is_empty()).then_some(ToolNotes(notes))
+    }
+
+    /// Notes the user's servers the session did not get (`sent` is the driver's report),
+    /// replacing those of an earlier session of the task (a repair starts a new one). An
+    /// agent that takes no MCP servers already has its note from the task start.
+    pub(super) fn note_session_servers(&mut self, sent: &[String]) {
+        let Some(active) = &self.active else {
+            return;
+        };
+        let mut notes = Vec::new();
+        if active.adapter.mcp == McpStdioSupport::Baseline {
+            for server in &active.user_mcp {
+                let name = server.name();
+                if !sent.iter().any(|sent| sent == name) {
+                    let why = match server.transport {
+                        studio_harness::McpTransport::Http(_) => {
+                            "this agent does not support HTTP MCP servers."
+                        }
+                        studio_harness::McpTransport::Stdio(_) => {
+                            "the agent's session did not take it."
+                        }
+                    };
+                    notes.push(ToolNote::new(
+                        ToolNoteKind::ServerLeftOut {
+                            name: name.to_owned(),
+                        },
+                        format!("The MCP server `{name}` was left out: {why}"),
+                    ));
+                } else if active.adapter.wire == studio_harness::AgentWire::Acp
+                    && !server.disabled_tools.is_empty()
+                {
+                    // No ACP agent can leave out single tools of a server.
+                    notes.push(ToolNote::other(format!(
+                        "ACP agents get every tool of `{name}`, including the ones turned off."
+                    )));
+                }
+            }
+        }
+        if notes != self.session_notes {
+            self.session_notes = notes;
+            self.touch();
+        }
+    }
+
     pub(super) fn on_session_ready(&mut self, _sanitized_id: String, restored: bool) {
         self.resume_attempt = false;
         let launch_digest = self

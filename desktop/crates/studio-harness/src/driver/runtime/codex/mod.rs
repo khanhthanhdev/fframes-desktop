@@ -70,26 +70,23 @@ impl CodexDriver {
             ownership,
             mode,
             mcp_servers,
+            user_mcp_servers,
             mcp_stdio,
         } = config;
-        for server in &mcp_servers {
-            server.validate().map_err(|error| {
-                spawn_refused(format!("invalid MCP server configuration: {error}"))
-            })?;
-        }
-        let redactor = Arc::new(Redactor::new(
-            launch.secrets.iter().cloned().chain(
-                mcp_servers
-                    .iter()
-                    .flat_map(|s| s.secrets().map(str::to_owned)),
-            ),
-        ));
+        super::check_mcp_servers(&mcp_servers, &user_mcp_servers).map_err(spawn_refused)?;
+        let redactor = Arc::new(Redactor::new(super::mcp_secrets(
+            &launch.secrets,
+            &mcp_servers,
+            &user_mcp_servers,
+        )));
         let user = launch::split_user_args(&launch.args).map_err(spawn_refused)?;
         let version = launch::version_gate(&launch.executable, &user.prefix, &launch.env)
             .map_err(|message| spawn_refused(redactor.redact(&message)))?;
-        let servers = match mcp_stdio {
-            McpStdioSupport::Baseline => mcp_servers,
-            McpStdioSupport::Unsupported => Vec::new(),
+        // Codex has no per-server pre-approval to withhold: the user's servers run beside
+        // the studio's and their calls follow Codex's own approval rules.
+        let (servers, user_servers) = match mcp_stdio {
+            McpStdioSupport::Baseline => (mcp_servers, user_mcp_servers),
+            McpStdioSupport::Unsupported => (Vec::new(), Vec::new()),
         };
         let private = tempfile::Builder::new()
             .prefix("fframes-codex-")
@@ -127,6 +124,7 @@ impl CodexDriver {
                 model: user.flag("--model").map(str::to_owned),
                 effort: user.flag("--effort").map(str::to_owned),
                 servers,
+                user_servers,
                 mcp_stdio: mcp_stdio == McpStdioSupport::Baseline,
                 writer,
             };

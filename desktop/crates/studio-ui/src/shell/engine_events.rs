@@ -670,6 +670,8 @@ impl StudioShell {
             .map(|preview| preview.identity().clone());
         let _ = workflow.set_displayed_preview_identity(preview_identity);
         let _ = workflow.set_permission_policy(self.permission_policy);
+        self.follow_agent_tools_project(cx);
+        let _ = workflow.set_agent_tools(self.agent_tools.read(cx).effective());
         self.agent.workflow = Some(workflow.clone());
         self.agent.attached = Some(opened.serial);
         self.agent.playhead = usize::MAX;

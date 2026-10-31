@@ -194,6 +194,11 @@ pub struct PermissionCard {
     /// policy named here); `None` when the user answers it.
     #[serde(default)]
     pub answered_by: Option<studio_proto::PermissionPolicy>,
+    /// For a request the user answers, the rule "Always in this project" saves for it
+    /// (`None` when no safe rule describes it, see [`super::approvals`]). For one Studio
+    /// answered, the saved rule that answered it (`None` when the policy did).
+    #[serde(default)]
+    pub remember: Option<super::approvals::ApprovalRule>,
 }
 
 /// A failure with a user-facing next step. Every string is already redacted and bounded.
@@ -550,7 +555,81 @@ pub struct McpView {
     /// The current task's capability file (a path only; the secret stays inside it). It
     /// exists whenever any tool route is offered and dies with the task.
     pub capability_file: Option<std::path::PathBuf>,
-    pub note: Option<String>,
+    /// What the current task's tools are missing, and why. Snapshots saved when this was
+    /// one sentence of text still read (as one [`ToolNoteKind::Other`] note).
+    pub note: Option<ToolNotes>,
+}
+
+/// The notes about a task's tools, in order. Shown as their texts joined by spaces.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "StoredToolNotes")]
+pub struct ToolNotes(pub Vec<ToolNote>);
+
+/// One note about a task's tools: the sentence the user reads, and what it is about, so a
+/// UI can point at the setting it names without reading the sentence.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ToolNote {
+    #[serde(default)]
+    pub kind: ToolNoteKind,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ToolNoteKind {
+    /// The user's MCP server `name` is not in this session: a variable it needs is not
+    /// set, or the agent cannot take its transport.
+    ServerLeftOut { name: String },
+    /// The agent takes no MCP servers, so `count` servers of the user's are not used.
+    NoMcp { count: usize },
+    /// Every project tool is turned off.
+    ToolsOff,
+    /// Anything else (helpers missing, host policy, an error).
+    #[default]
+    #[serde(other)]
+    Other,
+}
+
+/// Either shape [`ToolNotes`] was saved in.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum StoredToolNotes {
+    Notes(Vec<ToolNote>),
+    Text(String),
+}
+
+impl From<StoredToolNotes> for ToolNotes {
+    fn from(stored: StoredToolNotes) -> Self {
+        match stored {
+            StoredToolNotes::Notes(notes) => Self(notes),
+            StoredToolNotes::Text(text) => Self(vec![ToolNote::other(text)]),
+        }
+    }
+}
+
+impl ToolNote {
+    pub fn new(kind: ToolNoteKind, text: impl Into<String>) -> Self {
+        Self {
+            kind,
+            text: text.into(),
+        }
+    }
+
+    pub fn other(text: impl Into<String>) -> Self {
+        Self::new(ToolNoteKind::Other, text)
+    }
+}
+
+impl std::fmt::Display for ToolNotes {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        for (i, note) in self.0.iter().enumerate() {
+            if i > 0 {
+                f.write_str(" ")?;
+            }
+            f.write_str(&note.text)?;
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -733,4 +812,44 @@ impl WorkflowSnapshot {
 /// Host policy for stdio MCP, as the model reports it.
 pub fn mcp_policy_enabled(policy: McpStdioSupport) -> bool {
     policy == McpStdioSupport::Baseline
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_notes_keep_their_kind_and_a_saved_sentence_still_reads() {
+        let notes = ToolNotes(vec![
+            ToolNote::new(
+                ToolNoteKind::ServerLeftOut {
+                    name: "github".into(),
+                },
+                "The MCP server `github` was left out: GITHUB_TOKEN is not set.",
+            ),
+            ToolNote::new(ToolNoteKind::ToolsOff, "Every project tool is turned off."),
+        ]);
+        let saved = serde_json::to_string(&notes).unwrap();
+        assert_eq!(serde_json::from_str::<ToolNotes>(&saved).unwrap(), notes);
+        assert_eq!(
+            notes.to_string(),
+            "The MCP server `github` was left out: GITHUB_TOKEN is not set. Every project tool is turned off."
+        );
+
+        let old: Option<ToolNotes> = serde_json::from_str("\"No project tool helpers.\"").unwrap();
+        assert_eq!(
+            old,
+            Some(ToolNotes(vec![ToolNote::other("No project tool helpers.")]))
+        );
+        let unknown: ToolNotes = serde_json::from_str(
+            r#"[{"kind": {"type": "from_the_future"}, "text": "x"}, {"text": "y"}]"#,
+        )
+        .unwrap();
+        assert!(
+            unknown
+                .0
+                .iter()
+                .all(|note| note.kind == ToolNoteKind::Other)
+        );
+    }
 }

@@ -148,6 +148,9 @@ def approval(turn, method, item_id, **fields):
     return server_request(method, params)["result"]
 
 
+mcp_turns = [0]
+
+
 def run_turn(request):
     params = request["params"]
     turn = "turn-" + str(uuid.uuid4())
@@ -205,6 +208,23 @@ def run_turn(request):
         result = approval(turn, "item/commandExecution/requestApproval", "exec-child", thread="child-thread",
                           command="ls")
         record("child-decision.json", result)
+    if "MCPTOOL" in words:
+        # Codex 0.163 asks before an MCP tool runs (approval policy `untrusted`, no
+        # read-only hint): Studio's own server first, then the user's `docs` server, which
+        # runs as `studio-docs` because config.toml has a `docs`.
+        # codex-rs main names the tool in `_meta.tool_name`; 0.163 only in the message.
+        mcp_turns[0] += 1
+        for server, tool, name in (("studio", "project_context", "studio-approval.json"),
+                                   ("studio-docs", "search", "mcp-approval.json")):
+            meta = {"codex_approval_kind": "mcp_tool_call", "persist": ["session", "always"]}
+            if mcp_turns[0] % 2:
+                meta["tool_name"] = tool
+            reply = server_request("mcpServer/elicitation/request", {
+                "threadId": THREAD, "turnId": turn, "serverName": server, "mode": "form",
+                "_meta": meta,
+                "message": "Allow the %s MCP server to run tool \"%s\"?" % (server, tool),
+                "requestedSchema": {"type": "object", "properties": {}}})
+            record(name, reply)
     if "TOOLCALL" in words:
         record("toolcall.json", server_request("item/tool/call", {"threadId": THREAD, "turnId": turn, "tool": "x"}))
     if "ASK" in words:
@@ -295,6 +315,39 @@ def run_command_turn(request, kind):
     interrupt.update(turn=None, started_at=None)
 
 
+# The user's config.toml servers, as config/read reports them.
+CONFIGURED = {
+    "rea": {"command": "rea", "env": {"REA_TOKEN": SENTINEL}},
+    "docs": {"command": "docs-cli", "args": ["--stdio"]},
+}
+
+
+def invalid_server(overrides):
+    """Codex's check of the merged servers: thread config keys are one more layer merged
+    key by key into config.toml's tables (codex-rs merge_toml_values), and an entry
+    with both stdio and HTTP keys is refused (RawMcpServerConfig -> McpServerConfig)."""
+    servers = json.loads(json.dumps(CONFIGURED))
+    for key, value in overrides.items():
+        parts = key.split(".")
+        if parts[0] != "mcp_servers" or len(parts) != 3:
+            continue
+        entry = servers.setdefault(parts[1], {})
+        if isinstance(value, dict) and isinstance(entry.get(parts[2]), dict):
+            entry[parts[2]].update(value)
+        else:
+            entry[parts[2]] = value
+    for name, entry in servers.items():
+        if "command" in entry:
+            for field in ("url", "bearer_token_env_var", "bearer_token", "http_headers", "env_http_headers"):
+                if field in entry:
+                    return "mcp_servers.%s: %s is not supported for stdio" % (name, field)
+        elif "url" in entry:
+            for field in ("args", "env", "env_vars", "cwd", "bearer_token"):
+                if field in entry:
+                    return "mcp_servers.%s: %s is not supported for streamable_http" % (name, field)
+    return None
+
+
 while True:
     message = read()
     method = message.get("method")
@@ -308,10 +361,13 @@ while True:
         send({"id": message["id"], "result": {"account": account, "requiresOpenaiAuth": True}})
     elif method == "config/read":
         record("config-read.json", message["params"])
-        send({"id": message["id"], "result": {"config": {"mcp_servers": {
-            "rea": {"command": "rea", "env": {"REA_TOKEN": SENTINEL}}}}, "origins": {}}})
+        send({"id": message["id"], "result": {"config": {"mcp_servers": CONFIGURED}, "origins": {}}})
     elif method in ("thread/start", "thread/resume"):
         record("thread.json", {"method": method, "params": message["params"]})
+        refused = invalid_server(message["params"].get("config") or {})
+        if refused:
+            send({"id": message["id"], "error": {"code": -32600, "message": refused}})
+            continue
         requested = message["params"].get("threadId")
         if method == "thread/resume" and requested == "gone":
             send({"id": message["id"], "error": {"code": -32600, "message": "thread not found"}})

@@ -11,6 +11,8 @@ use std::sync::mpsc as std_mpsc;
 pub(super) struct Params {
     pub(super) mcp_stdio: bool,
     pub(super) resumed: bool,
+    /// The user's servers written into the launch's MCP config, by name.
+    pub(super) user_servers: Vec<String>,
     /// Where permission answers queue their lines.
     pub(super) writer: std_mpsc::SyncSender<Input>,
 }
@@ -320,7 +322,8 @@ impl Connection {
                 prompt_image: true,
                 prompt_audio: false,
                 prompt_embedded_context: false,
-                mcp_http: false,
+                // Its MCP config takes streamable-HTTP servers.
+                mcp_http: true,
                 mcp_sse: false,
                 mcp_stdio: self.params.mcp_stdio,
             },
@@ -341,6 +344,7 @@ impl Connection {
         self.shared.emit(AgentEventKind::SessionReady {
             session_id: exported,
             restored: self.params.resumed,
+            user_mcp_servers: self.params.user_servers.clone(),
         });
         self.shared.watchdog.disarm();
         self.shared.set_ready();

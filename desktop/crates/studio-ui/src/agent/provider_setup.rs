@@ -7,19 +7,18 @@
 //!   longer current (the install was replaced, the panel left its project) is dropped.
 //! * Detect agents and Install adapter never run at once, so a scan that started before an
 //!   install finished can never overwrite the adapter it installed.
+//! * [`AgentState`] is the one vocabulary every card's badge uses.
+//! * Find more agents lists the ACP registry on request; an entry only fills in the Register
+//!   a custom agent form or opens its page.
 //!
 //! The types are GPUI-free and unit-tested; the handlers below only wire them to the panel.
 use super::{
     ConversationPanel, Emphasis,
-    controls::{self, derive_controls},
+    controls::{self, Controls, derive_controls},
 };
-use gpui::{
-    Context, ElementId, InteractiveElement, ParentElement, StatefulInteractiveElement, Styled,
-    Window, div, px,
-};
+use gpui::{Context, Entity, IntoElement, ParentElement, Styled, Window, div, px};
 use std::{
     collections::HashSet,
-    rc::Rc,
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -28,6 +27,7 @@ use std::{
 use studio_engine::agent::{AdapterReadiness, UndoView};
 use studio_engine::app_paths::AppPaths;
 use studio_engine::providers::{
+    acp_registry::{self, RegistryAgent},
     host::{self, AdapterFile},
     provider_profiles::{self, DetectRowAction, DetectionScan, DetectionState},
 };
@@ -35,9 +35,13 @@ use studio_harness::{
     NodeEntry,
     adapter_install::{self, InstallError, InstalledAdapter},
 };
-use studio_theme::METRICS;
+use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
-use crate::kit::{Badge, Tone as UiTone, focusable, label, on_activate};
+use super::ui::{AgentCard, AgentFact};
+use crate::kit::{
+    Badge, ButtonSize, EmptyState, Notice, Spinner, TextInput, TextInputState, Tone as UiTone,
+    selectable, setting_card,
+};
 
 // ---- state -------------------------------------------------------------------------------------
 
@@ -287,12 +291,17 @@ pub fn detected_launch(
 #[derive(Debug, Default)]
 pub(super) struct AgentSetup {
     /// The last Detect agents result, one entry per profile.
-    detected: DetectionScan,
+    pub(super) detected: DetectionScan,
     scans: ScanTracker,
     install: InstallTracker,
     pub(super) turn_on: TurnOn,
     /// Profiles whose Install guide was opened since the last Detect agents.
     guides_opened: HashSet<String>,
+    /// Find more agents: the ACP registry, fetched only when asked. Kept across projects.
+    pub(super) registry_list: RegistryList,
+    registry_search: Option<Entity<TextInputState>>,
+    /// The Register a custom agent card is open.
+    pub(super) custom_open: bool,
 }
 
 impl AgentSetup {
@@ -670,296 +679,994 @@ impl ConversationPanel {
 
     // ---- render ----------------------------------------------------------------------------------
 
-    /// The "Providers" section: one radio row per registry profile.
-    /// `switch_pending`: a provider handoff waits; `selection_busy`: a task or Undo runs, so a
-    /// selection becomes a stopped-writer switch.
     /// What the provider's last launch in this session proved about its writers.
-    fn launch_status(&self, provider: &str) -> String {
-        match self.launches.get(provider) {
-            None => "Not launched yet".into(),
-            Some(launch) if launch.contained => {
-                format!("Contained at last launch ({})", launch.ownership)
+    fn launch_status(&self, provider: &str) -> Option<String> {
+        self.launches.get(provider).map(|launch| {
+            if launch.contained {
+                format!("Contained at its last launch ({}).", launch.ownership)
+            } else {
+                format!(
+                    "Not contained at its last launch ({}): its changes are not captured.",
+                    launch.ownership
+                )
             }
-            Some(launch) => format!("Not contained at last launch ({})", launch.ownership),
-        }
+        })
     }
 
-    pub(super) fn providers_section(
+    /// Settings → Agent → CLI agents: one card per registry profile, after Oleafly's agent
+    /// cards, then Register a custom agent and Find more agents. A card's header says
+    /// whether the agent is in use and its [`AgentState`]; its details show the command line
+    /// tool, the adapter, the sign-in command and the one next step.
+    /// `switch_pending`: a provider handoff waits; `selection_busy`: a task or Undo runs, so
+    /// choosing another agent becomes a stopped-writer switch.
+    pub(super) fn agents_section(
         &mut self,
+        readiness: &AdapterReadiness,
+        controls: &Controls,
         switch_pending: bool,
         selection_busy: bool,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
-        let mut providers = self
-            .section("Providers")
-            .child(
-                self.line("Select a configured ACP provider, or start a stopped-writer handoff."),
-            )
-            .child(self.line(
-                "Writer containment is verified each time a provider starts; the result of its last launch is shown below.",
-            ));
-        for profile in &self.registry.profiles {
-            let selected =
-                self.registry.selected_profile_id.as_deref() == Some(profile.id.as_str());
-            let button_label = if switch_pending {
-                "Handoff pending"
-            } else if selected {
-                "Selected"
-            } else if selection_busy {
-                "Switch & stop"
+        let theme = self.theme;
+        let setup = &self.agent_setup;
+        let installing = setup.install.is_running();
+        let scanned = !setup.detected.found.is_empty();
+        let check = self.action_button(
+            "agent-detect",
+            if setup.scans.is_running() {
+                "Checking…"
+            } else if scanned {
+                "Check again"
             } else {
-                "Use provider"
-            };
-            let enabled =
-                !switch_pending && !self.saves.is_pending() && !(selected && !selection_busy);
-            let profile_id = profile.id.clone();
-            let description = format!(
-                "{} · {} · {}",
-                self.launch_status(&profile.adapter.provider),
-                profile.id,
-                profile.description,
-            );
-            providers = providers.child(self.provider_row(
-                format!("agent-provider-{}", profile.id),
-                &profile.label,
-                description,
-                button_label,
-                selected,
-                enabled,
+                "Check installed agents"
+            },
+            !setup.scans.is_running() && !installing,
+            Emphasis::Neutral,
+            cx,
+            |this, _, cx| this.detect_agents(cx),
+        );
+        let intro = "Claude Code, Codex and other CLI agents edit your video in a private \
+                     working copy. Each keeps its own sign-in, models and memory; Studio never \
+                     stores an API key. Checking only looks for installed files and starts \
+                     nothing.";
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_2))
+            .child(self.section_header("CLI AGENTS", intro, check.into_any_element()));
+        let profiles = self.registry.profiles.clone();
+        for profile in &profiles {
+            section = section.child(self.agent_card(
+                profile,
+                readiness,
+                controls.settings_editable,
+                switch_pending,
+                selection_busy,
                 cx,
-                move |this, _, cx| this.select_provider(&profile_id, cx),
             ));
         }
-        providers
+        section = section.child(self.custom_agent_card(controls, cx));
+        section.child(
+            div()
+                .pt(px(METRICS.space_4))
+                .child(self.registry_section(&theme, cx)),
+        )
     }
 
-    /// A radio row: the whole row selects the provider; `action_label` is the old button
-    /// label and stays as the accessible name and the trailing badge.
-    #[allow(clippy::too_many_arguments)]
-    fn provider_row(
+    /// A section's title (`Overline`), its one paragraph and the button on the right.
+    fn section_header(
         &self,
-        id: impl Into<ElementId>,
-        name: &str,
-        description: String,
-        action_label: &'static str,
-        selected: bool,
-        enabled: bool,
-        cx: &mut Context<Self>,
-        action: impl Fn(&mut Self, &mut Window, &mut Context<Self>) + 'static,
-    ) -> gpui::Stateful<gpui::Div> {
-        let theme = self.theme;
-        let palette = theme.colors;
-        let radius = px(METRICS.radius.control);
-        let radio = div()
-            .flex_none()
-            .size(px(METRICS.size.icon_sm))
+        title: &'static str,
+        intro: &'static str,
+        action: gpui::AnyElement,
+    ) -> gpui::Div {
+        div()
             .flex()
-            .items_center()
-            .justify_center()
-            .rounded_full()
-            .border_1()
-            .border_color(if selected {
-                palette.accent
-            } else {
-                palette.line_strong
-            })
-            .children(selected.then(|| {
-                div()
-                    .size(px(METRICS.space_2))
-                    .rounded_full()
-                    .bg(palette.accent)
-            }));
-        let row = div()
-            .id(id.into())
-            .role(gpui::Role::RadioButton)
-            .aria_label(action_label)
-            .flex()
-            .items_center()
-            .gap(px(METRICS.space_2))
-            .p(px(METRICS.space_2))
-            .rounded(radius)
-            .bg(if selected {
-                palette.ctl
-            } else {
-                palette.card_2
-            })
-            .child(radio)
+            .items_start()
+            .gap(px(METRICS.space_3))
             .child(
                 div()
                     .flex_1()
                     .min_w_0()
                     .flex()
                     .flex_col()
-                    // Plain text: the whole row is a radio button.
+                    .gap(px(METRICS.space_1))
                     .child(
-                        studio_theme::text_style(div(), studio_theme::TextStyle::Label)
-                            .text_color(palette.text_1)
-                            .child(name.to_owned()),
+                        studio_theme::text_style(div(), studio_theme::TextStyle::Overline)
+                            .text_color(self.theme.colors.text_2)
+                            .child(title),
                     )
-                    .child(
-                        studio_theme::text_style(div(), studio_theme::TextStyle::Small)
-                            .text_color(palette.text_2)
-                            .child(description),
-                    ),
+                    .child(self.line(intro)),
             )
-            .child(Badge::new(action_label).tone(if selected {
-                UiTone::Info
-            } else {
-                UiTone::Neutral
-            }));
-        let row = focusable(row, &theme, !enabled);
-        on_activate(row, !enabled, Some(Rc::new(Self::activate(cx, action))))
+            .child(action)
     }
 
-    /// The "Detect agents" section: the Detect button and one row per profile it found.
-    pub(super) fn detect_section(
+    /// Register a custom agent: the custom adapter form folded into a card at the end of the
+    /// agent list.
+    fn custom_agent_card(
         &mut self,
+        controls: &Controls,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = self.theme;
+        let open = self.agent_setup.custom_open;
+        let toggle = cx.entity();
+        let mut card = AgentCard::new(
+            &theme,
+            CUSTOM_CARD_ID,
+            "Register a custom agent",
+            "Any ACP agent, or Claude Code or Codex at a path you choose.",
+            ("", UiTone::Neutral),
+        )
+        .without_badge()
+        .open(open)
+        .on_toggle(move |_, app| {
+            toggle.update(app, |this, cx| {
+                this.agent_setup.custom_open = !this.agent_setup.custom_open;
+                cx.notify();
+            });
+        });
+        if open {
+            card = card.content(self.custom_agent_form(controls, cx));
+        }
+        card.into_any_element()
+    }
+
+    /// One agent's card; see [`Self::agents_section`].
+    fn agent_card(
+        &mut self,
+        profile: &provider_profiles::ProviderProfile,
         readiness: &AdapterReadiness,
         settings_editable: bool,
+        switch_pending: bool,
+        selection_busy: bool,
         cx: &mut Context<Self>,
-    ) -> gpui::Div {
+    ) -> gpui::AnyElement {
+        let theme = self.theme;
         let setup = &self.agent_setup;
+        let id = profile.id.clone();
+        let selected = self.registry.selected_profile_id.as_deref() == Some(profile.id.as_str());
+        let found = setup
+            .detected
+            .found
+            .iter()
+            .find(|found| found.id == profile.id);
+        let detected = found.map(|found| setup.detected.state(found));
+        let installed = setup.detected.installed.get(&profile.id);
+        let installing_this = setup.install.installing() == Some(profile.id.as_str());
+        let row_status = detected.map(|state| setup.turn_on.row_status(&profile.id, state));
+        let acp = profile.adapter.wire == studio_harness::AgentWire::Acp;
+        let installable = acp && adapter_install::package_for(&profile.id).is_some();
         let installing = setup.install.is_running();
-        let mut detect = self.section("Detect agents").child(self.line(
-            "Looks for installed agents without starting them. No API key is needed; each agent uses its own sign-in.",
-        ));
-        detect = detect.child(self.action_button(
-            "agent-detect",
-            if setup.scans.is_running() {
-                "Detecting…"
+        let state = AgentState::of(installing_this, row_status, selected, readiness, detected);
+        let guide = controls::guidance(readiness, true);
+        let sign_in = provider_profiles::sign_in_command(&profile.id);
+
+        // The header's one line: what the badge does not already say.
+        let summary = match state {
+            AgentState::Installing => "Installing its adapter…".to_owned(),
+            AgentState::Checking => "Testing the connection once…".to_owned(),
+            AgentState::Ready if selected => guide.headline.strip_prefix("Ready · ").map_or_else(
+                || format!("{} · new tasks use it", guide.headline),
+                |rest| format!("{rest} · new tasks use it"),
+            ),
+            AgentState::Ready => "The connection check passed.".to_owned(),
+            AgentState::NeedsSignIn => "Sign in with its own tool, then test it again.".to_owned(),
+            AgentState::CheckFailed => format!("{}.", guide.headline),
+            AgentState::Installed if selected => "New tasks use it. Not tested yet.".to_owned(),
+            AgentState::Installed => "Installed on this computer.".to_owned(),
+            AgentState::AdapterMissing => {
+                "The command line tool is installed; its ACP adapter is not.".to_owned()
+            }
+            AgentState::NotInstalled => "Not found on this computer.".to_owned(),
+            AgentState::NotChecked if selected => "New tasks use it. Not tested yet.".to_owned(),
+            AgentState::NotChecked => profile.description.clone(),
+        };
+
+        // The details: what was found, where, and how it talks to Studio.
+        let external =
+            |path: &std::path::Path| studio_bootstrap::external_path(path).display().to_string();
+        let not_checked = AgentState::NotChecked.label();
+        // A path is monospaced; "Not found" and the like are not.
+        let fact = |label: &'static str, path: Option<&std::path::Path>, missing: &str| match path {
+            Some(path) => AgentFact::code(label, external(path)),
+            None => AgentFact::text(label, missing.to_owned()),
+        };
+        let mut facts = vec![match found {
+            Some(found) => fact("Command line tool", found.cli.as_deref(), "Not installed"),
+            None => fact("Command line tool", None, not_checked),
+        }];
+        if acp {
+            facts.push(match (installed, found) {
+                (Some(installed), _) => fact("ACP adapter", Some(&installed.entry), ""),
+                (None, Some(found)) => {
+                    fact("ACP adapter", found.adapter.as_deref(), "Not installed")
+                }
+                (None, None) => fact("ACP adapter", None, not_checked),
+            });
+        }
+        facts.push(AgentFact::text("Protocol", profile.adapter.wire.label()));
+        facts.push(AgentFact::text(
+            "Source",
+            if installed.is_some() {
+                "Installed by Studio"
+            } else if profile.builtin {
+                "Built in, found automatically"
             } else {
-                "Detect agents"
+                "Added by you"
             },
-            !setup.scans.is_running() && !installing,
-            Emphasis::Neutral,
-            cx,
-            |this, _, cx| this.detect_agents(cx),
         ));
-        for found in &setup.detected.found {
-            let Some(profile) = self.registry.profiles.iter().find(|p| p.id == found.id) else {
-                continue;
-            };
-            let state = setup.detected.state(found);
-            let location = match setup.detected.installed.get(&found.id) {
-                Some(installed) => {
-                    format!(
-                        " · installed by Studio · {}",
-                        studio_bootstrap::external_path(&installed.entry).display()
-                    )
-                }
-                None => found
-                    .adapter
-                    .as_ref()
-                    .or(found.cli.as_ref())
-                    .map_or_else(String::new, |path| {
-                        format!(" · {}", studio_bootstrap::external_path(path).display())
-                    }),
-            };
-            let installable = profile.adapter.wire == studio_harness::AgentWire::Acp
-                && adapter_install::package_for(&profile.id).is_some();
-            let action = provider_profiles::row_action(
-                state,
-                installable,
-                setup.detected.tools().is_some(),
-                provider_profiles::install_guide_url(&profile.id),
+
+        // The next step for this state and its actions. Ready and in use needs none.
+        let mut actions: Vec<gpui::AnyElement> = Vec::new();
+        let test_enabled = settings_editable
+            && !matches!(
+                readiness,
+                AdapterReadiness::Checking | AdapterReadiness::NotConfigured
             );
-            let installing_this = setup.install.installing() == Some(profile.id.as_str());
-            let hint = match action {
-                DetectRowAction::GetNode => format!(
-                    " · Install adapter needs {}",
-                    setup.detected.missing_tools().join(" and ")
-                ),
-                DetectRowAction::InstallGuide(_) if setup.guides_opened.contains(&profile.id) => {
-                    " · After installing, press Detect agents again.".to_owned()
+        let test =
+            |this: &Self, label: &'static str, emphasis: Emphasis, cx: &mut Context<Self>| {
+                this.action_button(
+                    format!("agent-check-{id}"),
+                    label,
+                    test_enabled,
+                    emphasis,
+                    cx,
+                    |this, _, cx| {
+                        if let Some(workflow) = this.workflow().cloned() {
+                            let result = workflow.check_adapter();
+                            this.command(result, cx);
+                        }
+                    },
+                )
+                .into_any_element()
+            };
+        let next_step: Option<String> = match state {
+            AgentState::Installing => {
+                actions.push(
+                    self.action_button(
+                        format!("agent-install-cancel-{id}"),
+                        "Cancel install",
+                        true,
+                        Emphasis::Neutral,
+                        cx,
+                        |this, _, cx| {
+                            this.agent_setup.install.cancel();
+                            this.say("Cancelling the install…", cx);
+                        },
+                    )
+                    .into_any_element(),
+                );
+                Some("Studio is installing the pinned adapter package.".into())
+            }
+            AgentState::Checking => {
+                Some("Studio starts it once in a scratch folder, not in your project.".into())
+            }
+            AgentState::Ready if selected => {
+                Some("Nothing to do. New tasks use this agent.".into())
+            }
+            AgentState::NeedsSignIn if selected => {
+                if let Some(command) = sign_in {
+                    actions.push(
+                        self.action_button(
+                            format!("agent-sign-in-{id}"),
+                            "Copy sign-in command",
+                            true,
+                            Emphasis::Primary,
+                            cx,
+                            move |this, _, cx| {
+                                cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                    command.to_owned(),
+                                ));
+                                this.say(
+                                    format!("Copied {command}. Run it in a terminal, then test the connection."),
+                                    cx,
+                                );
+                            },
+                        )
+                        .into_any_element(),
+                    );
                 }
-                _ => String::new(),
-            };
-            let status = match setup.turn_on.row_status(&profile.id, state) {
-                // The save is still in flight: the snapshot shows the previous adapter.
-                RowStatus::TurningOn => "Turning on…".to_owned(),
-                RowStatus::Readiness => controls::turned_on_status(readiness),
-                RowStatus::Detected(state) => state.label().to_owned(),
-            };
-            let (select_id, install_id) = (profile.id.clone(), profile.id.clone());
-            let mut actions = div().flex().gap_1();
-            if installing_this {
-                actions = actions.child(self.action_button(
-                    format!("agent-install-cancel-{}", profile.id),
-                    "Cancel install",
+                let emphasis = if sign_in.is_some() {
+                    Emphasis::Neutral
+                } else {
+                    Emphasis::Primary
+                };
+                actions.push(test(self, "Test connection", emphasis, cx));
+                Some(match sign_in {
+                    Some(_) => {
+                        "Run the sign-in command in a terminal, then test the connection.".into()
+                    }
+                    None => "Sign in with the agent's own tool, then test the connection.".into(),
+                })
+            }
+            AgentState::CheckFailed if selected => {
+                actions.push(test(self, "Test again", Emphasis::Neutral, cx));
+                Some(guide.steps.first().cloned().unwrap_or_default())
+            }
+            AgentState::Installed | AgentState::NotChecked if selected => {
+                actions.push(test(self, "Test connection", Emphasis::Primary, cx));
+                Some(
+                    "Test it once: Studio starts it in a scratch folder and checks the sign-in."
+                        .into(),
+                )
+            }
+            _ => {
+                let action = detected.map(|state| {
+                    provider_profiles::row_action(
+                        state,
+                        installable,
+                        setup.detected.tools().is_some(),
+                        provider_profiles::install_guide_url(&profile.id),
+                    )
+                });
+                let busy_switch = selection_busy && !switch_pending;
+                match action {
+                    Some(DetectRowAction::TurnOn) if !selection_busy => {
+                        let select = id.clone();
+                        actions.push(
+                            self.action_button(
+                                format!("agent-detected-{id}"),
+                                "Use this agent",
+                                settings_editable && !self.saves.is_pending() && !switch_pending,
+                                Emphasis::Primary,
+                                cx,
+                                move |this, _, cx| this.use_detected(&select, cx),
+                            )
+                            .into_any_element(),
+                        );
+                        Some("Use it for new tasks: Studio saves it and tests it once.".into())
+                    }
+                    Some(DetectRowAction::InstallAdapter) => {
+                        let install = id.clone();
+                        actions.push(
+                            self.action_button(
+                                format!("agent-install-{id}"),
+                                "Install adapter",
+                                !installing && !setup.scans.is_running(),
+                                Emphasis::Primary,
+                                cx,
+                                move |this, _, cx| this.install_adapter(&install, cx),
+                            )
+                            .into_any_element(),
+                        );
+                        Some(
+                            "Install its ACP adapter, a small pinned package Studio keeps in its own folder. Then sign in with the command line tool."
+                                .into(),
+                        )
+                    }
+                    Some(DetectRowAction::GetNode) => {
+                        actions.push(
+                            self.action_button(
+                                format!("agent-get-node-{id}"),
+                                "Get Node.js",
+                                true,
+                                Emphasis::Neutral,
+                                cx,
+                                |this, _, cx| {
+                                    this.open_link(provider_profiles::NODE_DOWNLOAD_URL, cx);
+                                },
+                            )
+                            .into_any_element(),
+                        );
+                        Some(format!(
+                            "Installing its adapter needs {}. Install it, then check again.",
+                            setup.detected.missing_tools().join(" and ")
+                        ))
+                    }
+                    Some(DetectRowAction::InstallGuide(url)) => {
+                        let step = if setup.guides_opened.contains(&profile.id) {
+                            format!("After installing {}, check again.", profile.label)
+                        } else {
+                            format!(
+                                "Install {} with its own installer, then check again.",
+                                profile.label
+                            )
+                        };
+                        let opened = id.clone();
+                        actions.push(
+                            self.action_button(
+                                format!("agent-install-guide-{id}"),
+                                "Install guide",
+                                true,
+                                Emphasis::Neutral,
+                                cx,
+                                move |this, _, cx| {
+                                    if this.open_link(url, cx) {
+                                        this.agent_setup.guides_opened.insert(opened.clone());
+                                    }
+                                },
+                            )
+                            .into_any_element(),
+                        );
+                        Some(step)
+                    }
+                    Some(DetectRowAction::None) => {
+                        Some(format!("Install {}, then check again.", profile.label))
+                    }
+                    Some(DetectRowAction::TurnOn) | None => {
+                        // Not checked yet, or a task runs: choosing it uses the saved profile
+                        // (a running task is stopped first and handed over).
+                        let select = id.clone();
+                        actions.push(
+                            self.action_button(
+                                format!("agent-provider-{id}"),
+                                if busy_switch {
+                                    "Switch & stop"
+                                } else {
+                                    "Use this agent"
+                                },
+                                !switch_pending && !self.saves.is_pending(),
+                                Emphasis::Neutral,
+                                cx,
+                                move |this, _, cx| this.select_provider(&select, cx),
+                            )
+                            .into_any_element(),
+                        );
+                        Some(if busy_switch {
+                            "A task is running: switching stops it and hands its work over.".into()
+                        } else if switch_pending {
+                            "Resolve the pending switch first.".into()
+                        } else {
+                            "Check installed agents to see whether it is here, or use its saved setup."
+                                .into()
+                        })
+                    }
+                }
+            }
+        };
+
+        let open = self.expanded_agents.contains(&profile.id);
+        let toggle = cx.entity();
+        let toggled = id.clone();
+        let mut card = AgentCard::new(
+            &theme,
+            id.clone(),
+            profile.label.clone(),
+            summary,
+            (state.label(), state.tone()),
+        )
+        .in_use(selected)
+        .open(open)
+        .on_toggle(move |_, app| {
+            toggle.update(app, |this, cx| {
+                if !this.expanded_agents.remove(&toggled) {
+                    this.expanded_agents.insert(toggled.clone());
+                }
+                cx.notify();
+            });
+        })
+        .facts(facts);
+        if let Some(command) = sign_in {
+            card = card.sign_in(command);
+        }
+        if let Some(step) = next_step {
+            card = card.next_step(step);
+        }
+        for action in actions {
+            card = card.action(action);
+        }
+        if let Some(status) = self.launch_status(&profile.adapter.provider) {
+            card = card.footer(status);
+        }
+        if profile.experimental {
+            card = card.footer("Experimental: not yet qualified against every Studio workflow.");
+        }
+        match &self.reveal_agent {
+            Some((reveal, scroll)) if *reveal == profile.id => {
+                let panel = cx.entity().downgrade();
+                div()
+                    .relative()
+                    .child(card)
+                    .child(crate::kit::reveal_probe(scroll.clone(), move |cx| {
+                        let _ = panel.update(cx, |panel, _| panel.reveal_agent = None);
+                    }))
+                    .into_any_element()
+            }
+            _ => card.into_any_element(),
+        }
+    }
+
+    // ---- Find more agents ------------------------------------------------------------------------
+
+    /// The search field of Find more agents, made the first time it is needed.
+    pub(super) fn registry_search(
+        &mut self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<TextInputState> {
+        if let Some(input) = &self.agent_setup.registry_search {
+            return input.clone();
+        }
+        let input = super::input("Search by name or description", window, cx);
+        cx.observe(&input, |_, _, cx| cx.notify()).detach();
+        self.agent_setup.registry_search = Some(input.clone());
+        input
+    }
+
+    /// Fetches the ACP registry on a background thread. Only on the user's click; the list
+    /// is shown, and nothing in it is installed or started.
+    fn find_more_agents(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.agent_setup.registry_list == RegistryList::Loading {
+            return;
+        }
+        self.registry_search(window, cx);
+        self.agent_setup.registry_list = RegistryList::Loading;
+        let task = cx
+            .background_executor()
+            .spawn(async { acp_registry::fetch_registry() });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |panel, cx| {
+                panel.agent_setup.registry_list = match result {
+                    Ok(agents) => RegistryList::Loaded(agents),
+                    Err(error) => RegistryList::Failed(error),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    /// Fills the custom agent form from a registry entry and opens it. The program's path is
+    /// filled only when a file of the binary's name is found where Detect agents looks (an
+    /// existence check); nothing is downloaded, installed or started.
+    fn use_registry_entry(&mut self, registry_id: &str, cx: &mut Context<Self>) {
+        let RegistryList::Loaded(agents) = &self.agent_setup.registry_list else {
+            return;
+        };
+        let Some(agent) = agents.iter().find(|agent| agent.id == registry_id).cloned() else {
+            return;
+        };
+        let draft = agent.custom_draft();
+        let file = AdapterFile {
+            provider: draft.label,
+            executable: String::new(),
+            args: draft.args,
+            auth_env_names: Vec::new(),
+            auth_method: None,
+            mcp: self.mcp_choice,
+            wire: studio_harness::AgentWire::Acp,
+        };
+        self.fill_setup(Some(&file), cx);
+        self.agent_setup.custom_open = true;
+        let missing = format!(
+            "Filled in {}. Install it from its page, enter the absolute path of its program, then Save.",
+            agent.name
+        );
+        let Some(name) = draft.executable_name else {
+            self.say(missing, cx);
+            return;
+        };
+        let managed = self
+            .attached
+            .as_ref()
+            .map(|attached| vec![attached.paths.data.join("adapters")])
+            .unwrap_or_default();
+        let env = studio_harness::DetectionEnv::from_process(managed);
+        let task = cx
+            .background_executor()
+            .spawn(async move { studio_harness::find_executable(&name, &env) });
+        cx.spawn(async move |this, cx| {
+            let found = task.await;
+            let _ = this.update(cx, |panel, cx| {
+                let empty = panel.setup.executable.read(cx).text().is_empty();
+                match found {
+                    Some(path) if empty => {
+                        let path = path.to_string_lossy().into_owned();
+                        panel
+                            .setup
+                            .executable
+                            .update(cx, |input, cx| input.set_text(path.clone(), cx));
+                        panel.say(
+                            format!(
+                                "Filled in {} with {path}. Check the fields, then Save.",
+                                agent.name
+                            ),
+                            cx,
+                        );
+                    }
+                    _ => panel.say(missing, cx),
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// Find more agents: the ACP registry's agents, searchable, after Oleafly's registry
+    /// browser. Each entry fills in the custom agent form or opens its page.
+    fn registry_section(&mut self, theme: &Theme, cx: &mut Context<Self>) -> gpui::Div {
+        let list = self.agent_setup.registry_list.clone();
+        let loading = list == RegistryList::Loading;
+        let find = self
+            .action_button(
+                "agent-registry-find",
+                match list {
+                    RegistryList::Loading => "Loading…",
+                    RegistryList::Loaded(_) => "Reload",
+                    _ => "Find more agents",
+                },
+                !loading,
+                Emphasis::Neutral,
+                cx,
+                |this, window, cx| this.find_more_agents(window, cx),
+            )
+            .into_any_element();
+        let intro = "Agents listed in the public ACP registry. Studio only lists them: an \
+                     agent fills in the custom agent form or opens its page, and nothing is \
+                     installed or started from here.";
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_2))
+            .child(self.section_header("MORE AGENTS", intro, find));
+        match list {
+            RegistryList::Closed => {}
+            RegistryList::Loading => {
+                section = section.child(
+                    setting_card(theme)
+                        .flex()
+                        .items_center()
+                        .gap(px(METRICS.space_2))
+                        .child(Spinner::new(theme, "agent-registry-loading"))
+                        .child(self.line("Loading the agent registry…")),
+                );
+            }
+            RegistryList::Failed(error) => {
+                let retry = self.action_button(
+                    "agent-registry-retry",
+                    "Retry",
                     true,
                     Emphasis::Neutral,
                     cx,
-                    |this, _, cx| {
-                        this.agent_setup.install.cancel();
-                        this.say("Cancelling the install…", cx);
-                    },
-                ));
-            } else {
-                match action {
-                    DetectRowAction::TurnOn => {
-                        actions = actions.child(self.action_button(
-                            format!("agent-detected-{}", profile.id),
-                            "Select",
-                            settings_editable && !self.saves.is_pending(),
-                            Emphasis::Primary,
-                            cx,
-                            move |this, _, cx| this.use_detected(&select_id, cx),
-                        ));
+                    |this, window, cx| this.find_more_agents(window, cx),
+                );
+                section = section.child(
+                    Notice::new(
+                        "agent-registry-error",
+                        UiTone::Danger,
+                        "The agent registry could not be loaded",
+                    )
+                    .body("Check your connection, then retry. You can still register an agent yourself.")
+                    .details(error)
+                    .action(retry),
+                );
+            }
+            RegistryList::Loaded(agents) => {
+                let Some(search) = self.agent_setup.registry_search.clone() else {
+                    return section;
+                };
+                let query = search.read(cx).text().trim().to_owned();
+                let shown: Vec<&RegistryAgent> = agents
+                    .iter()
+                    .filter(|agent| agent.matches(&query))
+                    .collect();
+                section = section
+                    .child(TextInput::new(theme, "agent-registry-search", &search))
+                    .child(self.line(format!("{} of {} agents", shown.len(), agents.len())));
+                if shown.is_empty() {
+                    section = section.child(
+                        setting_card(theme).child(
+                            EmptyState::new(
+                                theme,
+                                if agents.is_empty() {
+                                    "The registry lists no agents".to_owned()
+                                } else {
+                                    format!("No agents match \"{query}\"")
+                                },
+                            )
+                            .body("Try another name, or register the agent yourself above."),
+                        ),
+                    );
+                } else {
+                    let mut rows = setting_card(theme).p_0().flex().flex_col();
+                    for (index, agent) in shown.into_iter().enumerate() {
+                        rows = rows.child(self.registry_row(theme, agent, index > 0, cx));
                     }
-                    DetectRowAction::InstallAdapter => {
-                        actions = actions.child(self.action_button(
-                            format!("agent-install-{}", profile.id),
-                            "Install adapter",
-                            !installing && !setup.scans.is_running(),
-                            Emphasis::Neutral,
-                            cx,
-                            move |this, _, cx| this.install_adapter(&install_id, cx),
-                        ));
-                    }
-                    DetectRowAction::GetNode => {
-                        actions = actions.child(self.action_button(
-                            format!("agent-get-node-{}", profile.id),
-                            "Get Node.js",
-                            true,
-                            Emphasis::Neutral,
-                            cx,
-                            |this, _, cx| {
-                                this.open_link(provider_profiles::NODE_DOWNLOAD_URL, cx);
-                            },
-                        ));
-                    }
-                    DetectRowAction::InstallGuide(url) => {
-                        actions = actions.child(self.action_button(
-                            format!("agent-install-guide-{}", profile.id),
-                            "Install guide",
-                            true,
-                            Emphasis::Neutral,
-                            cx,
-                            move |this, _, cx| {
-                                if this.open_link(url, cx) {
-                                    this.agent_setup.guides_opened.insert(install_id.clone());
-                                }
-                            },
-                        ));
-                    }
-                    DetectRowAction::None => {}
+                    section = section.child(rows);
                 }
             }
-            detect = detect.child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_w_0()
-                            .child(label(&self.theme, profile.label.clone()))
-                            .child(self.line(format!("{status}{location}{hint}"))),
-                    )
-                    .child(actions),
+        }
+        section
+    }
+
+    /// One registry agent: name, version, whether Studio lists it already, description,
+    /// distribution, and its actions.
+    fn registry_row(
+        &mut self,
+        theme: &Theme,
+        agent: &RegistryAgent,
+        divided: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let colors = theme.colors;
+        let builtin = agent
+            .builtin_profile()
+            .filter(|profile| self.registry.profiles.iter().any(|p| p.id == *profile));
+        let mut title = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(METRICS.space_2))
+            .child(
+                text_style(div(), TextStyle::BodyMedium)
+                    .text_color(colors.text_1)
+                    .child(agent.name.clone()),
+            );
+        if !agent.version.is_empty() {
+            title = title.child(
+                text_style(div(), TextStyle::Small)
+                    .text_color(colors.text_3)
+                    .child(format!("v{}", agent.version)),
             );
         }
-        detect
+        if builtin.is_some() {
+            title = title.child(Badge::new("Built in").tone(UiTone::Info));
+        }
+        let mut text = div()
+            .flex_1()
+            .min_w_0()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_1))
+            .child(title);
+        if !agent.description.is_empty() {
+            text = text.child(
+                text_style(div(), TextStyle::Small)
+                    .text_color(colors.text_2)
+                    .child(selectable(agent.description.clone())),
+            );
+        }
+        text = text.child(
+            text_style(div(), TextStyle::Small)
+                .text_color(colors.text_3)
+                .child(selectable(agent.distribution_label())),
+        );
+        let id = agent.id.clone();
+        let mut actions = div().flex().items_center().gap(px(METRICS.space_2));
+        if let Some(profile) = builtin {
+            actions = actions.child(
+                self.action_button(
+                    format!("agent-registry-show-{id}"),
+                    "Show",
+                    true,
+                    Emphasis::Neutral,
+                    cx,
+                    move |this, _, cx| {
+                        this.expanded_agents.insert(profile.to_owned());
+                        cx.notify();
+                    },
+                )
+                .size(ButtonSize::Sm),
+            );
+        } else {
+            let fill = id.clone();
+            actions = actions.child(
+                self.action_button(
+                    format!("agent-registry-use-{id}"),
+                    "Fill in form",
+                    true,
+                    Emphasis::Neutral,
+                    cx,
+                    move |this, _, cx| this.use_registry_entry(&fill, cx),
+                )
+                .size(ButtonSize::Sm),
+            );
+        }
+        if let Some(url) = agent.page_url() {
+            actions = actions.child(
+                self.action_button(
+                    format!("agent-registry-page-{id}"),
+                    "Open page",
+                    true,
+                    Emphasis::Ghost,
+                    cx,
+                    move |this, _, cx| {
+                        this.open_link(&url, cx);
+                    },
+                )
+                .size(ButtonSize::Sm),
+            );
+        }
+        let row = div()
+            .flex()
+            .items_start()
+            .gap(px(METRICS.space_3))
+            .p(px(METRICS.space_3))
+            .child(text)
+            .child(actions);
+        if divided {
+            row.border_t(px(METRICS.size.divider))
+                .border_color(colors.line)
+        } else {
+            row
+        }
+    }
+}
+
+/// The id of the Register a custom agent card. Profile ids are letters, digits, `-` and `_`,
+/// so it never names an agent's card.
+const CUSTOM_CARD_ID: &str = "+custom";
+
+/// Where Find more agents stands. Not fetched until the user asks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RegistryList {
+    #[default]
+    Closed,
+    Loading,
+    /// Offline, refused or not the registry: the reason.
+    Failed(String),
+    Loaded(Vec<RegistryAgent>),
+}
+
+/// What a CLI agent card says about its agent: the one vocabulary every card's badge and
+/// summary use, from what Studio knows (Detect agents, an install or turn-on in flight and
+/// the last connection test of the agent in use).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentState {
+    /// Studio is installing its adapter.
+    Installing,
+    /// The connection test is running.
+    Checking,
+    /// The connection test passed.
+    Ready,
+    /// The connection test reached the agent but it is not signed in.
+    NeedsSignIn,
+    /// The connection test failed for another reason.
+    CheckFailed,
+    /// Its adapter was found, but it has not been tested.
+    Installed,
+    /// Its command line tool was found but not its ACP adapter.
+    AdapterMissing,
+    /// Neither was found.
+    NotInstalled,
+    /// Detect agents has not looked for it, and it has not been tested.
+    NotChecked,
+}
+
+impl AgentState {
+    /// The state of one card. `row` is its Detect row's status, `in_use` whether it is the
+    /// selected agent, `readiness` the workflow's last connection test (it belongs to the
+    /// card in use or turned on), `detected` what Detect agents found.
+    pub fn of(
+        installing: bool,
+        row: Option<RowStatus>,
+        in_use: bool,
+        readiness: &AdapterReadiness,
+        detected: Option<DetectionState>,
+    ) -> Self {
+        use studio_harness::AdapterStatus;
+        if installing {
+            return Self::Installing;
+        }
+        if row == Some(RowStatus::TurningOn) {
+            return Self::Checking;
+        }
+        let found = match detected {
+            Some(DetectionState::Ready) => Self::Installed,
+            Some(DetectionState::AdapterMissing) => Self::AdapterMissing,
+            Some(DetectionState::NotFound) => Self::NotInstalled,
+            None => Self::NotChecked,
+        };
+        if !in_use && row != Some(RowStatus::Readiness) {
+            return found;
+        }
+        match readiness {
+            AdapterReadiness::Checking => Self::Checking,
+            AdapterReadiness::Checked { report, .. } => match report.status {
+                AdapterStatus::Ready { .. } | AdapterStatus::AuthUnknown { .. } => Self::Ready,
+                AdapterStatus::AuthRequired { .. } | AdapterStatus::AuthRejected { .. } => {
+                    Self::NeedsSignIn
+                }
+                _ => Self::CheckFailed,
+            },
+            AdapterReadiness::Unchecked | AdapterReadiness::NotConfigured => found,
+        }
+    }
+
+    /// The badge's words.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Installing => "Installing",
+            Self::Checking => "Checking",
+            Self::Ready => "Ready",
+            Self::NeedsSignIn => "Needs sign-in",
+            Self::CheckFailed => "Check failed",
+            Self::Installed => "Installed · not checked",
+            Self::AdapterMissing => "Adapter missing",
+            Self::NotInstalled => "Not installed",
+            Self::NotChecked => "Not checked yet",
+        }
+    }
+
+    /// The badge's tone: green works, amber needs you, red failed, blue in progress, grey
+    /// not proven either way.
+    pub fn tone(self) -> UiTone {
+        match self {
+            Self::Ready => UiTone::Success,
+            Self::NeedsSignIn | Self::AdapterMissing => UiTone::Warning,
+            Self::CheckFailed => UiTone::Danger,
+            Self::Installing | Self::Checking => UiTone::Info,
+            Self::Installed | Self::NotInstalled | Self::NotChecked => UiTone::Neutral,
+        }
+    }
+}
+
+#[cfg(test)]
+mod state_tests {
+    use super::*;
+    use studio_harness::{AdapterStatus, DiscoveryReport};
+
+    fn checked(status: AdapterStatus) -> AdapterReadiness {
+        AdapterReadiness::Checked {
+            report: Box::new(DiscoveryReport {
+                status,
+                executable: None,
+                initialized: None,
+            }),
+            at_unix: 0,
+        }
+    }
+
+    #[test]
+    fn the_connection_test_speaks_only_for_the_agent_in_use() {
+        let ready = checked(AdapterStatus::Ready {
+            agent: "Claude Code".into(),
+            version: "2".into(),
+        });
+        let found = Some(DetectionState::Ready);
+        let row = Some(RowStatus::Detected(DetectionState::Ready));
+        assert_eq!(
+            AgentState::of(false, row, true, &ready, found),
+            AgentState::Ready
+        );
+        // Another agent found on disk is installed, not ready: it was never tested.
+        assert_eq!(
+            AgentState::of(false, row, false, &ready, found),
+            AgentState::Installed
+        );
+        let sign_in = checked(AdapterStatus::AuthRequired { methods: vec![] });
+        assert_eq!(
+            AgentState::of(false, row, true, &sign_in, found),
+            AgentState::NeedsSignIn
+        );
+        let failed = checked(AdapterStatus::ProtocolMismatch {
+            detail: "v2".into(),
+        });
+        assert_eq!(
+            AgentState::of(false, row, true, &failed, found),
+            AgentState::CheckFailed
+        );
+        // Turned on but not the selected profile yet: its own test counts.
+        assert_eq!(
+            AgentState::of(false, Some(RowStatus::Readiness), false, &sign_in, found),
+            AgentState::NeedsSignIn
+        );
+    }
+
+    #[test]
+    fn detection_names_the_rest_and_work_in_flight_comes_first() {
+        let unchecked = AdapterReadiness::Unchecked;
+        let of = |detected| AgentState::of(false, None, false, &unchecked, detected);
+        assert_eq!(of(None), AgentState::NotChecked);
+        assert_eq!(
+            of(Some(DetectionState::AdapterMissing)),
+            AgentState::AdapterMissing
+        );
+        assert_eq!(of(Some(DetectionState::NotFound)), AgentState::NotInstalled);
+        // In use but never tested: what detection found.
+        assert_eq!(
+            AgentState::of(false, None, true, &unchecked, Some(DetectionState::Ready)),
+            AgentState::Installed
+        );
+        assert_eq!(
+            AgentState::of(true, None, true, &AdapterReadiness::Checking, None),
+            AgentState::Installing
+        );
+        assert_eq!(
+            AgentState::of(false, Some(RowStatus::TurningOn), false, &unchecked, None),
+            AgentState::Checking
+        );
     }
 }

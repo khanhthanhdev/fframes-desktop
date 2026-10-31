@@ -19,9 +19,9 @@ use studio_harness::{
     },
     driver::{
         AcpDriver, AgentEvent, AgentEventKind, DriverConfig, DriverError, DriverLimits, DriverMode,
-        DriverStatus, FailureKind, McpConfigError, McpStdioServer, McpStdioSupport, MessageRole,
-        OptionValue, OwnershipSource, PermissionReply, PermissionResolution, Phase, PromptImage,
-        StopReasonKind,
+        DriverStatus, FailureKind, McpConfigError, McpHttpServer, McpStdioServer, McpStdioSupport,
+        MessageRole, OptionValue, OwnershipSource, PermissionReply, PermissionResolution, Phase,
+        PromptImage, StopReasonKind, UserMcpLaunch,
     },
 };
 
@@ -78,6 +78,7 @@ fn config(root: &Path, mode: &str) -> DriverConfig {
         ownership: OwnershipSource::Verified,
         mode: DriverMode::Full,
         mcp_servers: Vec::new(),
+        user_mcp_servers: Vec::new(),
         mcp_stdio: McpStdioSupport::default(),
     }
 }

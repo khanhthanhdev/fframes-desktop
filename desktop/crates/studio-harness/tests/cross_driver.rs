@@ -135,6 +135,7 @@ impl Fixture {
             ownership: OwnershipSource::Verified,
             mode: DriverMode::Full,
             mcp_servers: vec![],
+            user_mcp_servers: Vec::new(),
             mcp_stdio: McpStdioSupport::Baseline,
         }
     }

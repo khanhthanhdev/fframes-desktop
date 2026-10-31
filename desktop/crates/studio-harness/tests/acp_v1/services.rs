@@ -313,6 +313,83 @@ fn configured_stdio_servers_reach_session_new_and_restore_requests_verbatim() {
 }
 
 #[test]
+fn user_http_servers_reach_the_session_only_when_the_agent_takes_http() {
+    let user = |root: &Path| -> Vec<UserMcpLaunch> {
+        let mut docs: UserMcpLaunch = McpHttpServer::new(
+            "docs",
+            "https://docs.test/mcp",
+            vec![("Authorization".into(), "Bearer user-http-secret-88".into())],
+        )
+        .unwrap()
+        .into();
+        // ACP cannot filter a server's tools; the switch has no wire form.
+        docs.disabled_tools = vec!["delete_page".into()];
+        let files = McpStdioServer::new("files", root.join("bin").join("files"), vec![], vec![])
+            .unwrap()
+            .into();
+        vec![files, docs]
+    };
+    let root = tempfile::tempdir().unwrap();
+    let mut cfg = config(root.path(), "mcp-http");
+    cfg.mcp_servers = vec![project_mcp_server(root.path())];
+    cfg.user_mcp_servers = user(root.path());
+    let sent = |driver: &AcpDriver| -> Vec<String> {
+        let events = collect_until(driver, |event| {
+            matches!(event.kind, AgentEventKind::SessionReady { .. })
+        });
+        match &events.last().unwrap().kind {
+            AgentEventKind::SessionReady {
+                user_mcp_servers, ..
+            } => user_mcp_servers.clone(),
+            _ => unreachable!(),
+        }
+    };
+    let (driver, _manager) = start_with(cfg);
+    let info = driver.wait_ready(WAIT).unwrap();
+    assert!(info.initialized.capabilities.mcp_http);
+    assert_eq!(sent(&driver), ["files", "docs"]);
+    let servers = read_json(root.path(), "session-params.json")["mcpServers"].clone();
+    let names: Vec<&str> = servers
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|server| server["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["fframes-project", "files", "docs"]);
+    assert_eq!(
+        servers[2],
+        serde_json::json!({
+            "type": "http",
+            "name": "docs",
+            "url": "https://docs.test/mcp",
+            "headers": [{"name": "Authorization", "value": "Bearer user-http-secret-88"}],
+        })
+    );
+    drop(driver.shutdown());
+
+    // An agent that did not advertise `mcpCapabilities.http` gets the stdio servers only.
+    let root = tempfile::tempdir().unwrap();
+    let mut cfg = config(root.path(), "ok");
+    cfg.mcp_servers = vec![project_mcp_server(root.path())];
+    cfg.user_mcp_servers = user(root.path());
+    let (driver, _manager) = start_with(cfg);
+    let info = driver.wait_ready(WAIT).unwrap();
+    assert!(!info.initialized.capabilities.mcp_http);
+    // The host learns exactly which of the user's servers went out.
+    assert_eq!(sent(&driver), ["files"]);
+    let servers = read_json(root.path(), "session-params.json")["mcpServers"].clone();
+    let names: Vec<&str> = servers
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|server| server["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["fframes-project", "files"]);
+    assert!(!servers.to_string().contains("user-http-secret-88"));
+    drop(driver.shutdown());
+}
+
+#[test]
 fn unsupported_or_empty_stdio_configuration_sends_an_empty_list_and_reports_the_capability() {
     let root = tempfile::tempdir().unwrap();
     let (driver, _manager) = start(root.path(), "ok");

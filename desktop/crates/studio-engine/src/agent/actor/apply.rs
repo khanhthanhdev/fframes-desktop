@@ -283,9 +283,13 @@ impl Actor {
             return;
         };
         let offer = match &build {
-            Some(build) => {
-                self.offer_tools(build, &active.adapter, tools_settings.as_ref(), &active.ctx)
-            }
+            Some(build) => self.offer_tools(
+                build,
+                &active.adapter,
+                tools_settings.as_ref(),
+                &active.ctx,
+                &active.agent_tools.enabled_tools(),
+            ),
             None => ToolOffer::default(),
         };
         let route = offer.route();

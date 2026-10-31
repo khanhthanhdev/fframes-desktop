@@ -523,3 +523,57 @@ fn initialize_answers_the_one_revision_this_server_implements_whatever_the_clien
         );
     }
 }
+
+#[test]
+fn turned_off_tools_are_left_out_of_the_list_and_refused_on_every_route() {
+    let h = harness();
+    let task = task();
+    let file = h
+        .broker
+        .grant_tools(
+            draft(&task),
+            Duration::from_secs(600),
+            &["timeline", "build_status"],
+        )
+        .unwrap()
+        .capability_file;
+
+    // The command line reaches the broker, which refuses a tool the user turned off.
+    let refused = finish(&mut cli(
+        Some(&file),
+        &["render_frame", "--json", r#"{"frame":3}"#],
+    ));
+    assert_eq!(refused.code, 1, "{}", refused.stderr);
+    let error: Value = serde_json::from_str(refused.stderr.trim_end()).unwrap();
+    assert_eq!(error["error"]["code"], "method_not_found");
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("turned off")
+    );
+    assert_eq!(finish(&mut cli(Some(&file), &["timeline"])).code, 0);
+
+    // MCP lists only the allowed tools and refuses the others itself.
+    let mut mcp = McpChild::spawn(&file);
+    mcp.send(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion": MCP_PROTOCOL_VERSION}}));
+    mcp.recv();
+    mcp.send(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
+    let list = mcp.recv();
+    let listed: Vec<&str> = list["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|t| t["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(listed, ["timeline", "build_status"]);
+    mcp.send(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"render_frame","arguments":{"frame":3}}}));
+    let call = mcp.recv();
+    assert_eq!(call["error"]["code"], -32602, "{call}");
+    assert!(
+        call["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("turned off")
+    );
+}

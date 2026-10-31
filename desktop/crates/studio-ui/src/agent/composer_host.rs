@@ -17,7 +17,12 @@ use studio_engine::agent::{
 };
 
 use super::composer::{
-    AttachKind, AttachmentId, Composer, ComposerEvent, SlashCommand, SteerMode, Submission,
+    AttachKind, AttachmentId, Composer, ComposerControl, ComposerEvent, SlashCommand, SteerMode,
+    Submission,
+};
+use super::composer_tools::{
+    ApprovalPopover, ToolsPopover, approval_menu, policy_name, policy_short_label, tools_menu,
+    tools_rows,
 };
 use super::history::{HistoryEvent, HistoryList};
 use super::question_card::ItemDraft;
@@ -66,7 +71,23 @@ pub(super) struct ComposerHost {
     pub sessions_serial: u64,
     /// The model option the composer shows beside Send: its id and the current value's name.
     pub last_model: Option<(String, String)>,
+    /// What the Tools and approval triggers last showed, so only a change rebuilds them.
+    pub last_controls: Option<ControlsShown>,
 }
+
+/// The composer popover that is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ComposerPopover {
+    Tools,
+    Approval,
+}
+
+/// The Tools trigger's label, the policy and the open popover.
+pub(super) type ControlsShown = (
+    Option<String>,
+    studio_proto::PermissionPolicy,
+    Option<ComposerPopover>,
+);
 
 impl ComposerHost {
     pub(super) fn new(
@@ -112,6 +133,7 @@ impl ComposerHost {
             questions: HashMap::new(),
             sessions_serial: 0,
             last_model: None,
+            last_controls: None,
         }
     }
 }
@@ -163,6 +185,7 @@ impl ConversationPanel {
                 .update(cx, |composer, cx| composer.set_commands(commands, cx));
         }
         self.sync_model(&snapshot, cx);
+        self.sync_composer_controls(cx);
         let mode = match view.steer {
             SteerSupport::None => SteerMode::None,
             SteerSupport::AtBoundary => SteerMode::AtBoundary,
@@ -231,6 +254,195 @@ impl ConversationPanel {
         self.host
             .composer
             .update(cx, |composer, cx| composer.set_model(choice, cx));
+    }
+
+    // ---- Tools and approval ------------------------------------------------------------------
+
+    /// Takes the MCP servers and tool choices Settings → Agent holds now. The shell calls it
+    /// after every change, whichever side made it.
+    pub fn set_agent_tools(
+        &mut self,
+        settings: studio_engine::agent_settings::AgentToolSettings,
+        cx: &mut Context<Self>,
+    ) {
+        if self.agent_tools == settings {
+            return;
+        }
+        // A server added or removed on the Settings page while the list is open.
+        if let Some((ComposerPopover::Tools, state)) = &mut self.composer_popover
+            && state.len != tools_rows(&settings).len()
+        {
+            *state = tools_menu(&settings, state.trigger_bounds);
+        }
+        self.agent_tools = settings;
+        self.sync_composer_controls(cx);
+        cx.notify();
+    }
+
+    /// A task is under way: it keeps the tools and the policy it started with.
+    pub(super) fn task_running(&self) -> bool {
+        self.snapshot.as_ref().is_some_and(|snapshot| {
+            snapshot.composer.turn_live
+                || snapshot
+                    .task
+                    .as_ref()
+                    .is_some_and(|task| task.phase.stoppable())
+        })
+    }
+
+    /// Shows the Tools and approval triggers after the model select.
+    pub(super) fn sync_composer_controls(&mut self, cx: &mut Context<Self>) {
+        let total = studio_engine::agent_tools::TOOL_NAMES.len();
+        let on = self.agent_tools.enabled_tools().len();
+        let tools_label = (on < total).then(|| format!("{on}/{total}"));
+        let policy = self.permission_policy;
+        let open = self.composer_popover.as_ref().map(|(kind, _)| *kind);
+        let shown = (tools_label.clone(), policy, open);
+        if self.host.last_controls.as_ref() == Some(&shown) {
+            return;
+        }
+        self.host.last_controls = Some(shown);
+        let opener = |kind: ComposerPopover, cx: &mut Context<Self>| {
+            let panel = cx.entity().downgrade();
+            Rc::new(
+                move |bounds: &gpui::Bounds<gpui::Pixels>, window: &mut Window, cx: &mut App| {
+                    let _ = panel.update(cx, |this, cx| {
+                        this.toggle_composer_popover(kind, *bounds, window, cx)
+                    });
+                },
+            )
+        };
+        let controls = vec![
+            ComposerControl {
+                id: "composer-tools".into(),
+                icon: Icon::Hammer,
+                label: tools_label.map(Into::into),
+                name: format!("Tools: {on} of {total} on").into(),
+                open: open == Some(ComposerPopover::Tools),
+                on_open: opener(ComposerPopover::Tools, cx),
+            },
+            ComposerControl {
+                id: "composer-approval".into(),
+                icon: Icon::ShieldQuestion,
+                label: Some(policy_short_label(policy).into()),
+                name: policy_name(policy).into(),
+                open: open == Some(ComposerPopover::Approval),
+                on_open: opener(ComposerPopover::Approval, cx),
+            },
+        ];
+        self.host
+            .composer
+            .update(cx, |composer, cx| composer.set_controls(controls, cx));
+    }
+
+    /// Opens the Tools popover or the approval selector against its trigger, or closes it
+    /// when it is open.
+    pub(super) fn toggle_composer_popover(
+        &mut self,
+        kind: ComposerPopover,
+        trigger: gpui::Bounds<gpui::Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.composer_popover.as_ref().map(|(open, _)| *open) == Some(kind) {
+            self.close_composer_popover(window, cx);
+            return;
+        }
+        self.open_config = None;
+        let state = match kind {
+            ComposerPopover::Tools => tools_menu(&self.agent_tools, Some(trigger)),
+            ComposerPopover::Approval => approval_menu(self.permission_policy, Some(trigger)),
+        };
+        self.composer_popover = Some((kind, state));
+        window.focus(&self.popover_focus, cx);
+        self.sync_composer_controls(cx);
+        cx.notify();
+    }
+
+    pub(super) fn close_composer_popover(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.composer_popover.take().is_some() {
+            self.focus_composer(window, cx);
+            self.sync_composer_controls(cx);
+            cx.notify();
+        }
+    }
+
+    /// A switch in the Tools popover: shown at once, saved by the shell.
+    fn change_agent_tools(
+        &mut self,
+        settings: studio_engine::agent_settings::AgentToolSettings,
+        cx: &mut Context<Self>,
+    ) {
+        self.agent_tools = settings.clone();
+        self.sync_composer_controls(cx);
+        cx.emit(PanelEvent::SetAgentTools(settings));
+        cx.notify();
+    }
+
+    /// A policy in the approval selector; the shell saves it and hands it back.
+    fn choose_policy(
+        &mut self,
+        policy: studio_proto::PermissionPolicy,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.close_composer_popover(window, cx);
+        if policy != self.permission_policy {
+            cx.emit(PanelEvent::SetPermissionPolicy(policy));
+        }
+    }
+
+    /// A popover's link to Settings → Agent.
+    fn manage_in_settings(&mut self, tab: AgentTab, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_composer_popover(window, cx);
+        cx.emit(PanelEvent::OpenSettings(SettingsLink::new(tab)));
+    }
+
+    pub(super) fn render_composer_popover(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let (kind, state) = self.composer_popover.as_ref()?;
+        let running = self.task_running();
+        let entity = cx.entity();
+        let (highlight, manage, dismiss) = (entity.clone(), entity.clone(), entity.clone());
+        let on_highlight = move |index: usize, _: &mut Window, cx: &mut App| {
+            highlight.update(cx, |this, cx| {
+                if let Some((_, state)) = &mut this.composer_popover {
+                    state.set_highlighted(index);
+                }
+                cx.notify();
+            });
+        };
+        let on_manage = move |tab: AgentTab, window: &mut Window, cx: &mut App| {
+            manage.update(cx, |this, cx| this.manage_in_settings(tab, window, cx));
+        };
+        let on_dismiss = move |window: &mut Window, cx: &mut App| {
+            dismiss.update(cx, |this, cx| this.close_composer_popover(window, cx));
+        };
+        Some(match kind {
+            ComposerPopover::Tools => {
+                ToolsPopover::new(&self.theme, self.agent_tools.clone(), state)
+                    .running(running)
+                    .focus(&self.popover_focus)
+                    .on_change(move |settings, _, cx| {
+                        entity.update(cx, |this, cx| this.change_agent_tools(settings, cx));
+                    })
+                    .on_manage(on_manage)
+                    .on_highlight(on_highlight)
+                    .on_dismiss(on_dismiss)
+                    .into_any_element()
+            }
+            ComposerPopover::Approval => {
+                ApprovalPopover::new(&self.theme, self.permission_policy, state)
+                    .running(running)
+                    .focus(&self.popover_focus)
+                    .on_choose(move |policy, window, cx| {
+                        entity.update(cx, |this, cx| this.choose_policy(policy, window, cx));
+                    })
+                    .on_manage(on_manage)
+                    .on_highlight(on_highlight)
+                    .on_dismiss(on_dismiss)
+                    .into_any_element()
+            }
+        })
     }
 
     /// A different conversation, or none: nothing prepared for the old one may travel.

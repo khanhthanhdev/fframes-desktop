@@ -303,7 +303,7 @@ impl Actor {
                 active: mcp_active,
                 cli_active,
                 capability_file,
-                note: self.mcp_note.clone(),
+                note: self.tool_notes_view(),
             },
             task,
             queue: self

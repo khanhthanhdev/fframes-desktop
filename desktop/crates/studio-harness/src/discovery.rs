@@ -485,6 +485,7 @@ pub fn probe_adapter_on(
             ownership: OwnershipSource::Verified,
             mode: DriverMode::InitializeOnly,
             mcp_servers: Vec::new(),
+            user_mcp_servers: Vec::new(),
             mcp_stdio: McpStdioSupport::Baseline,
         };
         let driver = match start_driver(wire, config, processes) {
@@ -530,6 +531,7 @@ pub fn probe_adapter_on(
                 DriverMode::InitializeOnly
             },
             mcp_servers: Vec::new(),
+            user_mcp_servers: Vec::new(),
             mcp_stdio: McpStdioSupport::Baseline,
         },
         processes,

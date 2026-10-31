@@ -26,6 +26,7 @@
 //! GPUI never sees this module's internals: it polls [`AgentWorkflow::snapshot`] (or is
 //! woken by the optional `notify` callback) and sends commands.
 mod actor;
+pub mod approvals;
 mod attachments;
 mod auto_answer;
 mod composer;
@@ -39,6 +40,7 @@ pub mod probe_cache;
 pub mod session_store;
 mod tools;
 
+pub use approvals::ApprovalRule;
 pub use attachments::{
     AttachmentRequest, FileIdentity, PreparedAttachment, StageToken, StagedAttachment,
 };
@@ -337,6 +339,9 @@ pub(crate) struct Shared {
     pub job_faults: Option<JobFaults>,
     pub settings: Mutex<Settings>,
     pub snapshot: Mutex<Arc<WorkflowSnapshot>>,
+    /// The project's saved "Always in this project" rules, as in its approvals file; the
+    /// lock also orders the file's writes. A task freezes a copy when it starts.
+    pub approvals: Mutex<Vec<ApprovalRule>>,
     /// Bounded UI-only image handles; never serialized or added to snapshots.
     evidence_images: Mutex<EvidenceImageCache>,
     pub changed: Condvar,
@@ -383,6 +388,7 @@ impl AgentWorkflow {
             .map_err(WorkflowError::History)?;
         let store = RowStore::open_with_floor(startup.log, config.row_limits, startup.row_floor)
             .map_err(|e: LogError| WorkflowError::History(e.to_string()))?;
+        let approvals = approvals::load(&config.paths, &project);
         let (tx, rx) = channel();
         let empty = Arc::new(WorkflowSnapshot {
             revision: 0,
@@ -444,6 +450,7 @@ impl AgentWorkflow {
                 .ownership_policy
                 .unwrap_or(crate::containment::OwnershipPolicy::Validated),
             snapshot: Mutex::new(empty),
+            approvals: Mutex::new(approvals),
             evidence_images: Mutex::new(EvidenceImageCache::default()),
             changed: Condvar::new(),
             registry: Mutex::new(Registry::default()),
@@ -893,6 +900,61 @@ impl AgentWorkflow {
         policy: studio_proto::PermissionPolicy,
     ) -> Result<(), WorkflowError> {
         self.send(Msg::SetPermissionPolicy(policy))
+    }
+
+    /// The rules saved for this project with "Always in this project", oldest first.
+    pub fn approval_rules(&self) -> Vec<ApprovalRule> {
+        self.shared.approvals.lock().clone()
+    }
+
+    /// Saves `rule` for this project (stamped with the time) and hands the rules to the
+    /// running task, which uses them from its next request. Writes a small file in the
+    /// app data.
+    pub fn remember_approval(&self, rule: ApprovalRule) -> Result<(), WorkflowError> {
+        if !rule.is_valid() {
+            return Err(WorkflowError::Refused(
+                "That request cannot be saved as a rule.".into(),
+            ));
+        }
+        self.change_approvals(|rules| {
+            if !rules.iter().any(|kept| kept.same_as(&rule)) {
+                rules.push(ApprovalRule {
+                    saved_unix: approvals::now_unix(),
+                    ..rule
+                });
+            }
+        })
+    }
+
+    /// Removes `rule` from this project; the running task stops using it from its next
+    /// request.
+    pub fn forget_approval(&self, rule: &ApprovalRule) -> Result<(), WorkflowError> {
+        self.change_approvals(|rules| rules.retain(|kept| !kept.same_as(rule)))
+    }
+
+    fn change_approvals(
+        &self,
+        change: impl FnOnce(&mut Vec<ApprovalRule>),
+    ) -> Result<(), WorkflowError> {
+        let rules = {
+            let mut saved = self.shared.approvals.lock();
+            let mut rules = saved.clone();
+            change(&mut rules);
+            approvals::save(&self.shared.paths, &self.shared.project, &rules)
+                .map_err(WorkflowError::Refused)?;
+            *saved = rules.clone();
+            rules
+        };
+        self.send(Msg::SetApprovals(rules))
+    }
+
+    /// The user's own MCP servers and turned-off project tools. The running task keeps the
+    /// settings it started with.
+    pub fn set_agent_tools(
+        &self,
+        settings: crate::agent_settings::AgentToolSettings,
+    ) -> Result<(), WorkflowError> {
+        self.send(Msg::SetAgentTools(settings))
     }
 
     /// The preview now shows `revision` (clears the awaiting-preview label).

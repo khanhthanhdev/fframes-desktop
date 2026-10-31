@@ -199,6 +199,8 @@ struct CapabilityFile {
     socket: PathBuf,
     capability: String,
     secret: Secret,
+    /// The tools the capability may call; `None` (a file without the field) means all.
+    tools: Option<Vec<String>>,
 }
 
 fn parse_capability(bytes: &[u8]) -> Result<CapabilityFile, ClientError> {
@@ -224,10 +226,22 @@ fn parse_capability(bytes: &[u8]) -> Result<CapabilityFile, ClientError> {
     {
         return Err(malformed());
     }
+    let tools = match value.get("tools") {
+        None => None,
+        Some(Value::Array(names)) => Some(
+            names
+                .iter()
+                .map(|name| name.as_str().map(str::to_owned))
+                .collect::<Option<Vec<_>>>()
+                .ok_or_else(malformed)?,
+        ),
+        Some(_) => return Err(malformed()),
+    };
     Ok(CapabilityFile {
         socket: PathBuf::from(socket),
         capability: capability.to_string(),
         secret: Secret(secret.to_string()),
+        tools,
     })
 }
 
@@ -294,6 +308,13 @@ mod imp {
             } else {
                 Err(ClientError::Protocol("unexpected hello reply".into()))
             }
+        }
+
+        /// The tools `capability_file` may call (`None`: all of them), read with the same
+        /// checks as [`Self::connect`]. The broker enforces the list; this only lets a
+        /// facade leave the others out of its listing.
+        pub fn allowed_tools(capability_file: &Path) -> Result<Option<Vec<String>>, ClientError> {
+            Ok(read_capability(capability_file)?.tools)
         }
 
         /// Replace the per-call wall-clock limit (default 10 minutes).

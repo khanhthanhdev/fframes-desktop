@@ -16,14 +16,16 @@
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, Rgba,
-    Role, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
-    px,
+    AnyElement, App, Bounds, ElementId, InteractiveElement, IntoElement, ParentElement, Pixels,
+    RenderOnce, Rgba, Role, ScrollHandle, SharedString, StatefulInteractiveElement, Styled, Window,
+    canvas, div, point, prelude::FluentBuilder, px,
 };
 
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
-use super::interact::{BoundsHandler, Handler, bounds_probe, focusable};
+use super::interact::{
+    BoundsHandler, Handler, RevealFocused, RevealedBounds, bounds_probe, focusable,
+};
 use super::{Emphasis, Icon, IconButton, IconButtonSize, icon};
 
 /// Oleafly's settings nav, `w-52`.
@@ -109,6 +111,7 @@ pub struct SettingsFrame {
     heading: Option<SharedString>,
     header_end: Option<AnyElement>,
     radius: f32,
+    scroll: Option<ScrollHandle>,
     content: Vec<AnyElement>,
 }
 
@@ -130,6 +133,7 @@ impl SettingsFrame {
             heading: None,
             header_end: None,
             radius: 0.,
+            scroll: None,
             content: Vec::new(),
         }
     }
@@ -212,11 +216,94 @@ impl SettingsFrame {
         self
     }
 
+    /// Tracks the page's scrolling with `handle`, so a deep link can bring one item into view
+    /// (see [`reveal_probe`]) and a control focused from the keyboard scrolls into view.
+    pub fn scroll(mut self, handle: &ScrollHandle) -> Self {
+        self.scroll = Some(handle.clone());
+        self
+    }
+
     /// The page's sections, 32 px apart.
     pub fn children(mut self, content: impl IntoIterator<Item = AnyElement>) -> Self {
         self.content.extend(content);
         self
     }
+}
+
+/// An invisible layer over one item of a settings page that scrolls the page (whose
+/// [`SettingsFrame::scroll`] handle is `handle`) until the item is in view, then calls
+/// `done` with the app. For a deep link to that item: the item is `relative` and holds the
+/// layer only while the link is pending, and `done` ends it.
+pub fn reveal_probe(handle: ScrollHandle, done: impl Fn(&mut App) + 'static) -> AnyElement {
+    canvas(
+        move |target, window, cx| {
+            let view = handle.bounds();
+            // The page has not been laid out yet.
+            if view.size.height <= px(0.) {
+                return;
+            }
+            let offset = handle.offset();
+            let wanted = reveal_offset(view, target, offset.y, handle.max_offset().y, px(PAGE_PAD));
+            if wanted != offset.y {
+                handle.set_offset(point(offset.x, wanted));
+                // The offset shows from the next frame on.
+                window.request_animation_frame();
+            }
+            done(cx);
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .top_0()
+    .left_0()
+    .size_full()
+    .into_any_element()
+}
+
+/// The [RevealFocused] listener of a container whose scrolling is handle: when a control
+/// inside it takes the focus from the keyboard, scrolls until the control is in view with
+/// margin to spare.
+pub fn reveal_focused(
+    handle: ScrollHandle,
+    margin: f32,
+) -> impl Fn(&RevealFocused, &mut Window, &mut App) + 'static {
+    move |_, window, cx| {
+        let Some(target) = cx
+            .try_global::<RevealedBounds>()
+            .and_then(|revealed| revealed.0)
+        else {
+            return;
+        };
+        cx.set_global(RevealedBounds(None));
+        let view = handle.bounds();
+        if view.size.height <= px(0.) {
+            return;
+        }
+        let offset = handle.offset();
+        let wanted = reveal_offset(view, target, offset.y, handle.max_offset().y, px(margin));
+        if wanted != offset.y {
+            handle.set_offset(point(offset.x, wanted));
+            window.refresh();
+        }
+    }
+}
+
+/// The vertical scroll offset (zero or below) that shows `target`, as painted at `offset`,
+/// inside `view` with `margin` to spare: unchanged when it is in view already, otherwise its
+/// top `margin` below the view's top, within the page's `max` scroll.
+fn reveal_offset(
+    view: Bounds<Pixels>,
+    target: Bounds<Pixels>,
+    offset: Pixels,
+    max: Pixels,
+    margin: Pixels,
+) -> Pixels {
+    if target.top() >= view.top() + margin && target.bottom() <= view.bottom() - margin {
+        return offset;
+    }
+    // Where the target's top sits in the page, unscrolled.
+    let top = target.top() - view.top() - offset;
+    (margin - top).clamp(-max, px(0.))
 }
 
 /// The content header's height (Oleafly's settings `h-12`).
@@ -304,6 +391,7 @@ impl RenderOnce for SettingsFrame {
             heading,
             header_end,
             radius,
+            scroll,
             content,
         } = self;
         let heading = heading.map(|heading| {
@@ -498,6 +586,10 @@ impl RenderOnce for SettingsFrame {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
+                            .when_some(scroll, |page, handle| {
+                                page.track_scroll(&handle)
+                                    .on_action(reveal_focused(handle, PAGE_PAD))
+                            })
                             .p(px(PAGE_PAD))
                             .gap(px(PAGE_PAD))
                             .children(content),
@@ -554,5 +646,78 @@ mod tests {
         tab(cx);
         press(cx, "space");
         assert_eq!(*picks.borrow(), ["back", "Setup"]);
+    }
+
+    /// A settings page far taller than the window, its rows inside `focus`.
+    struct LongPage {
+        focus: gpui::FocusHandle,
+        scroll: ScrollHandle,
+    }
+
+    impl Render for LongPage {
+        fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            let theme = Theme::for_window(window, cx);
+            let rows = (0..100usize).map(|i| {
+                crate::kit::Button::new(&theme, ("row", i))
+                    .label(format!("Row {i}"))
+                    .into_any_element()
+            });
+            div().size_full().track_focus(&self.focus).child(
+                SettingsFrame::new(&theme, "frame", Vec::new())
+                    .scroll(&self.scroll)
+                    .children(rows),
+            )
+        }
+    }
+
+    #[gpui::test]
+    fn a_control_tab_reaches_below_the_fold_scrolls_into_view(cx: &mut TestAppContext) {
+        let (page, cx) = cx.add_window_view(|_, cx| LongPage {
+            focus: cx.focus_handle(),
+            scroll: ScrollHandle::new(),
+        });
+        let (focus, scroll) =
+            page.read_with(cx, |page, _| (page.focus.clone(), page.scroll.clone()));
+        cx.update(|window, cx| window.focus(&focus, cx));
+        cx.run_until_parked();
+        assert_eq!(scroll.offset().y, px(0.));
+        for _ in 0..100 {
+            cx.update(|window, cx| crate::kit::focus_within(&focus, false, window, cx));
+            cx.run_until_parked();
+        }
+        // The last row is in view: the page scrolled to its end.
+        assert!(scroll.max_offset().y > px(0.), "the page scrolls");
+        assert_eq!(scroll.offset().y, -scroll.max_offset().y);
+    }
+
+    #[test]
+    fn a_revealed_item_scrolls_into_view_only_when_it_is_out_of_view() {
+        use gpui::{point, size};
+        // A 400 px page at the top of the window that scrolls 1000 px; a 100 px item.
+        let view = Bounds::new(point(px(0.), px(0.)), size(px(600.), px(400.)));
+        let item = |top: f32| Bounds::new(point(px(0.), px(top)), size(px(600.), px(100.)));
+        let margin = px(20.);
+        let max = px(1000.);
+        // In view: the page stays where it is.
+        assert_eq!(
+            reveal_offset(view, item(100.), px(-50.), max, margin),
+            px(-50.)
+        );
+        // Below the view (painted at 700 while scrolled 50): its top comes 20 px under the
+        // view's top, so it is 750 into the page.
+        assert_eq!(
+            reveal_offset(view, item(700.), px(-50.), max, margin),
+            px(-730.)
+        );
+        // Above the view: scrolled back up, but never past the page's top.
+        assert_eq!(
+            reveal_offset(view, item(-40.), px(-50.), max, margin),
+            px(0.)
+        );
+        // Near the page's end: no further than it scrolls.
+        assert_eq!(
+            reveal_offset(view, item(1350.), px(0.), max, margin),
+            px(-1000.)
+        );
     }
 }

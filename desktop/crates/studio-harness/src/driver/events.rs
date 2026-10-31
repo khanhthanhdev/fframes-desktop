@@ -340,6 +340,12 @@ pub enum AgentEventKind {
     SessionReady {
         session_id: String,
         restored: bool,
+        /// The user's MCP servers (by name) this session was actually given. A server the
+        /// agent cannot take is missing: an HTTP server for an ACP agent that did not
+        /// advertise `mcpCapabilities.http` at `initialize`, or every server when the host
+        /// disabled MCP servers for this agent.
+        #[serde(default)]
+        user_mcp_servers: Vec<String>,
     },
     Options(AgentOptions),
     /// Batched text; consecutive deltas of one role coalesce into one event.

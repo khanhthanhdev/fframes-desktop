@@ -860,7 +860,7 @@ pub fn mcp_server_for(
     studio_mcp: &std::path::Path,
 ) -> Result<studio_harness::McpStdioServer, studio_harness::McpConfigError> {
     studio_harness::McpStdioServer::new(
-        "fframes-studio",
+        crate::agent_settings::STUDIO_SERVER_NAME,
         studio_mcp,
         vec![
             "--capability".to_owned(),

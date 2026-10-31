@@ -4,6 +4,8 @@ use gpui::{Div, Styled, div, px};
 
 use studio_theme::{METRICS, Shadow, Theme, shadow_for};
 
+use super::Divider;
+
 /// A card: `card` behind a `line` hairline at the card radius.
 pub struct Card;
 
@@ -36,13 +38,9 @@ impl Card {
     }
 }
 
-/// A hairline horizontal rule in the `line` colour.
-pub fn divider(theme: &Theme) -> Div {
-    div()
-        .h(px(METRICS.size.divider))
-        .w_full()
-        .flex_none()
-        .bg(theme.colors.line)
+/// A hairline horizontal rule in the `line` colour: [`Divider::horizontal`].
+pub fn divider(theme: &Theme) -> Divider {
+    Divider::horizontal(theme)
 }
 
 /// An anchored floating panel, not a modal: `popover` behind a `line` hairline with the

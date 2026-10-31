@@ -1,7 +1,7 @@
 //! Claude Code launch: flags, the private MCP and settings files, and the version gate.
 
 use super::super::{
-    McpStdioServer,
+    McpStdioServer, McpTransport, UserMcpLaunch,
     native_launch::{self, UserArgs, Version},
 };
 use std::path::Path;
@@ -86,39 +86,74 @@ pub(crate) fn wire_args(
     args
 }
 
-/// `{"mcpServers": {...}}` for `--mcp-config`. Holds the servers' environment values,
-/// so it is only ever written to the driver's private directory.
-pub(crate) fn mcp_config_json(servers: &[McpStdioServer]) -> serde_json::Value {
-    let servers: serde_json::Map<String, serde_json::Value> = servers
+fn pairs(pairs: &[(String, String)]) -> serde_json::Map<String, serde_json::Value> {
+    pairs
         .iter()
-        .map(|server| {
-            (
-                server.name.clone(),
-                serde_json::json!({
-                    "type": "stdio",
-                    "command": server.command,
-                    "args": server.args,
-                    "env": server
-                        .env
-                        .iter()
-                        .map(|(name, value)| (name.clone(), serde_json::Value::from(value.clone())))
-                        .collect::<serde_json::Map<_, _>>(),
-                }),
-            )
-        })
+        .map(|(name, value)| (name.clone(), serde_json::Value::from(value.clone())))
+        .collect()
+}
+
+fn stdio_entry(server: &McpStdioServer) -> serde_json::Value {
+    serde_json::json!({
+        "type": "stdio",
+        "command": server.command,
+        "args": server.args,
+        "env": pairs(&server.env),
+    })
+}
+
+/// `{"mcpServers": {...}}` for `--mcp-config`: the studio's servers and the user's (stdio,
+/// or `{"type":"http","url","headers"}`). Holds environment and header values, so it is
+/// only ever written to the driver's private directory and never passed on the command
+/// line.
+pub(crate) fn mcp_config_json(
+    studio: &[McpStdioServer],
+    user: &[UserMcpLaunch],
+) -> serde_json::Value {
+    let mut servers: serde_json::Map<String, serde_json::Value> = studio
+        .iter()
+        .map(|server| (server.name.clone(), stdio_entry(server)))
         .collect();
+    for server in user {
+        let entry = match &server.transport {
+            McpTransport::Stdio(stdio) => stdio_entry(stdio),
+            McpTransport::Http(http) => serde_json::json!({
+                "type": "http",
+                "url": http.url,
+                "headers": pairs(&http.headers),
+            }),
+        };
+        servers.insert(server.name().to_owned(), entry);
+    }
     serde_json::json!({ "mcpServers": servers })
 }
 
 /// Flag settings: the studio's own MCP tools are allowed without asking (they are the
-/// tools the studio offers the task); everything else still asks. Draft folders are
-/// untrusted, so a project's shared allow rules never apply there.
-pub(crate) fn settings_json(servers: &[McpStdioServer]) -> serde_json::Value {
-    let allow: Vec<String> = servers
+/// tools the studio offers the task); the user's servers still ask, and the tools the user
+/// turned off are denied (`mcp__<server>__<tool>`). Draft folders are untrusted, so a
+/// project's shared allow rules never apply there.
+pub(crate) fn settings_json(
+    studio: &[McpStdioServer],
+    user: &[UserMcpLaunch],
+) -> serde_json::Value {
+    let allow: Vec<String> = studio
         .iter()
         .map(|server| format!("mcp__{}", server.name))
         .collect();
-    serde_json::json!({ "permissions": { "allow": allow } })
+    let deny: Vec<String> = user
+        .iter()
+        .flat_map(|server| {
+            server
+                .disabled_tools
+                .iter()
+                .map(move |tool| format!("mcp__{}__{tool}", server.name()))
+        })
+        .collect();
+    if deny.is_empty() {
+        serde_json::json!({ "permissions": { "allow": allow } })
+    } else {
+        serde_json::json!({ "permissions": { "allow": allow, "deny": deny } })
+    }
 }
 
 /// Refuses a release older than [`MIN_VERSION`], with the reason.
@@ -221,13 +256,52 @@ mod tests {
             vec![("TOKEN".into(), "v".into())],
         )
         .unwrap();
-        let settings = settings_json(std::slice::from_ref(&server));
+        let settings = settings_json(std::slice::from_ref(&server), &[]);
         assert_eq!(
             settings,
             serde_json::json!({"permissions": {"allow": ["mcp__studio"]}})
         );
-        let config = mcp_config_json(&[server]);
+        let config = mcp_config_json(&[server], &[]);
         assert_eq!(config["mcpServers"]["studio"]["env"]["TOKEN"], "v");
         assert_eq!(config["mcpServers"]["studio"]["type"], "stdio");
+    }
+
+    #[test]
+    fn user_http_servers_carry_their_headers_and_turned_off_tools_are_denied() {
+        let studio =
+            McpStdioServer::new("studio", std::env::current_exe().unwrap(), vec![], vec![])
+                .unwrap();
+        let mut docs = UserMcpLaunch::from(
+            crate::McpHttpServer::new(
+                "docs",
+                "https://docs.test/mcp",
+                vec![("Authorization".into(), "Bearer tok-123".into())],
+            )
+            .unwrap(),
+        );
+        docs.disabled_tools = vec!["delete_page".into()];
+        let files = UserMcpLaunch::from(
+            McpStdioServer::new("files", std::env::current_exe().unwrap(), vec![], vec![]).unwrap(),
+        );
+        let config = mcp_config_json(
+            std::slice::from_ref(&studio),
+            &[docs.clone(), files.clone()],
+        );
+        assert_eq!(
+            config["mcpServers"]["docs"],
+            serde_json::json!({
+                "type": "http",
+                "url": "https://docs.test/mcp",
+                "headers": {"Authorization": "Bearer tok-123"},
+            })
+        );
+        assert_eq!(config["mcpServers"]["files"]["type"], "stdio");
+        assert_eq!(
+            settings_json(&[studio], &[docs, files]),
+            serde_json::json!({"permissions": {
+                "allow": ["mcp__studio"],
+                "deny": ["mcp__docs__delete_page"],
+            }})
+        );
     }
 }

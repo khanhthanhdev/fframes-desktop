@@ -116,19 +116,24 @@ impl ToolRuntime {
     /// Registers the task and grants its capability. The capability is independent of
     /// the route the agent uses: the MCP server and the `studio-tools` command both only
     /// carry its file path.
-    pub(crate) fn grant(&self, context: &AgentTaskContext) -> Result<ToolGrant, String> {
+    pub(crate) fn grant(
+        &self,
+        context: &AgentTaskContext,
+        tools: &[&str],
+    ) -> Result<ToolGrant, String> {
         self.backend.register_task(
             &context.identity,
             context.draft.clone(),
             context.source_base.revision().clone(),
         );
         self.broker
-            .grant(
+            .grant_tools(
                 ToolBinding {
                     task: context.identity.clone(),
                     revision: BoundRevision::Draft,
                 },
                 MAX_GRANT_TTL,
+                tools,
             )
             .map_err(|e| {
                 self.backend.unregister_task(&context.identity.task);

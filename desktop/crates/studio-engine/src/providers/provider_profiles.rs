@@ -56,6 +56,18 @@ pub fn install_guide_url(profile_id: &str) -> Option<&'static str> {
     }
 }
 
+/// The command that signs a built-in agent in with its own tool, shown on its card to copy
+/// into a terminal (the same commands Oleafly's agent catalog uses). Custom profiles and
+/// Antigravity, which signs in through Google's environment variables, have none.
+pub fn sign_in_command(profile_id: &str) -> Option<&'static str> {
+    match profile_id {
+        BUILTIN_CLAUDE_ID => Some("claude auth login"),
+        BUILTIN_CODEX_ID => Some("codex login"),
+        BUILTIN_PI_ID => Some("pi"),
+        _ => None,
+    }
+}
+
 /// Whether a guide link may be handed to the browser: `https://` only, exactly as written.
 pub fn is_openable(url: &str) -> bool {
     url.strip_prefix("https://")

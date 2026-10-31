@@ -126,6 +126,9 @@ pub(crate) enum Msg {
     },
     SetPolicy(ReviewPolicy),
     SetPermissionPolicy(studio_proto::PermissionPolicy),
+    /// The project's saved rules changed: the running task uses them from its next request.
+    SetApprovals(Vec<super::ApprovalRule>),
+    SetAgentTools(crate::agent_settings::AgentToolSettings),
     PreviewDisplayed(String),
     HandoffResolved {
         published: String,
@@ -199,6 +202,8 @@ struct ToolOffer {
     mcp: Option<McpStdioServer>,
     cli: Option<CliRoute>,
     capability: Option<PathBuf>,
+    /// The project tools the capability allows.
+    tools: Vec<&'static str>,
 }
 
 impl ToolOffer {
@@ -206,6 +211,7 @@ impl ToolOffer {
         ToolRoute {
             mcp: self.mcp.is_some(),
             cli: self.cli.clone(),
+            tools: self.tools.iter().map(|tool| (*tool).to_owned()).collect(),
         }
     }
 }
@@ -222,6 +228,13 @@ struct Active {
     policy: ReviewPolicy,
     /// Frozen when the task started.
     permission_policy: studio_proto::PermissionPolicy,
+    /// The project's saved rules, frozen when the task started; replaced only by the
+    /// user's own changes to them ([`Msg::SetApprovals`]).
+    approvals: Vec<super::ApprovalRule>,
+    /// Frozen when the task started: the project tools offered and the user's servers.
+    agent_tools: crate::agent_settings::AgentToolSettings,
+    /// The user's own MCP servers every session of this task launches.
+    user_mcp: Vec<studio_harness::UserMcpLaunch>,
     adapter: AdapterSettings,
     launch: AdapterLaunch,
     /// Cancels the job in flight; replaced for every job so a Stop that raced the end of
@@ -297,11 +310,16 @@ pub(crate) struct Actor {
     adapter: AdapterView,
     capabilities: Option<studio_harness::driver::AgentCapabilityInfo>,
     options: studio_harness::driver::AgentOptions,
-    mcp_note: Option<String>,
+    /// Notes about the task's tools made at task start.
+    tool_notes: ToolNotes,
+    /// Notes made once the session said which of the user's servers it got.
+    session_notes: Vec<ToolNote>,
     task: Option<TaskView>,
     policy: ReviewPolicy,
     /// The user's permission policy, for the next task.
     permission_policy: studio_proto::PermissionPolicy,
+    /// The user's MCP servers and turned-off project tools, for the next task.
+    agent_tools: crate::agent_settings::AgentToolSettings,
     undo_view: UndoView,
     recovery: RecoveryView,
     handoff: Option<HandoffView>,
@@ -501,10 +519,12 @@ impl Actor {
             },
             capabilities: None,
             options: Default::default(),
-            mcp_note: None,
+            tool_notes: ToolNotes::default(),
+            session_notes: Vec::new(),
             task: None,
             policy: ReviewPolicy::default(),
             permission_policy: studio_proto::PermissionPolicy::default(),
+            agent_tools: Default::default(),
             undo_view: UndoView::Unavailable {
                 reason: "No agent edit has been accepted in this project yet".into(),
             },
@@ -729,6 +749,12 @@ impl Actor {
             }
             Msg::SetPolicy(policy) => self.set_policy(policy),
             Msg::SetPermissionPolicy(policy) => self.permission_policy = policy,
+            Msg::SetApprovals(rules) => {
+                if let Some(active) = &mut self.active {
+                    active.approvals = rules;
+                }
+            }
+            Msg::SetAgentTools(settings) => self.agent_tools = settings,
             Msg::PreviewDisplayed(revision) => self.preview_displayed(&revision),
             Msg::HandoffResolved { published, result } => self.handoff_resolved(&published, result),
             Msg::AcknowledgeWriterGone => self.acknowledge_writer_gone(),

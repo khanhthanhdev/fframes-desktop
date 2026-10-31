@@ -14,7 +14,8 @@ pub use discovery::{
 pub use driver::{
     AcpDriver, AgentDriver, AgentEvent, AgentEventKind, AgentFailure, AgentWire,
     DriverCapabilities, DriverConfig, DriverError, DriverLimits, DriverMode, DriverOutcome,
-    DriverStatus, FailureKind, McpConfigError, McpStdioServer, McpStdioSupport, OwnershipSource,
-    PromptOutcome, SteeringMode, redact_sensitive_string, start_driver,
+    DriverStatus, FailureKind, McpConfigError, McpHttpServer, McpStdioServer, McpStdioSupport,
+    McpTransport, OwnershipSource, PromptOutcome, SteeringMode, UserMcpLaunch,
+    redact_sensitive_string, start_driver,
 };
 pub use supervisor::{AgentSupervisor, SupervisorError};

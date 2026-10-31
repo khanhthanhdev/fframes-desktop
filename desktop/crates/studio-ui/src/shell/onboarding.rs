@@ -136,6 +136,9 @@ impl StudioShell {
         self.permission_policy = settings.permission_policy;
         self.onboarding_completed = settings.onboarding_completed;
         self.update_check_disabled = settings.update_check_disabled;
+        let agent = settings.agent.clone();
+        self.agent_tools.update(cx, |page, cx| page.load(agent, cx));
+        self.hand_agent_tools(cx);
         let agent_selected = studio_engine::providers::host::load_settings(&paths)
             .ok()
             .flatten()

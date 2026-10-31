@@ -15,8 +15,9 @@
 //!   for (per the lifecycle spec the client then decides whether to continue).
 //!   Capabilities: `{"tools":{"listChanged":false}}`.
 //! - Notifications (no `id`) never get a response. `ping` answers `{}`.
-//! - `tools/list` returns exactly the [`tool_descriptions`].
-//! - `tools/call`: an unknown tool name is JSON-RPC error `-32602`; otherwise the call
+//! - `tools/list` returns the [`tool_descriptions`] the capability file allows (all of
+//!   them when it does not say).
+//! - `tools/call`: an unknown or disallowed tool name is JSON-RPC error `-32602`; otherwise the call
 //!   goes to the broker. A reply becomes `{content:[{type:"text",text:<compact reply
 //!   JSON>}],structuredContent:<reply>,isError:false}`; a tool error becomes
 //!   `{content:[{type:"text",text:<compact {code,message}>}],isError:true}` (a tool
@@ -74,6 +75,8 @@ pub struct McpServer {
     caller: Option<Box<dyn ToolCaller>>,
     initialized: bool,
     diagnostics: Vec<String>,
+    /// The tools the capability allows; `None`: all of them.
+    tools: Option<Vec<String>>,
 }
 
 fn response(id: &Value, result: Value) -> String {
@@ -94,7 +97,21 @@ impl McpServer {
             caller: None,
             initialized: false,
             diagnostics: Vec::new(),
+            tools: None,
         }
+    }
+
+    /// Lists and forwards only `tools` (the capability's own list), for a task whose
+    /// user turned some project tools off. The broker refuses the others anyway.
+    pub fn with_tools(mut self, tools: Option<Vec<String>>) -> Self {
+        self.tools = tools;
+        self
+    }
+
+    fn allowed(&self, name: &str) -> bool {
+        self.tools
+            .as_ref()
+            .is_none_or(|tools| tools.iter().any(|tool| tool == name))
     }
 
     /// The `-32600` answer for a line that exceeded [`MAX_MCP_LINE_BYTES`].
@@ -204,7 +221,13 @@ impl McpServer {
             "tools/list" | "tools/call" if !self.initialized => {
                 failure(id, NOT_INITIALIZED, "send `initialize` first")
             }
-            "tools/list" => response(id, json!({"tools": tool_descriptions()})),
+            "tools/list" => {
+                let tools: Vec<Value> = tool_descriptions()
+                    .into_iter()
+                    .filter(|tool| tool["name"].as_str().is_some_and(|name| self.allowed(name)))
+                    .collect();
+                response(id, json!({"tools": tools}))
+            }
             "tools/call" => self.call_tool(id, &params),
             other => failure(
                 id,
@@ -232,6 +255,13 @@ impl McpServer {
                     "unknown tool `{}`",
                     name.chars().take(64).collect::<String>()
                 ),
+            );
+        }
+        if !self.allowed(name) {
+            return failure(
+                id,
+                INVALID_PARAMS,
+                &format!("tool `{name}` is turned off in Studio's settings"),
             );
         }
         let arguments = match params.get("arguments") {
@@ -399,11 +429,14 @@ pub fn run_stdio(
         ));
         return EXIT_USAGE;
     };
+    // An unreadable file lists every tool; the first call then reports why it fails.
+    let tools = BrokerClient::allowed_tools(&capability).ok().flatten();
     let mut server = McpServer::new(move || {
         BrokerClient::connect(&capability)
             .map(|client| Box::new(client) as Box<dyn ToolCaller>)
             .map_err(|error| error.to_tool_error())
-    });
+    })
+    .with_tools(tools);
     log.log(&format!(
         "serving MCP {MCP_PROTOCOL_VERSION} on stdio ({MCP_QUALIFICATION})"
     ));

@@ -34,12 +34,16 @@ impl Divider {
 }
 
 impl RenderOnce for Divider {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        // A hairline (0.5 px) but never thinner than one device pixel. The renderer rounds a
+        // box's edges to device pixels, so at 100 % a box 0.5 px thick rounds to nothing and
+        // is not drawn, while a box one device pixel thick always is.
+        let thickness = px(METRICS.size.divider.max(1. / window.scale_factor()));
         let rule = div().flex_none().bg(self.theme.colors.line);
         if self.vertical {
-            rule.w(px(METRICS.size.divider)).h(px(VERTICAL_H))
+            rule.w(thickness).h(px(VERTICAL_H))
         } else {
-            rule.h(px(METRICS.size.divider)).w_full()
+            rule.h(thickness).w_full()
         }
     }
 }

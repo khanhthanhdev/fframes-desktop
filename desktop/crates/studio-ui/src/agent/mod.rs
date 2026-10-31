@@ -17,6 +17,7 @@ mod chat_tab;
 mod commands;
 pub mod composer;
 mod composer_host;
+pub mod composer_tools;
 pub mod controls;
 pub mod history;
 mod history_host;
@@ -32,6 +33,7 @@ pub mod transcript;
 pub mod ui;
 mod widgets;
 
+pub use crate::shell::AgentTab;
 pub use setup_page::AgentSetupPage;
 
 use transcript::rows;
@@ -120,7 +122,7 @@ use parking_lot::Mutex;
 use rows::{ListOp, ResidentLimits, RowKey, Viewport};
 use std::{
     cell::Cell,
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     rc::Rc,
     sync::{
         Arc,
@@ -158,14 +160,38 @@ const EVIDENCE_THUMB_W: f32 = 128.;
 const EVIDENCE_THUMB_H: f32 = 72.;
 
 /// Events the shell reacts to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PanelEvent {
     /// Escape in an input: focus returns to the shell.
     Leave,
-    /// The settings button: the shell opens the settings frame's Agent page.
-    OpenSetup,
+    /// A settings button or link: the shell opens Settings → Agent where it points.
+    OpenSettings(SettingsLink),
     /// What waits for the user changed; the sidebar marks its Agent tab with it.
     Attention(Attention),
+    /// The composer's Tools popover switched a project tool or an MCP server: the shell
+    /// saves the settings as Settings → Agent does, for the next task.
+    SetAgentTools(studio_engine::agent_settings::AgentToolSettings),
+    /// The composer's approval selector chose a permission policy, for the next task.
+    SetPermissionPolicy(studio_proto::PermissionPolicy),
+}
+
+/// Where a link in the panel opens Settings → Agent: a tab and, when there is one, what to
+/// show there (an agent's profile id on CLI agents, a server's name on MCP servers).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsLink {
+    pub tab: AgentTab,
+    pub target: Option<String>,
+}
+
+impl SettingsLink {
+    pub fn new(tab: AgentTab) -> Self {
+        Self { tab, target: None }
+    }
+
+    pub fn target(mut self, target: impl Into<String>) -> Self {
+        self.target = Some(target.into());
+        self
+    }
 }
 
 /// What waits for the user in the panel, for the sidebar's Agent tab while another tab is
@@ -304,6 +330,11 @@ pub struct ConversationPanel {
     /// The writer containment each provider (by its adapter label) established at its
     /// last launch while the studio runs; never stored.
     launches: HashMap<String, LaunchContainment>,
+    /// The agent cards opened on Settings → Agent → CLI agents, by profile id.
+    expanded_agents: HashSet<String>,
+    /// A linked agent whose card still has to be scrolled into view, and the settings
+    /// page's scrolling.
+    reveal_agent: Option<(String, gpui::ScrollHandle)>,
     settings_error: Option<String>,
     /// Who may say a writer is contained (production: the containment verified at launch).
     policy: OwnershipPolicy,
@@ -326,6 +357,12 @@ pub struct ConversationPanel {
     sdk_ready: bool,
     /// How permission requests are answered (shown in the header).
     permission_policy: studio_proto::PermissionPolicy,
+    /// The user's MCP servers and the project tools they turned off, as Settings → Agent
+    /// holds them; the shell keeps them in step.
+    agent_tools: studio_engine::agent_settings::AgentToolSettings,
+    /// The composer's open popover: the Tools list or the approval selector.
+    composer_popover: Option<(composer_host::ComposerPopover, MenuState)>,
+    popover_focus: FocusHandle,
     task_scope: Option<TaskScope>,
     scope_error: Option<String>,
     /// The status strip shows the task's ids, repairs, scope and evidence.
@@ -430,6 +467,8 @@ impl ConversationPanel {
             saved_adapter: None,
             registry: provider_profiles::ProviderRegistry::default(),
             launches: HashMap::new(),
+            expanded_agents: HashSet::new(),
+            reveal_agent: None,
             settings_error: None,
             policy: OwnershipPolicy::Validated,
             saves: SaveTracker::default(),
@@ -448,6 +487,9 @@ impl ConversationPanel {
             notice: None,
             sdk_ready: false,
             permission_policy: studio_proto::PermissionPolicy::default(),
+            agent_tools: Default::default(),
+            composer_popover: None,
+            popover_focus: cx.focus_handle(),
             task_scope: None,
             scope_error: None,
             task_details_open: false,
@@ -505,6 +547,7 @@ impl ConversationPanel {
         self.scope_error = None;
         self.reset_transcript();
         self.open_config = None;
+        self.composer_popover = None;
         self.notice = None;
         self.prompt_kind = None;
         self.clear_composer(cx);
@@ -566,8 +609,33 @@ impl ConversationPanel {
     ) {
         if self.permission_policy != policy {
             self.permission_policy = policy;
+            self.sync_composer_controls(cx);
             cx.notify();
         }
+    }
+
+    /// Opens `id`'s card on Settings → Agent → CLI agents and scrolls the settings page,
+    /// whose scrolling is `scroll`, until the card is in view (a link to that agent).
+    pub fn expand_agent(&mut self, id: String, scroll: gpui::ScrollHandle, cx: &mut Context<Self>) {
+        self.expanded_agents.insert(id.clone());
+        self.reveal_agent = Some((id, scroll));
+        cx.notify();
+    }
+
+    /// The tools, the policy and the open agent cards the panel holds, for the shell's tests.
+    #[cfg(test)]
+    pub(crate) fn settings_state(
+        &self,
+    ) -> (
+        &studio_engine::agent_settings::AgentToolSettings,
+        studio_proto::PermissionPolicy,
+        &HashSet<String>,
+    ) {
+        (
+            &self.agent_tools,
+            self.permission_policy,
+            &self.expanded_agents,
+        )
     }
 
     pub fn set_sdk_ready(&mut self, ready: bool, cx: &mut Context<Self>) {
@@ -950,7 +1018,11 @@ impl Render for ConversationPanel {
                 "Agent settings",
                 Emphasis::Ghost,
                 cx,
-                |_, _, cx| cx.emit(PanelEvent::OpenSetup),
+                |_, _, cx| {
+                    cx.emit(PanelEvent::OpenSettings(SettingsLink::new(
+                        AgentTab::Agents,
+                    )))
+                },
             )
             .size(IconButtonSize::Md);
         let new_chat = self
@@ -1002,6 +1074,7 @@ impl Render for ConversationPanel {
             .children(notice)
             .child(body)
             .children(self.render_config_menu(cx))
+            .children(self.render_composer_popover(cx))
             .into_any_element()
     }
 }

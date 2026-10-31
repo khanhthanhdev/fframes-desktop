@@ -18,6 +18,8 @@ pub(super) struct Params {
     pub(super) model: Option<String>,
     pub(super) effort: Option<String>,
     pub(super) servers: Vec<McpStdioServer>,
+    /// The user's own servers, stdio or HTTP, with the tools they turned off.
+    pub(super) user_servers: Vec<UserMcpLaunch>,
     pub(super) mcp_stdio: bool,
     /// Where approval answers queue their lines.
     pub(super) writer: std_mpsc::SyncSender<Input>,
@@ -42,6 +44,33 @@ pub(super) fn spawn_forwarder(
         .expect("spawn codex line forwarder")
 }
 
+/// Whether an `mcpServer/elicitation/request` is Codex asking to run an MCP tool
+/// (`_meta.codex_approval_kind`, codex-rs `protocol/src/mcp_approval_meta.rs`), not a
+/// server's own question.
+fn is_tool_call_approval(params: &Value) -> bool {
+    params
+        .pointer("/_meta/codex_approval_kind")
+        .and_then(Value::as_str)
+        == Some("mcp_tool_call")
+}
+
+/// The tool an MCP tool-call approval is for: `_meta.tool_name` (current codex-rs), or the
+/// name in the message Codex 0.163 sends without it, which must be exactly
+/// `Allow the <server> MCP server to run tool "<tool>"?` (codex-rs
+/// `build_mcp_tool_approval_fallback_message`).
+fn approval_tool<'a>(params: &'a Value, session_name: &str) -> Option<&'a str> {
+    let named = str_at(params, "/_meta/tool_name");
+    if !named.is_empty() {
+        return Some(named);
+    }
+    str_at(params, "/message")
+        .strip_prefix(&format!(
+            "Allow the {session_name} MCP server to run tool \""
+        ))?
+        .strip_suffix("\"?")
+        .filter(|tool| !tool.is_empty() && !tool.contains('"'))
+}
+
 /// The option ids a Codex approval offers.
 const ACCEPT: &str = "accept";
 const DECLINE: &str = "decline";
@@ -49,6 +78,8 @@ const DECLINE: &str = "decline";
 enum Answer {
     /// A command or file-change approval.
     Decision,
+    /// An MCP tool-call approval (an elicitation): accepted for this call only.
+    ToolCall,
     /// `item/permissions/requestApproval`: the profile granted on accept.
     Permissions(Value),
     Questions(Vec<rpc::WireQuestion>),
@@ -69,6 +100,7 @@ impl PermissionSink for CodexSink {
         // the turn, and a real Stop sends `turn/interrupt` itself.
         let result = match (&self.answer, answer) {
             (Answer::Decision, _) => rpc::decision(accepted),
+            (Answer::ToolCall, _) => rpc::tool_call_approval(accepted),
             (Answer::Permissions(profile), _) => rpc::permissions(accepted.then_some(profile)),
             (Answer::Questions(questions), WireAnswer::Answers(answers)) => {
                 rpc::answers(questions, &answers)
@@ -141,6 +173,8 @@ struct Connection {
     file_changes: HashMap<String, Vec<String>>,
     /// Agent messages that streamed deltas (their completed text is not repeated).
     streamed: HashSet<String>,
+    /// Servers Codex knows by another name (session name → own name).
+    renamed: std::collections::BTreeMap<String, String>,
 }
 
 pub(super) fn run(
@@ -162,6 +196,7 @@ pub(super) fn run(
         background: HashSet::new(),
         file_changes: HashMap::new(),
         streamed: HashSet::new(),
+        renamed: Default::default(),
     };
     let result = connection.drive(&input);
     // Closing stdin ends the app-server; teardown then verifies the tree.
@@ -535,7 +570,8 @@ impl Connection {
                 prompt_image: true,
                 prompt_audio: false,
                 prompt_embedded_context: false,
-                mcp_http: false,
+                // Its MCP config takes streamable-HTTP servers.
+                mcp_http: true,
                 mcp_sse: false,
                 mcp_stdio: self.params.mcp_stdio,
             },
@@ -557,13 +593,16 @@ impl Connection {
         )
     }
 
-    fn open_thread(&mut self, user_servers: &[String]) -> Result<(), AgentFailure> {
+    fn open_thread(&mut self, configured: &[String]) -> Result<(), AgentFailure> {
         let mut params = json!({
             "cwd": self.params.cwd,
             "approvalPolicy": launch::APPROVAL_POLICY,
             "sandbox": "workspace-write",
-            "config": launch::thread_config(user_servers, &self.params.servers),
         });
+        let thread =
+            launch::thread_config(configured, &self.params.servers, &self.params.user_servers);
+        params["config"] = thread.config;
+        self.renamed = thread.renamed;
         if let Some(model) = &self.params.model {
             params["model"] = Value::from(model.clone());
         }
@@ -591,6 +630,12 @@ impl Connection {
         self.shared.emit(AgentEventKind::SessionReady {
             session_id: exported,
             restored,
+            user_mcp_servers: self
+                .params
+                .user_servers
+                .iter()
+                .map(|server| server.name().to_owned())
+                .collect(),
         });
         self.shared.emit(AgentEventKind::AvailableCommands(vec![
             CommandInfo {
@@ -618,8 +663,8 @@ impl Connection {
         message: &Value,
     ) -> Result<(), AgentFailure> {
         let params = message.get("params").unwrap_or(&Value::Null);
-        let item = str_at(params, "/itemId").to_owned();
-        let mut kind = "other";
+        let mut item = str_at(params, "/itemId").to_owned();
+        let mut kind = Some("other");
         let mut locations = Vec::new();
         let (title, answer, question) = match method.as_str() {
             "item/commandExecution/requestApproval" => {
@@ -629,7 +674,7 @@ impl Connection {
                 } else {
                     format!("Run: {command}")
                 };
-                kind = "execute";
+                kind = Some("execute");
                 (title, Answer::Decision, None)
             }
             "item/fileChange/requestApproval" => {
@@ -639,7 +684,7 @@ impl Connection {
                 } else {
                     format!("Edit: {}", paths.join(", "))
                 };
-                kind = "edit";
+                kind = Some("edit");
                 locations = paths.iter().map(std::path::PathBuf::from).collect();
                 (title, Answer::Decision, None)
             }
@@ -667,9 +712,38 @@ impl Connection {
                     Some(items),
                 )
             }
+            "mcpServer/elicitation/request" if is_tool_call_approval(params) => {
+                let session_name = str_at(params, "/serverName");
+                let server = self
+                    .renamed
+                    .get(session_name)
+                    .map_or(session_name, String::as_str)
+                    .to_owned();
+                if self.params.servers.iter().any(|own| own.name == server) {
+                    // Studio's own tools are pre-approved, as Claude's launch allows
+                    // `mcp__<studio server>`: once, never remembered by Codex.
+                    return self.write(rpc::response(&id, rpc::tool_call_approval(true)));
+                }
+                // Named as Claude names MCP tools, so policies and saved rules treat
+                // both alike; without a tool name the request has no kind to match.
+                let tool = approval_tool(params, session_name).unwrap_or_default();
+                let title = if tool.is_empty() {
+                    kind = None;
+                    let message = str_at(params, "/message");
+                    if message.is_empty() {
+                        format!("Use a tool of the {server} server")
+                    } else {
+                        message.to_owned()
+                    }
+                } else {
+                    format!("mcp__{server}__{tool}")
+                };
+                item = id.to_string();
+                (title, Answer::ToolCall, None)
+            }
             _ => {
-                // Elicitations, dynamic tools, token refresh and attestation are never
-                // enabled; an unanswered request would hang the server.
+                // Other elicitations, dynamic tools, token refresh and attestation are
+                // never enabled; an unanswered request would hang the server.
                 self.shared.declined.fetch_add(1, Ordering::SeqCst);
                 let line =
                     rpc::error_response(&id, rpc::METHOD_NOT_FOUND, "not supported by this client");
@@ -736,7 +810,7 @@ impl Connection {
                         kind: "reject_once".to_owned(),
                     },
                 ],
-                kind: Some(kind.to_owned()),
+                kind: kind.map(str::to_owned),
                 locations,
             }),
         };
@@ -862,10 +936,11 @@ impl Connection {
                 self.file_changes.insert(id.clone(), paths);
                 (title, "edit")
             }
-            "mcpToolCall" => (
-                format!("{}: {}", str_at(item, "/server"), str_at(item, "/tool")),
-                "other",
-            ),
+            "mcpToolCall" => {
+                let server = str_at(item, "/server");
+                let server = self.renamed.get(server).map_or(server, String::as_str);
+                (format!("{server}: {}", str_at(item, "/tool")), "other")
+            }
             "webSearch" => (format!("Web search: {}", str_at(item, "/query")), "fetch"),
             _ => return,
         };

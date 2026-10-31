@@ -17,6 +17,7 @@
 
 mod action_card;
 mod activity;
+mod agent_card;
 mod changes_card;
 mod chrome;
 mod message;
@@ -26,6 +27,7 @@ mod tray;
 
 pub use action_card::ActionCard;
 pub use activity::{ActivityCounts, ActivityHeader, ActivityRow, ActivityState, summary_parts};
+pub use agent_card::{AgentCard, AgentFact};
 pub use changes_card::{ChangeMark, ChangedFile, ChangesCard};
 pub use chrome::{
     JumpPill, PanelHeader, StatusLine, WorkingTrailer, elapsed_label, panel_empty, panel_home,

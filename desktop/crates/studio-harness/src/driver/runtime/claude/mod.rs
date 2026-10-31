@@ -82,26 +82,21 @@ impl ClaudeDriver {
             ownership,
             mode: _,
             mcp_servers,
+            user_mcp_servers,
             mcp_stdio,
         } = config;
-        for server in &mcp_servers {
-            server.validate().map_err(|error| {
-                spawn_refused(format!("invalid MCP server configuration: {error}"))
-            })?;
-        }
-        let redactor = Arc::new(Redactor::new(
-            launch.secrets.iter().cloned().chain(
-                mcp_servers
-                    .iter()
-                    .flat_map(|s| s.secrets().map(str::to_owned)),
-            ),
-        ));
+        super::check_mcp_servers(&mcp_servers, &user_mcp_servers).map_err(spawn_refused)?;
+        let redactor = Arc::new(Redactor::new(super::mcp_secrets(
+            &launch.secrets,
+            &mcp_servers,
+            &user_mcp_servers,
+        )));
         let user = launch::split_user_args(&launch.args).map_err(spawn_refused)?;
         launch::version_gate(&launch.executable, &user.prefix, &launch.env)
             .map_err(|message| spawn_refused(redactor.redact(&message)))?;
-        let servers = match mcp_stdio {
-            McpStdioSupport::Baseline => mcp_servers,
-            McpStdioSupport::Unsupported => Vec::new(),
+        let (servers, user_servers) = match mcp_stdio {
+            McpStdioSupport::Baseline => (mcp_servers, user_mcp_servers),
+            McpStdioSupport::Unsupported => (Vec::new(), Vec::new()),
         };
         let private = tempfile::Builder::new()
             .prefix("fframes-claude-")
@@ -110,13 +105,20 @@ impl ClaudeDriver {
         let mcp_path = private.path().join("mcp.json");
         let settings_path = private.path().join("settings.json");
         for (path, value) in [
-            (&mcp_path, launch::mcp_config_json(&servers)),
-            (&settings_path, launch::settings_json(&servers)),
+            (&mcp_path, launch::mcp_config_json(&servers, &user_servers)),
+            (
+                &settings_path,
+                launch::settings_json(&servers, &user_servers),
+            ),
         ] {
             std::fs::write(path, value.to_string()).map_err(|error| {
                 spawn_refused(format!("cannot write the launch files: {error}"))
             })?;
         }
+        let user_server_names = user_servers
+            .iter()
+            .map(|server| server.name().to_owned())
+            .collect();
         let resumed = resume_session.is_some();
         let session = match resume_session {
             Some(id) => launch::SessionStart::Resume(id),
@@ -160,6 +162,7 @@ impl ClaudeDriver {
                         connection::Params {
                             mcp_stdio: mcp_stdio == McpStdioSupport::Baseline,
                             resumed,
+                            user_servers: user_server_names,
                             writer,
                         },
                     )

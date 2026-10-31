@@ -7,11 +7,13 @@
 //! mean more than "activate" (arrows in a segmented control, a slider or a
 //! menu) read them through [`nav_key`].
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, Div, Hsla, InteractiveElement, IntoElement, Pixels,
-    SharedString, Stateful, StatefulInteractiveElement, Styled, Window, canvas, point, px,
+    AnyElement, App, Bounds, BoxShadow, Div, FocusHandle, Global, Hsla, InteractiveElement,
+    IntoElement, ParentElement, Pixels, SharedString, Stateful, StatefulInteractiveElement, Styled,
+    Window, actions, canvas, point, px,
 };
 
 use studio_theme::{METRICS, Theme};
@@ -113,13 +115,78 @@ pub fn focus_ring(theme: &Theme) -> Vec<BoxShadow> {
     }]
 }
 
-/// Tab stop and focus ring. A disabled element is skipped by Tab.
+actions!(
+    kit,
+    [
+        /// Sent to the control that just took the focus from the keyboard: it reports where it
+        /// was painted, and the nearest scrolling container that listens brings it into view
+        /// (see [ocus_within] and kit::reveal_focused).
+        RevealFocused
+    ]
+);
+
+/// Where the control that answered [RevealFocused] was painted, for its container.
+#[derive(Default)]
+pub(super) struct RevealedBounds(pub(super) Option<Bounds<Pixels>>);
+
+impl Global for RevealedBounds {}
+
+/// The most tab stops [ocus_within] steps over looking for one inside its container.
+const MAX_STEPS: usize = 4096;
+
+/// Tab stop and focus ring. A disabled element is skipped by Tab. The control answers
+/// [RevealFocused] with the bounds it was last painted at.
 pub fn focusable(element: Stateful<Div>, theme: &Theme, disabled: bool) -> Stateful<Div> {
     let ring = focus_ring(theme);
+    let painted = Rc::new(Cell::new(None));
+    let probe = painted.clone();
     element
         .tab_index(0)
         .tab_stop(!disabled)
         .focus_visible(move |style| style.shadow(ring.clone()))
+        .on_action(move |_: &RevealFocused, _, cx| {
+            if let Some(bounds) = painted.get() {
+                cx.set_global(RevealedBounds(Some(bounds)));
+                cx.propagate();
+            }
+        })
+        .child(bounds_probe(Rc::new(move |bounds, _| {
+            probe.set(Some(bounds))
+        })))
+}
+
+/// Moves the focus to the next tab stop inside container (the previous one when
+/// ackwards), wrapping at its ends, and asks the control to come into view
+/// ([RevealFocused]): Tab and Shift+Tab inside a modal or a popover, so they never reach
+/// what lies under it. Returns alse, the focus unchanged, when container holds no stop.
+pub fn focus_within(
+    container: &FocusHandle,
+    backwards: bool,
+    window: &mut Window,
+    cx: &mut App,
+) -> bool {
+    let start = window.focused(cx);
+    for _ in 0..MAX_STEPS {
+        if backwards {
+            window.focus_prev(cx);
+        } else {
+            window.focus_next(cx);
+        }
+        let now = window.focused(cx);
+        if now.as_ref() != Some(container) && container.contains_focused(window, cx) {
+            if let Some(now) = now {
+                now.dispatch_action(&RevealFocused, window, cx);
+            }
+            return true;
+        }
+        if now == start {
+            break;
+        }
+    }
+    if let Some(start) = start {
+        window.focus(&start, cx);
+    }
+    false
 }
 
 /// Runs `handler` on click, unless `disabled`. On a [`focusable`] element gpui

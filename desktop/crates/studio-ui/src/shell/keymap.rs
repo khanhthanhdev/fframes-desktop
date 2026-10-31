@@ -216,7 +216,9 @@ impl StudioShell {
             .on_action(cx.listener(|s, _: &actions::DetectAgents, _, cx| {
                 s.panel.update(cx, |panel, cx| panel.detect_agents(cx))
             }))
-            .on_action(cx.listener(|s, _: &actions::OpenAgentSetup, _, cx| s.open_agent_setup(cx)))
+            .on_action(cx.listener(|s, _: &actions::OpenAgentSetup, window, cx| {
+                s.open_agent_settings(super::AgentTab::Agents, None, window, cx)
+            }))
             .on_action(cx.listener(|s, _: &actions::FocusPrompt, window, cx| {
                 s.select_sidebar_tab(SidebarTab::Agent, cx);
                 s.panel

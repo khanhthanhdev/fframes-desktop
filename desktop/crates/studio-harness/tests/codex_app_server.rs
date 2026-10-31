@@ -14,9 +14,9 @@ use studio_harness::{
     discovery::{AdapterLaunch, AdapterStatus, ExecutableSearch, ProbeOptions, probe_adapter_on},
     driver::{
         AgentDriver, AgentEvent, AgentEventKind, AgentWire, DriverConfig, DriverError,
-        DriverLimits, DriverMode, FailureKind, McpStdioServer, McpStdioSupport, MessageRole,
-        OwnershipSource, PermissionReply, PlanStatus, PromptImage, QuestionAnswer, StopReasonKind,
-        start_driver,
+        DriverLimits, DriverMode, FailureKind, McpHttpServer, McpStdioServer, McpStdioSupport,
+        MessageRole, OwnershipSource, PermissionReply, PlanStatus, PromptImage, QuestionAnswer,
+        StopReasonKind, UserMcpLaunch, start_driver,
     },
 };
 
@@ -76,6 +76,7 @@ fn config(root: &Path, mode: &str) -> DriverConfig {
         ownership: OwnershipSource::Verified,
         mode: DriverMode::Full,
         mcp_servers: vec![studio_server()],
+        user_mcp_servers: Vec::new(),
         mcp_stdio: McpStdioSupport::Baseline,
     }
 }
@@ -146,6 +147,71 @@ fn agent_text(events: &[AgentEvent], role: MessageRole) -> String {
             _ => None,
         })
         .collect()
+}
+
+#[test]
+fn the_user_s_servers_run_beside_the_studio_s_with_http_headers_off_the_command_line() {
+    let root = tempfile::tempdir().unwrap();
+    let mut cfg = config(root.path(), "turns");
+    let mut docs: UserMcpLaunch = McpHttpServer::new(
+        "docs",
+        "https://docs.test/mcp",
+        vec![("Authorization".into(), "Bearer user-http-secret-88".into())],
+    )
+    .unwrap()
+    .into();
+    docs.disabled_tools = vec!["delete_page".into()];
+    cfg.user_mcp_servers = vec![
+        McpStdioServer::new(
+            "github",
+            std::env::current_exe().unwrap(),
+            vec![],
+            vec![("GITHUB_TOKEN".into(), "user-mcp-secret-77".into())],
+        )
+        .unwrap()
+        .into(),
+        docs,
+    ];
+    // The fake's config.toml has a stdio `docs`: sent under its own name, Studio's HTTP
+    // `docs` would merge into it and Codex would refuse the thread.
+    let (driver, _manager) = start_with(cfg);
+    let ready = collect_until(&*driver, |event| {
+        matches!(event.kind, AgentEventKind::SessionReady { .. })
+    });
+    let Some(AgentEventKind::SessionReady {
+        user_mcp_servers, ..
+    }) = ready.last().map(|event| &event.kind)
+    else {
+        unreachable!()
+    };
+    assert_eq!(user_mcp_servers, &["github", "docs"]);
+    let launch = read_json(root.path(), "launch.json");
+    assert_eq!(launch["args"], serde_json::json!(["app-server"]));
+    let config = &read_json(root.path(), "thread.json")["params"]["config"];
+    assert_eq!(config["mcp_servers.studio.enabled"], true);
+    assert_eq!(config["mcp_servers.github.enabled"], true);
+    assert_eq!(
+        config["mcp_servers.github.env"]["GITHUB_TOKEN"],
+        "user-mcp-secret-77"
+    );
+    assert_eq!(config["mcp_servers.docs.enabled"], false);
+    assert!(config.get("mcp_servers.docs.url").is_none());
+    assert_eq!(
+        config["mcp_servers.studio-docs.url"],
+        "https://docs.test/mcp"
+    );
+    assert_eq!(
+        config["mcp_servers.studio-docs.http_headers"]["Authorization"],
+        "Bearer user-http-secret-88"
+    );
+    assert_eq!(
+        config["mcp_servers.studio-docs.disabled_tools"],
+        serde_json::json!(["delete_page"])
+    );
+    assert_eq!(config["mcp_servers.rea.enabled"], false);
+    assert!(!launch.to_string().contains("user-http-secret-88"));
+    let ended = driver.shutdown();
+    assert!(ended.failure.is_none(), "{:?}", ended.failure);
 }
 
 #[test]
@@ -272,6 +338,61 @@ fn decline_blocks_a_command_and_accept_applies_a_file_change() {
         std::fs::read_to_string(root.path().join("hello.txt")).unwrap(),
         "allowed\n"
     );
+}
+
+#[test]
+fn an_mcp_tool_call_is_asked_as_claude_names_it_and_allowed_only_once() {
+    let root = tempfile::tempdir().unwrap();
+    let mut cfg = config(root.path(), "turns");
+    // config.toml has a `docs`: Codex knows this one as `studio-docs`.
+    cfg.user_mcp_servers = vec![
+        McpHttpServer::new("docs", "https://docs.test/mcp", vec![])
+            .unwrap()
+            .into(),
+    ];
+    let (driver, _manager) = start_with(cfg);
+    for (reply, expected) in [
+        (
+            "accept",
+            serde_json::json!({"action": "accept", "content": {}}),
+        ),
+        (
+            "decline",
+            serde_json::json!({"action": "decline", "content": null}),
+        ),
+    ] {
+        let _ = std::fs::remove_file(root.path().join("mcp-approval.json"));
+        driver.prompt("MCPTOOL now", Vec::new()).unwrap();
+        let events = collect_until(&*driver, |e| {
+            matches!(e.kind, AgentEventKind::PermissionRequested(_))
+        });
+        // Studio's own server was answered without asking: once, nothing remembered.
+        assert_eq!(
+            read_json(root.path(), "studio-approval.json")["result"],
+            serde_json::json!({"action": "accept", "content": {}})
+        );
+        let prompt = permission(&events);
+        assert_eq!(prompt.title, "mcp__docs__search");
+        assert_eq!(prompt.kind.as_deref(), Some("other"));
+        let kinds: Vec<(&str, &str)> = prompt
+            .options
+            .iter()
+            .map(|o| (o.option_id.as_str(), o.kind.as_str()))
+            .collect();
+        assert_eq!(
+            kinds,
+            [("accept", "allow_once"), ("decline", "reject_once")]
+        );
+        driver
+            .reply_permission(prompt.id, PermissionReply::Select(reply.into()))
+            .unwrap();
+        collect_until(&*driver, |e| finished(e).is_some());
+        let answer = read_json(root.path(), "mcp-approval.json");
+        assert_eq!(answer["result"], expected, "{answer}");
+        assert!(answer["result"].get("_meta").is_none(), "never persisted");
+    }
+    let ended = driver.shutdown();
+    assert!(ended.failure.is_none(), "{:?}", ended.failure);
 }
 
 #[test]

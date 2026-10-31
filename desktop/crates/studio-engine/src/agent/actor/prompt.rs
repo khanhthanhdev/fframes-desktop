@@ -332,10 +332,10 @@ impl Actor {
         let backend = match (&self.tools, &active.capability) {
             (Some(tools), Some(_)) => tools.backend(),
             _ => {
-                let note = self
-                    .mcp_note
-                    .clone()
-                    .unwrap_or_else(|| "project tools are not available for this task".into());
+                let note = self.tool_notes_view().map_or_else(
+                    || "project tools are not available for this task".into(),
+                    |notes| notes.to_string(),
+                );
                 self.on_evidence(identity.task.clone(), kind, unavailable(note));
                 return;
             }
@@ -496,7 +496,9 @@ impl Actor {
             AgentEventKind::SessionReady {
                 session_id,
                 restored,
+                user_mcp_servers,
             } => {
+                self.note_session_servers(&user_mcp_servers);
                 self.on_session_ready(session_id, restored);
             }
             AgentEventKind::Options(options) => {
@@ -575,12 +577,21 @@ impl Actor {
         } else {
             super::super::auto_answer::auto_answer(
                 active.permission_policy,
+                &active.approvals,
                 &prompt,
                 &active.ctx.draft,
             )
         };
         if let Some(option) = auto {
             let policy = active.permission_policy;
+            // A saved rule, not the policy, answered it: the row names the rule.
+            let by_rule = super::super::auto_answer::answering_rule(
+                policy,
+                &active.approvals,
+                &prompt,
+                &active.ctx.draft,
+            )
+            .cloned();
             let delivered = active
                 .driver
                 .as_ref()
@@ -594,6 +605,7 @@ impl Actor {
                     options: prompt.options,
                     state: PermissionState::Open,
                     answered_by: Some(policy),
+                    remember: by_rule,
                 }));
                 self.permission_rows.insert((writer, prompt.id.0), row);
                 return;
@@ -604,6 +616,12 @@ impl Actor {
             return;
         };
         active.open_permissions.insert(prompt.id.0);
+        // Questions are always the user's: no rule is offered for them.
+        let remember = if active.open_questions.contains_key(&prompt.id.0) {
+            None
+        } else {
+            super::super::ApprovalRule::for_request(&prompt, &active.ctx.draft)
+        };
         let need_wait = !active.engine_waiting;
         active.engine_waiting = true;
         let offered: Vec<String> = prompt.options.iter().map(|o| o.option_id.clone()).collect();
@@ -620,6 +638,7 @@ impl Actor {
             options: prompt.options,
             state: PermissionState::Open,
             answered_by: None,
+            remember,
         }));
         self.permission_rows.insert((writer, prompt.id.0), row);
         if need_wait {

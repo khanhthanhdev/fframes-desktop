@@ -77,7 +77,12 @@ fn capability_socket_and_runtime_dir_are_private() {
     assert!(cap.secret.bytes().all(|b| b.is_ascii_hexdigit()));
     let value: Value = serde_json::from_slice(&fs::read(&cap.file).unwrap()).unwrap();
     assert_eq!(value["version"], 1);
-    assert_eq!(value.as_object().unwrap().len(), 4);
+    assert_eq!(value.as_object().unwrap().len(), 5);
+    // `grant` lets the agent use every tool; `grant_tools` narrows the list.
+    assert_eq!(
+        value["tools"].as_array().unwrap().len(),
+        studio_engine::agent_tools::TOOL_NAMES.len()
+    );
 
     let other = h
         .broker

@@ -71,6 +71,23 @@ pub struct ModelChoice {
     pub on_open: ModelMenuHandler,
 }
 
+/// A compact control the owner adds after the model select (the Tools popover and the
+/// approval selector): a glyph, an optional short label and a handler that opens the
+/// owner's popover against the trigger's bounds.
+#[derive(Clone)]
+pub struct ComposerControl {
+    /// The trigger's element id (`composer-tools`, `composer-approval`).
+    pub id: SharedString,
+    pub icon: Icon,
+    /// The text beside the glyph; `None` shows the glyph only.
+    pub label: Option<SharedString>,
+    /// The accessible name and the tooltip.
+    pub name: SharedString,
+    /// The owner's popover is open; the trigger shows pressed.
+    pub open: bool,
+    pub on_open: ModelMenuHandler,
+}
+
 /// What the user wants to send: the text and the chips that went with it.
 #[derive(Clone)]
 pub struct Submission {
@@ -147,6 +164,8 @@ pub struct Composer {
     bounds_sink: Option<BoundsSink>,
     /// The model select beside Send, when the agent advertises one.
     model: Option<ModelChoice>,
+    /// The owner's controls after the model select.
+    extra_controls: Vec<ComposerControl>,
     /// The send button's menu (Send now) is open.
     send_menu_open: bool,
     send_menu_focus: FocusHandle,
@@ -184,6 +203,7 @@ impl Composer {
             image_disabled: None,
             bounds_sink: None,
             model: None,
+            extra_controls: Vec::new(),
             send_menu_open: false,
             send_menu_focus: cx.focus_handle(),
             narrow: Rc::new(Cell::new(false)),
@@ -194,6 +214,12 @@ impl Composer {
     /// Shows the model select beside Send, or hides it with `None`.
     pub fn set_model(&mut self, model: Option<ModelChoice>, cx: &mut Context<Self>) {
         self.model = model;
+        cx.notify();
+    }
+
+    /// Shows `controls` after the model select, in order.
+    pub fn set_controls(&mut self, controls: Vec<ComposerControl>, cx: &mut Context<Self>) {
+        self.extra_controls = controls;
         cx.notify();
     }
 
@@ -677,6 +703,55 @@ impl Composer {
         )
     }
 
+    /// One of the owner's controls: the model trigger's look with a glyph before the label,
+    /// on the pressed fill while its popover is open. Enter and Space open it too.
+    fn control_trigger(&self, control: &ComposerControl) -> impl IntoElement {
+        let theme = self.theme;
+        let colors = theme.colors;
+        let states = States::of(&theme);
+        let open = control.on_open.clone();
+        let trigger = focusable(div().id(control.id.clone()), &theme, false)
+            .role(Role::Button)
+            .aria_label(control.name.clone())
+            .flex()
+            .flex_row()
+            .flex_none()
+            .items_center()
+            .gap(px(METRICS.space_1))
+            .h(px(MODEL_H))
+            .px(px(MODEL_PAD_X))
+            .rounded(CONTROL_CORNER)
+            .cursor_pointer()
+            .when(control.open, |this| this.bg(states.pressed))
+            .hover(move |style| style.bg(states.hover));
+        let trigger = text_style(trigger, TextStyle::Label)
+            .text_color(colors.text_2)
+            .child(
+                svg()
+                    .path(control.icon.path())
+                    .size(px(MODEL_CHEVRON))
+                    .flex_shrink_0()
+                    .text_color(colors.text_2),
+            )
+            // A narrow row keeps the glyphs only, so the model's name keeps its room; the
+            // name stays the tooltip.
+            .children(
+                control
+                    .label
+                    .clone()
+                    .filter(|_| !self.narrow.get())
+                    .map(|label| div().whitespace_nowrap().child(label)),
+            );
+        let trigger = trigger.children(probe::probe_element(
+            &self.bounds_sink,
+            control.id.to_string(),
+        ));
+        Menu::trigger(
+            with_tooltip(trigger, &theme, Some(control.name.clone())),
+            move |bounds, window, cx| open(bounds, window, cx),
+        )
+    }
+
     /// The controls row: attach file, attach image and the model on the left, which may
     /// shrink (the model name truncates) or scroll; More ways to send, Send and Stop on the
     /// right, which never shrink. A narrow row (at most 384 px) tightens the gaps to 2 px,
@@ -742,7 +817,12 @@ impl Composer {
             .overflow_x_scroll()
             .child(file_button)
             .child(image_button)
-            .children(self.model.as_ref().map(|model| self.model_trigger(model)));
+            .children(self.model.as_ref().map(|model| self.model_trigger(model)))
+            .children(
+                self.extra_controls
+                    .iter()
+                    .map(|control| self.control_trigger(control)),
+            );
 
         let mut right = div()
             .flex()

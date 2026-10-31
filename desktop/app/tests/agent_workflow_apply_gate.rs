@@ -112,8 +112,8 @@ fn cli_project_tools_remain_available_without_the_mcp_route() {
             snapshot
                 .mcp
                 .note
-                .as_deref()
-                .is_some_and(|note| note.contains(why)),
+                .as_ref()
+                .is_some_and(|note| note.to_string().contains(why)),
             "{:?}",
             snapshot.mcp
         );
@@ -137,4 +137,94 @@ fn cli_project_tools_remain_available_without_the_mcp_route() {
         w.wait_task(None);
         w.assert_clean();
     }
+}
+
+#[test]
+fn the_user_s_servers_join_the_session_and_turned_off_tools_are_not_offered() {
+    use studio_engine::agent_settings::{AgentToolSettings, UserMcpServer};
+    let w = World::new();
+    let server = |name: &str, env: &[&str]| {
+        UserMcpServer::stdio(
+            name,
+            std::env::current_exe().unwrap(),
+            vec!["--serve".into()],
+            env.iter().map(|name| (*name).to_owned()).collect(),
+        )
+    };
+    w.wf()
+        .set_agent_tools(AgentToolSettings {
+            mcp_servers: vec![
+                server("docs", &[]),
+                server("needs-token", &["FFRAMES_STUDIO_TEST_NEVER_SET"]),
+                // This ACP agent does not advertise HTTP servers: it is left out.
+                UserMcpServer::http(
+                    "remote",
+                    "https://remote.test/mcp",
+                    None,
+                    Default::default(),
+                ),
+            ],
+            disabled_tools: vec!["render_strip".into()],
+        })
+        .unwrap();
+    w.submit(&serde_json::json!({"hang": true}));
+    w.wait_phase(TaskPhase::Editing);
+    w.wait_prompts(1);
+    let params: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(w.agent.join("session-params.json")).unwrap(),
+    )
+    .unwrap();
+    let names: Vec<&str> = params["mcpServers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|server| server["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["fframes-studio", "docs"], "{params}");
+
+    // Once the session started, the note says exactly which servers it did not get.
+    let snapshot = w.wait("the MCP route and the session's servers", |snapshot| {
+        snapshot.mcp.active
+            && snapshot
+                .mcp
+                .note
+                .as_ref()
+                .is_some_and(|notes| notes.0.len() == 2)
+    });
+    let notes = snapshot.mcp.note.clone().unwrap();
+    let note = notes.to_string();
+    assert!(
+        note.contains("`needs-token` was left out: FFRAMES_STUDIO_TEST_NEVER_SET is not set"),
+        "{note}"
+    );
+    assert!(
+        note.contains("`remote` was left out: this agent does not support HTTP MCP servers."),
+        "{note}"
+    );
+    assert!(!note.contains("only if"), "the note is exact: {note}");
+    use studio_engine::agent::model::ToolNoteKind;
+    let left_out: Vec<_> = notes.0.iter().map(|note| note.kind.clone()).collect();
+    assert_eq!(
+        left_out,
+        ["needs-token", "remote"].map(|name| ToolNoteKind::ServerLeftOut { name: name.into() })
+    );
+    let capability: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(snapshot.mcp.capability_file.as_ref().unwrap()).unwrap(),
+    )
+    .unwrap();
+    let granted: Vec<&str> = capability["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool.as_str().unwrap())
+        .collect();
+    assert!(!granted.contains(&"render_strip") && granted.contains(&"render_frame"));
+    let prompt = w.evidence("prompts.jsonl")[0]["text"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(prompt.contains("render_frame") && !prompt.contains("render_strip"));
+    w.wf().stop().unwrap();
+    w.wait_task(None);
+    w.assert_clean();
 }

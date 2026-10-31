@@ -13,9 +13,9 @@ use studio_harness::{
     discovery::{AdapterLaunch, AdapterStatus, ExecutableSearch, ProbeOptions, probe_adapter_on},
     driver::{
         AgentDriver, AgentEvent, AgentEventKind, AgentWire, DriverConfig, DriverError,
-        DriverLimits, DriverMode, FailureKind, McpStdioServer, McpStdioSupport, MessageRole,
-        OwnershipSource, PermissionReply, PlanStatus, PromptImage, QuestionAnswer, StopReasonKind,
-        TurnOrigin, start_driver,
+        DriverLimits, DriverMode, FailureKind, McpHttpServer, McpStdioServer, McpStdioSupport,
+        MessageRole, OwnershipSource, PermissionReply, PlanStatus, PromptImage, QuestionAnswer,
+        StopReasonKind, TurnOrigin, UserMcpLaunch, start_driver,
     },
 };
 
@@ -70,6 +70,7 @@ fn config(root: &Path, mode: &str) -> DriverConfig {
         ownership: OwnershipSource::Verified,
         mode: DriverMode::Full,
         mcp_servers: vec![studio_server()],
+        user_mcp_servers: Vec::new(),
         mcp_stdio: McpStdioSupport::Baseline,
     }
 }
@@ -134,7 +135,29 @@ fn agent_text(events: &[AgentEvent], role: MessageRole) -> String {
 #[test]
 fn a_new_session_has_our_id_and_loads_only_the_studio_settings_and_server() {
     let root = tempfile::tempdir().unwrap();
-    let (driver, _manager) = start(root.path(), "turns");
+    let mut cfg = config(root.path(), "turns");
+    let mut docs: UserMcpLaunch = McpHttpServer::new(
+        "docs",
+        "https://docs.test/mcp",
+        vec![("Authorization".into(), "Bearer user-http-secret-88".into())],
+    )
+    .unwrap()
+    .into();
+    docs.disabled_tools = vec!["delete_page".into()];
+    cfg.user_mcp_servers = vec![
+        McpStdioServer::new(
+            "github",
+            std::env::current_exe().unwrap(),
+            vec![],
+            vec![("GITHUB_TOKEN".into(), "user-mcp-secret-77".into())],
+        )
+        .unwrap()
+        .into(),
+        docs,
+    ];
+    let manager = ProcessTreeManager::new();
+    let driver = start_driver(AgentWire::ClaudeStreamJson, cfg, &manager).unwrap();
+    driver.wait_ready(WAIT).unwrap();
     let session = driver.wire_session_id().expect("a session id");
     let launch = read_json(root.path(), "launch.json");
     let args: Vec<String> = serde_json::from_value(launch["args"].clone()).unwrap();
@@ -155,9 +178,28 @@ fn a_new_session_has_our_id_and_loads_only_the_studio_settings_and_server() {
     );
     let mcp = &launch["--mcp-config"]["mcpServers"]["studio"];
     assert_eq!(mcp["env"]["STUDIO_TOKEN"], MCP_SECRET);
+    // The user's own server launches too, but only the studio's tools skip the question.
+    let github = &launch["--mcp-config"]["mcpServers"]["github"];
+    assert_eq!(github["env"]["GITHUB_TOKEN"], "user-mcp-secret-77");
     assert_eq!(
         launch["--settings"]["permissions"]["allow"],
         serde_json::json!(["mcp__studio"])
+    );
+    assert!(!joined.contains("user-mcp-secret-77"));
+    // An HTTP server: its header values come from the private file, never the command
+    // line, and the tool the user turned off is denied.
+    assert_eq!(
+        launch["--mcp-config"]["mcpServers"]["docs"],
+        serde_json::json!({
+            "type": "http",
+            "url": "https://docs.test/mcp",
+            "headers": {"Authorization": "Bearer user-http-secret-88"},
+        })
+    );
+    assert!(!joined.contains("user-http-secret-88"));
+    assert_eq!(
+        launch["--settings"]["permissions"]["deny"],
+        serde_json::json!(["mcp__docs__delete_page"])
     );
     let mcp_path = args[args.iter().position(|a| a == "--mcp-config").unwrap() + 1].clone();
     assert!(Path::new(&mcp_path).exists());

@@ -47,17 +47,11 @@ impl ConversationPanel {
         controls: &Controls,
         cx: &mut Context<Self>,
     ) -> AnyElement {
-        let configured = snapshot.adapter.provider.is_some();
-        let g = guidance(&snapshot.adapter.readiness, configured);
         let mut column = div()
             .id("agent-setup-page")
             .flex()
             .flex_col()
             .gap(px(METRICS.space_2));
-        column = column.child(
-            self.section(&g.headline)
-                .children(g.steps.iter().map(|s| self.line(s.clone()))),
-        );
         // The panel header, where notices usually show, is out of view behind the frame.
         if let Some(notice) = &self.notice {
             column = column.child(Notice::new(
@@ -79,10 +73,11 @@ impl ConversationPanel {
             .as_ref()
             .is_some_and(|task| !task.phase.is_terminal())
             || matches!(&snapshot.undo, UndoView::InProgress { .. });
-        column = column.child(self.providers_section(switch_pending, selection_busy, cx));
-        column = column.child(self.detect_section(
+        column = column.child(self.agents_section(
             &snapshot.adapter.readiness,
-            controls.settings_editable,
+            controls,
+            switch_pending,
+            selection_busy,
             cx,
         ));
 
@@ -241,6 +236,90 @@ impl ConversationPanel {
             ));
             column = column.child(session);
         }
+
+        let mut status = self.section("Diagnostics");
+        status = status
+            .child(self.line(format!(
+                "Adapter: {}",
+                snapshot
+                    .adapter
+                    .executable
+                    .clone()
+                    .unwrap_or_else(|| "not configured".into())
+            )))
+            .child(self.line(format!(
+                "Writer containment at the last launch: {}",
+                snapshot
+                    .adapter
+                    .last_launch
+                    .as_ref()
+                    .map_or("not launched yet", |launch| launch.ownership.as_str())
+            )));
+        if snapshot
+            .adapter
+            .last_launch
+            .as_ref()
+            .is_some_and(|launch| !launch.contained)
+        {
+            status = status.child(self.line(
+                "The last launch of this adapter could not verify that its writer processes stay contained, so its candidates are not captured.",
+            ));
+        }
+        if let AdapterReadiness::Checked { report, .. } = &snapshot.adapter.readiness
+            && let Some(info) = &report.initialized
+        {
+            status = status.child(self.line(format!(
+                "Adapter reports {} {} · ACP v{}",
+                info.agent_name, info.agent_version, info.protocol_version
+            )));
+        }
+        if let Some(caps) = &snapshot.capabilities {
+            let mut unsupported = Vec::new();
+            if !caps.prompt_image {
+                unsupported.push("images");
+            }
+            if !caps.prompt_audio {
+                unsupported.push("audio");
+            }
+            if !caps.load_session && !caps.resume_session {
+                unsupported.push("resuming a session");
+            }
+            if !unsupported.is_empty() {
+                status = status.child(self.line(format!(
+                    "Not supported by this agent (prompts are text only): {}",
+                    unsupported.join(", ")
+                )));
+            }
+        }
+        let mcp = &snapshot.mcp;
+        status = status.child(self.line(format!(
+            "Project tools: MCP {} · command line {}{}",
+            if mcp.policy_enabled && mcp.binary_available {
+                "offered"
+            } else {
+                "not offered"
+            },
+            if mcp.cli_active {
+                "offered"
+            } else {
+                "when a task runs"
+            },
+            mcp.note
+                .as_ref()
+                .map(|n| format!(" · {n}"))
+                .unwrap_or_default()
+        )));
+        column = column.child(status);
+        column.into_any_element()
+    }
+
+    /// Register a custom agent: the form for an agent Studio does not list, shown in its card
+    /// at the end of the CLI agents list. Its fields, ids and telemetry are the panel's.
+    pub(super) fn custom_agent_form(
+        &mut self,
+        controls: &Controls,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let field = |this: &Self,
                      label: &'static str,
                      input: &Entity<TextInputState>,
@@ -279,7 +358,9 @@ impl ConversationPanel {
                 )
         };
         let editable = controls.settings_editable;
-        let mut form = self.section("Adapter");
+        let mut form = div().flex().flex_col().gap(px(METRICS.space_3)).child(self.line(
+            "Saving it makes it the agent new tasks use. Studio starts it only when you check it or run a task.",
+        ));
         form = form
             .child({
                 let entity = cx.entity();
@@ -384,81 +465,197 @@ impl ConversationPanel {
                 self.line("Settings can change after the running task finishes or is stopped."),
             );
         }
-        column = column.child(form);
+        form
+    }
+}
 
-        let mut status = self.section("Status");
-        status = status
-            .child(self.line(format!(
-                "Adapter: {}",
-                snapshot
-                    .adapter
-                    .executable
-                    .clone()
-                    .unwrap_or_else(|| "not configured".into())
-            )))
-            .child(self.line(format!(
-                "Writer containment at the last launch: {}",
-                snapshot
-                    .adapter
-                    .last_launch
-                    .as_ref()
-                    .map_or("not launched yet", |launch| launch.ownership.as_str())
-            )));
-        if snapshot
-            .adapter
-            .last_launch
-            .as_ref()
-            .is_some_and(|launch| !launch.contained)
-        {
-            status = status.child(self.line(
-                "The last launch of this adapter could not verify that its writer processes stay contained, so its candidates are not captured.",
-            ));
-        }
-        if let AdapterReadiness::Checked { report, .. } = &snapshot.adapter.readiness
-            && let Some(info) = &report.initialized
-        {
-            status = status.child(self.line(format!(
-                "Adapter reports {} {} · ACP v{}",
-                info.agent_name, info.agent_version, info.protocol_version
-            )));
-        }
-        if let Some(caps) = &snapshot.capabilities {
-            let mut unsupported = Vec::new();
-            if !caps.prompt_image {
-                unsupported.push("images");
-            }
-            if !caps.prompt_audio {
-                unsupported.push("audio");
-            }
-            if !caps.load_session && !caps.resume_session {
-                unsupported.push("resuming a session");
-            }
-            if !unsupported.is_empty() {
-                status = status.child(self.line(format!(
-                    "Not supported by this agent (prompts are text only): {}",
-                    unsupported.join(", ")
-                )));
-            }
-        }
-        let mcp = &snapshot.mcp;
-        status = status.child(self.line(format!(
-            "Project tools: MCP {} · command line {}{}",
-            if mcp.policy_enabled && mcp.binary_available {
-                "offered"
-            } else {
-                "not offered"
+/// A few registry entries for the gallery's Find more agents, read as if this were a 64-bit
+/// Windows computer; no network.
+const REGISTRY_FIXTURE: &str = r#"{"agents": [
+  {"id": "claude-acp", "name": "Claude Agent", "version": "0.31.0",
+   "description": "ACP wrapper for Anthropic's Claude",
+   "repository": "https://github.com/agentclientprotocol/claude-agent-acp",
+   "distribution": {"npx": {"package": "@agentclientprotocol/claude-agent-acp@0.31.0"}}},
+  {"id": "gemini", "name": "Gemini CLI", "version": "0.38.1",
+   "description": "Google's official CLI for Gemini", "website": "https://geminicli.com",
+   "distribution": {"npx": {"package": "@google/gemini-cli@0.38.1", "args": ["--acp"]}}},
+  {"id": "goose", "name": "goose", "version": "1.31.1",
+   "description": "A local, extensible, open source AI agent that automates engineering tasks",
+   "website": "https://block.github.io/goose/",
+   "distribution": {"binary": {
+     "windows-x86_64": {"archive": "https://example.invalid/goose.zip", "cmd": "./goose.exe", "args": ["acp"]},
+     "linux-x86_64": {"archive": "https://example.invalid/goose.tar.gz", "cmd": "./goose", "args": ["acp"]}}}},
+  {"id": "fast-agent", "name": "fast-agent", "version": "0.6.10",
+   "description": "Code and build agents with comprehensive multi-provider support",
+   "website": "https://fast-agent.ai",
+   "distribution": {"uvx": {"package": "fast-agent-acp==0.6.10", "args": ["-x"]}}},
+  {"id": "codex-acp", "name": "Codex CLI", "version": "0.14.0",
+   "description": "ACP adapter for OpenAI's coding assistant",
+   "repository": "https://github.com/agentclientprotocol/codex-acp",
+   "distribution": {"npx": {"package": "@zed-industries/codex-acp@0.14.0"}}}
+]}"#;
+
+impl ConversationPanel {
+    /// The gallery's Find more agents: the CLI agents tab with every card closed and the
+    /// registry list loaded from [`REGISTRY_FIXTURE`].
+    pub fn registry_fixture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.setup_fixture(cx);
+        self.expanded_agents.clear();
+        self.registry_search(window, cx);
+        self.agent_setup.registry_list =
+            match studio_engine::providers::acp_registry::parse_registry(
+                REGISTRY_FIXTURE.as_bytes(),
+                Some("windows-x86_64"),
+            ) {
+                Ok(agents) => provider_setup::RegistryList::Loaded(agents),
+                Err(error) => provider_setup::RegistryList::Failed(error),
+            };
+        cx.notify();
+    }
+
+    /// The gallery's Find more agents while the registry loads, or after it `failed`.
+    pub fn registry_state_fixture(
+        &mut self,
+        failed: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.setup_fixture(cx);
+        self.expanded_agents.clear();
+        self.registry_search(window, cx);
+        self.agent_setup.registry_list = if failed {
+            provider_setup::RegistryList::Failed(
+                "Cannot reach the agent registry: curl: (6) Could not resolve host: \
+                 cdn.agentclientprotocol.com"
+                    .into(),
+            )
+        } else {
+            provider_setup::RegistryList::Loading
+        };
+        cx.notify();
+    }
+
+    /// The gallery's Register a custom agent card, open and filled in.
+    pub fn custom_agent_fixture(&mut self, cx: &mut Context<Self>) {
+        self.setup_fixture(cx);
+        self.expanded_agents.clear();
+        self.agent_setup.custom_open = true;
+        self.fill_setup(
+            Some(&AdapterFile {
+                provider: "goose".into(),
+                executable: r"C:\Users\ada\AppData\Local\goose\goose.exe".into(),
+                args: vec!["acp".into()],
+                auth_env_names: Vec::new(),
+                auth_method: None,
+                mcp: McpChoice::Baseline,
+                wire: AgentWire::Acp,
+            }),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// The gallery's CLI agents tab: Claude Code in use and ready, Codex found, Pi missing
+    /// its adapter and Antigravity not found, with Claude Code's and Pi's cards open. Draws
+    /// the real page from a sample project snapshot and Detect agents result.
+    pub fn setup_fixture(&mut self, cx: &mut Context<Self>) {
+        use studio_engine::agent::model::{McpView, RecoveryView, ResourceView, WorkflowSnapshot};
+        use studio_harness::{DiscoveryReport, detect::Detected};
+        let path = |p: &str| Some(std::path::PathBuf::from(p));
+        self.registry = provider_profiles::ProviderRegistry::default();
+        self.registry.selected_profile_id = Some(provider_profiles::BUILTIN_CLAUDE_ID.into());
+        let claude = self
+            .registry
+            .profiles
+            .iter()
+            .find(|p| p.id == provider_profiles::BUILTIN_CLAUDE_ID)
+            .map(|p| p.adapter.provider.clone())
+            .unwrap_or_default();
+        self.launches.insert(
+            claude.clone(),
+            LaunchContainment {
+                ownership: "job-object-contained".into(),
+                contained: true,
             },
-            if mcp.cli_active {
-                "offered"
-            } else {
-                "when a task runs"
+        );
+        self.agent_setup.detected = provider_profiles::DetectionScan {
+            found: vec![
+                Detected {
+                    id: "claude".into(),
+                    cli: path(r"C:\Users\ada\.local\bin\claude.exe"),
+                    adapter: path(r"C:\Users\ada\.local\bin\claude.exe"),
+                },
+                Detected {
+                    id: "codex".into(),
+                    cli: path(r"C:\Users\ada\AppData\Roaming\npm\codex.cmd"),
+                    adapter: path(r"C:\Users\ada\AppData\Roaming\npm\codex.cmd"),
+                },
+                Detected {
+                    id: "pi".into(),
+                    cli: path(r"C:\Users\ada\AppData\Roaming\npm\pi.cmd"),
+                    adapter: None,
+                },
+                Detected {
+                    id: "antigravity".into(),
+                    cli: None,
+                    adapter: None,
+                },
+            ],
+            installed: Default::default(),
+            node: path(r"C:\Program Files\nodejs\node.exe"),
+            npm: path(r"C:\Program Files\nodejs\npm.cmd"),
+        };
+        self.expanded_agents = ["claude", "pi"].map(str::to_owned).into();
+        self.agent_setup.custom_open = false;
+        self.agent_setup.registry_list = provider_setup::RegistryList::Closed;
+        self.snapshot = Some(Arc::new(WorkflowSnapshot {
+            revision: 1,
+            project: studio_project::ProjectId::try_from("fixture".to_owned()).unwrap(),
+            adapter: studio_engine::agent::model::AdapterView {
+                provider: Some(claude),
+                executable: Some(r"C:\Users\ada\.local\bin\claude.exe".into()),
+                readiness: AdapterReadiness::Checked {
+                    report: Box::new(DiscoveryReport {
+                        status: studio_harness::AdapterStatus::Ready {
+                            agent: "Claude Code".into(),
+                            version: "2.1.304".into(),
+                        },
+                        executable: path(r"C:\Users\ada\.local\bin\claude.exe"),
+                        initialized: None,
+                    }),
+                    at_unix: 0,
+                },
+                last_launch: None,
             },
-            mcp.note
-                .as_ref()
-                .map(|n| format!(" · {n}"))
-                .unwrap_or_default()
-        )));
-        column = column.child(status);
-        column.into_any_element()
+            capabilities: None,
+            options: Default::default(),
+            mcp: McpView {
+                policy_enabled: true,
+                binary_available: true,
+                active: false,
+                cli_active: false,
+                capability_file: None,
+                note: None,
+            },
+            task: None,
+            queue: Vec::new(),
+            rows: Vec::new(),
+            composer: Default::default(),
+            older_rows: false,
+            chat: 0,
+            review_policy: ReviewPolicy::AutoApply,
+            undo: UndoView::Unavailable {
+                reason: "No accepted agent edit yet.".into(),
+            },
+            recovery: RecoveryView::default(),
+            handoff: None,
+            history: Vec::new(),
+            resources: ResourceView::default(),
+            switch_pending: None,
+            session_restore: None,
+            retained_queue: Vec::new(),
+            closed: false,
+        }));
+        cx.notify();
     }
 }

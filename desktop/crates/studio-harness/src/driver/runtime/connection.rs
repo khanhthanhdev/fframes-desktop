@@ -8,7 +8,31 @@ pub(super) struct DriveParams {
     pub(super) resume: Option<String>,
     pub(super) auth_method: Option<String>,
     pub(super) mcp_servers: Vec<McpServer>,
+    /// The user's HTTP servers: sent only when the agent advertises `mcpCapabilities.http`.
+    pub(super) mcp_http_servers: Vec<McpServer>,
+    /// Names of the user's servers among `mcp_servers` (stdio) and `mcp_http_servers`.
+    pub(super) user_stdio_names: Vec<String>,
+    pub(super) user_http_names: Vec<String>,
     pub(super) mcp_stdio: bool,
+}
+
+/// The servers a session gets: the stdio ones, and the HTTP ones only when the agent said
+/// at `initialize` that it takes HTTP servers (it may refuse the session otherwise).
+pub(super) fn session_servers(params: &DriveParams, agent_takes_http: bool) -> Vec<McpServer> {
+    let mut servers = params.mcp_servers.clone();
+    if agent_takes_http {
+        servers.extend(params.mcp_http_servers.iter().cloned());
+    }
+    servers
+}
+
+/// The user's servers (by name) that [`session_servers`] sends.
+pub(super) fn session_user_servers(params: &DriveParams, agent_takes_http: bool) -> Vec<String> {
+    let mut names = params.user_stdio_names.clone();
+    if agent_takes_http {
+        names.extend(params.user_http_names.iter().cloned());
+    }
+    names
 }
 
 pub(super) enum Plan {
@@ -72,6 +96,19 @@ pub(super) fn wire_server(server: &McpStdioServer) -> McpServer {
                     .map(|(name, value)| EnvVariable::new(name.clone(), value.clone()))
                     .collect(),
             ),
+    )
+}
+
+/// ACP v1 `McpServer::Http`: `{"type":"http","name","url","headers":[{"name","value"}]}`.
+pub(super) fn wire_http_server(server: &McpHttpServer) -> McpServer {
+    McpServer::Http(
+        McpServerHttp::new(server.name.clone(), server.url.clone()).headers(
+            server
+                .headers
+                .iter()
+                .map(|(name, value)| HttpHeader::new(name.clone(), value.clone()))
+                .collect(),
+        ),
     )
 }
 
@@ -234,12 +271,13 @@ pub(super) async fn drive(
             ));
         }
     };
+    let servers = session_servers(&params, raw_info.capabilities.mcp_http);
     let (done_tx, done_rx) = futures::channel::oneshot::channel::<SessionReply>();
     let restored = !matches!(plan, Plan::New);
     match plan {
         Plan::New => {
             cx.send_request(
-                NewSessionRequest::new(params.cwd.clone()).mcp_servers(params.mcp_servers.clone()),
+                NewSessionRequest::new(params.cwd.clone()).mcp_servers(servers.clone()),
             )
             .on_receiving_result(move |result| {
                 let _ =
@@ -254,8 +292,7 @@ pub(super) async fn drive(
         Plan::Resume(id) => {
             shared.core.lock().session = Some(id.clone());
             cx.send_request(
-                ResumeSessionRequest::new(id, params.cwd.clone())
-                    .mcp_servers(params.mcp_servers.clone()),
+                ResumeSessionRequest::new(id, params.cwd.clone()).mcp_servers(servers.clone()),
             )
             .on_receiving_result(move |result| {
                 let _ = done_tx.send(result.map(|r| (None, r.modes, r.config_options)));
@@ -270,8 +307,7 @@ pub(super) async fn drive(
                 core.restoring = true;
             }
             cx.send_request(
-                LoadSessionRequest::new(id, params.cwd.clone())
-                    .mcp_servers(params.mcp_servers.clone()),
+                LoadSessionRequest::new(id, params.cwd.clone()).mcp_servers(servers.clone()),
             )
             .on_receiving_result(move |result| {
                 let _ = done_tx.send(result.map(|r| (None, r.modes, r.config_options)));
@@ -314,6 +350,7 @@ pub(super) async fn drive(
     shared.emit(AgentEventKind::SessionReady {
         session_id: exported_session,
         restored,
+        user_mcp_servers: session_user_servers(&params, raw_info.capabilities.mcp_http),
     });
     let snapshot = shared.options.lock().clone();
     if !snapshot.modes.is_empty() || !snapshot.config.is_empty() {

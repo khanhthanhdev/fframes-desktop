@@ -73,6 +73,19 @@ pub(crate) fn decision(accept: bool) -> Value {
     json!({"decision": if accept { "accept" } else { "decline" }})
 }
 
+/// The answer to an MCP tool-call approval (`mcpServer/elicitation/request` whose `_meta`
+/// says `codex_approval_kind: mcp_tool_call`). Accepting sends no `_meta.persist`, which
+/// Codex reads as this call only (codex-rs `core/src/mcp_tool_call.rs`,
+/// `parse_mcp_tool_approval_elicitation_response`: `persist` `session` or `always` would
+/// remember the approval). A decline is "user rejected MCP tool call".
+pub(crate) fn tool_call_approval(accept: bool) -> Value {
+    if accept {
+        json!({"action": "accept", "content": {}})
+    } else {
+        json!({"action": "decline", "content": null})
+    }
+}
+
 /// The answer to `item/permissions/requestApproval`: the requested profile for this turn,
 /// or nothing granted.
 pub(crate) fn permissions(granted: Option<&Value>) -> Value {

@@ -437,6 +437,8 @@ for line in sys.stdin:
         }
         if mode in ("steer", "steer-reject"):
             result["agentCapabilities"]["_meta"] = {"steering": True}
+        if mode == "mcp-http":
+            result["agentCapabilities"]["mcpCapabilities"] = {"http": True}
         if mode == "meta-secret":
             result["agentInfo"] = {"name": "agent-" + SECRET, "version": "v-" + SECRET}
         if mode.startswith("srvtool") and mode != "srvtool-other-agent":

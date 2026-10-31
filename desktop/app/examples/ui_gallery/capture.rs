@@ -103,6 +103,10 @@ impl Page {
             Page::Shell => size(px(1320.), px(720.)),
             // The 1180 × 720 start screen under the gallery's title.
             Page::Home => size(px(1240.), px(840.)),
+            // The 680 px panels under the gallery's title, in one piece: the composer's
+            // popovers are anchored to the window, so pieces taken at two scroll offsets
+            // would place them differently and the stitched page would show both.
+            Page::Agent => size(px(1240.), px(780.)),
             _ => size(px(1240.), px(720.)),
         }
     }
@@ -113,7 +117,8 @@ impl Page {
             Page::Kit | Page::Slides | Page::Additions => &[""],
             Page::Create => &["", "slide-deck"],
             Page::Export => &["settings", "running", "done", "failed"],
-            // In nav order, then the Agent page's Adapter tab and a search; the index is
+            // In nav order, then the Agent page's CLI agents tab, a search, and its MCP servers
+            // and Tools tabs; the index is
             // `render_settings_fixture`'s state.
             Page::Settings => &[
                 "general",
@@ -124,8 +129,26 @@ impl Page {
                 "export",
                 "shortcuts",
                 "about",
-                "agent-adapter",
+                "agent-cli",
                 "search",
+                "agent-mcp",
+                "agent-tools",
+                "agent-permissions",
+                "agent-permissions-empty",
+                "agent-permissions-no-project",
+                "agent-cli-registry",
+                "agent-cli-custom",
+                "agent-mcp-import",
+                "agent-mcp-registry",
+                "agent-mcp-project",
+                "agent-tools-project",
+                "agent-cli-registry-loading",
+                "agent-cli-registry-error",
+                "agent-mcp-registry-loading",
+                "agent-mcp-registry-error",
+                "agent-mcp-linked",
+                "agent-permissions-attaching",
+                "agent-cli-linked",
             ],
             Page::Agent => &[
                 "empty",
@@ -142,6 +165,9 @@ impl Page {
                 "idle-image",
                 "code",
                 "history",
+                "permission-project",
+                "tools-open",
+                "approval-open",
             ],
             Page::Props => &[
                 "fields",

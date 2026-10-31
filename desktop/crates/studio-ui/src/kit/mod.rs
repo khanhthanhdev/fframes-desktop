@@ -50,9 +50,9 @@ pub use color_picker::{
 };
 pub use icon::{Icon, icon};
 pub use interact::{
-    BoundsHandler, DISABLED_OPACITY, FOCUS_RING_PX, Handler, Nav, States, activates, bounds_probe,
-    dim_disabled, focus_ring, focusable, nav_key, on_activate, reveal_actions, step_enabled,
-    with_tooltip,
+    BoundsHandler, DISABLED_OPACITY, FOCUS_RING_PX, Handler, Nav, RevealFocused, States, activates,
+    bounds_probe, dim_disabled, focus_ring, focus_within, focusable, nav_key, on_activate,
+    reveal_actions, step_enabled, with_tooltip,
 };
 pub use kbd::{KbdChip, kbd_symbol, keystroke_caps};
 pub use menu::{Menu, MenuItem, MenuKey, MenuState};
@@ -69,6 +69,7 @@ pub use selectable_text::{
 };
 pub use settings_frame::{
     SETTINGS_NAV_PAD, SETTINGS_NAV_W, SettingsFooterLink, SettingsFrame, SettingsNavItem,
+    reveal_focused, reveal_probe,
 };
 pub use slider::{
     Slider, SliderDrag, SliderTrack, fraction_from_x, slider_key, snap_to_step,

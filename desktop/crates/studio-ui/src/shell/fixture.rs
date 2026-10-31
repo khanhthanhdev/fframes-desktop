@@ -25,27 +25,7 @@ impl StudioShell {
         theme: Theme,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        let revision = |digit: &str| {
-            SourceRevision::try_from(digit.repeat(64)).expect("64 hexadecimal digits")
-        };
-        self.presentation.project = (state > 0).then(|| ProjectPresentation {
-            id: ProjectId::try_from("launch-video".to_owned()).expect("a valid id"),
-            name: "Launch video".into(),
-            root: PathBuf::from("launch-video"),
-            source: revision("a"),
-            accepted: revision(if state == 1 { "a" } else { "b" }),
-            job: "Idle".into(),
-            interrupted: state == 2,
-            draft: None,
-            recovery_notice: None,
-            checkpoint: PathBuf::from("launch-video/.checkpoint"),
-            files: Vec::new(),
-            assets: Vec::new(),
-            styles: Vec::new(),
-            file_count: 0,
-            history_available: true,
-            worker_available: state == 1,
-        });
+        self.presentation.project = (state > 0).then(|| sample_project(state));
         self.export_status = (state == 1).then_some(ExportProgress::Rendering {
             done: 1260,
             total: 3600,
@@ -127,5 +107,30 @@ impl StudioShell {
             .child(caption("Status bar"))
             .children(status)
             .into_any_element()
+    }
+}
+
+/// The gallery's sample project `Launch video`: in state 1 idle and up to date with a
+/// worker, in state 2 interrupted with a newer source.
+pub(super) fn sample_project(state: usize) -> ProjectPresentation {
+    let revision =
+        |digit: &str| SourceRevision::try_from(digit.repeat(64)).expect("64 hexadecimal digits");
+    ProjectPresentation {
+        id: ProjectId::try_from("launch-video".to_owned()).expect("a valid id"),
+        name: "Launch video".into(),
+        root: PathBuf::from("launch-video"),
+        source: revision("a"),
+        accepted: revision(if state == 1 { "a" } else { "b" }),
+        job: "Idle".into(),
+        interrupted: state == 2,
+        draft: None,
+        recovery_notice: None,
+        checkpoint: PathBuf::from("launch-video/.checkpoint"),
+        files: Vec::new(),
+        assets: Vec::new(),
+        styles: Vec::new(),
+        file_count: 0,
+        history_available: true,
+        worker_available: state == 1,
     }
 }

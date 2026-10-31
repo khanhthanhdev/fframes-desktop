@@ -473,6 +473,8 @@ pub struct ToolRoute {
     /// The `fframes-studio` MCP server is in the session's `mcpServers`.
     pub mcp: bool,
     pub cli: Option<CliRoute>,
+    /// The project tools the capability allows (the user may have turned some off).
+    pub tools: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -484,7 +486,7 @@ pub struct CliRoute {
 
 impl ToolRoute {
     fn describe(&self) -> String {
-        let tools = crate::agent_tools::TOOL_NAMES.join(", ");
+        let tools = self.tools.join(", ");
         let mut text = String::new();
         if self.mcp {
             text.push_str(&format!(

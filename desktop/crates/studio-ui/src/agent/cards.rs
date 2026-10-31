@@ -366,6 +366,8 @@ impl ConversationPanel {
         if let Some(policy) = card.answered_by {
             let state = if card.state == PermissionState::Cancelled {
                 "closed before the agent took it"
+            } else if card.remember.is_some() {
+                "saved for this project"
             } else {
                 policy.label()
             };
@@ -443,9 +445,10 @@ impl ConversationPanel {
             "The agent asks for permission to go on."
         });
         if !pending {
-            for choice in request_choices(&card.options) {
+            for choice in request_choices(&card.options, card.remember.is_some()) {
                 let reference = card.reference.clone();
                 let answer = choice.answer;
+                let remember = card.remember.clone().filter(|_| choice.remember);
                 notice = notice.action(self.action_button(
                     format!("perm-{key}-{}", choice.id),
                     choice.label,
@@ -456,13 +459,62 @@ impl ConversationPanel {
                         Emphasis::Neutral
                     },
                     cx,
-                    move |this, _, cx| {
-                        this.answer_permission(reference.clone(), answer.clone(), cx)
+                    move |this, _, cx| match &remember {
+                        Some(rule) => {
+                            this.answer_and_remember(reference.clone(), answer.clone(), rule, cx)
+                        }
+                        None => this.answer_permission(reference.clone(), answer.clone(), cx),
                     },
                 ));
             }
         }
         notice
+    }
+
+    /// "Always in this project": answers the request with `answer` (the agent's
+    /// `allow_once`) and, once the answer is accepted, saves `rule` for the open project.
+    fn answer_and_remember(
+        &mut self,
+        reference: PermissionRef,
+        answer: PermissionAnswer,
+        rule: &studio_engine::agent::ApprovalRule,
+        cx: &mut Context<Self>,
+    ) {
+        let (Some(attached), Some(snapshot)) = (&self.attached, &self.snapshot) else {
+            return;
+        };
+        let workflow = attached.workflow.clone();
+        let open = snapshot.open_permissions();
+        if let Err(refusal) = self.replies.begin(&reference, &open) {
+            self.say(refusal.to_string(), cx);
+            return;
+        }
+        let result = workflow.reply_permission(&reference, answer);
+        if self.command(result, cx).is_some() {
+            let result = workflow.remember_approval(rule.clone());
+            self.command(result, cx);
+        }
+        cx.notify();
+    }
+
+    /// The rules saved for the open project with "Always in this project", or `None`
+    /// without an open project. For Settings → Agent → Permissions.
+    pub fn approval_rules(&self) -> Option<Vec<studio_engine::agent::ApprovalRule>> {
+        self.workflow().map(|workflow| workflow.approval_rules())
+    }
+
+    /// Removes a saved rule from the open project; the running task stops using it from
+    /// its next request.
+    pub fn forget_approval(
+        &mut self,
+        rule: &studio_engine::agent::ApprovalRule,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workflow) = self.workflow().cloned() {
+            let result = workflow.forget_approval(rule);
+            self.command(result, cx);
+            cx.notify();
+        }
     }
 
     pub(super) fn error_card(&self, row: &Row, error: &StructuredError) -> AnyElement {
@@ -726,30 +778,55 @@ struct RequestChoice {
     /// Allowing options are the primary actions, every one of them.
     primary: bool,
     answer: PermissionAnswer,
+    /// "Always in this project": the answer also saves the request's rule.
+    remember: bool,
 }
+
+/// The id ending of the "Always in this project" button.
+const REMEMBER_ID: &str = "always-in-project";
 
 /// The buttons of an open permission request, left to right: refusals first and the allowing
 /// choices last (the primary action sits rightmost). Decline (closes the request and ends the
 /// turn) leads only when the agent gives no way to refuse; otherwise it would sit next to the
-/// agent's own Reject.
-fn request_choices(options: &[PermissionChoice]) -> Vec<RequestChoice> {
-    let mut choices = Vec::with_capacity(options.len() + 1);
+/// agent's own Reject. With `remember` (the request has a safe rule) "Always in this project"
+/// comes between them, answering with the agent's `allow_once`; never without one.
+fn request_choices(options: &[PermissionChoice], remember: bool) -> Vec<RequestChoice> {
+    let mut choices = Vec::with_capacity(options.len() + 2);
     if !options.iter().any(|o| o.kind.starts_with("reject")) {
         choices.push(RequestChoice {
             id: "decline".to_owned(),
             label: "Decline".to_owned(),
             primary: false,
             answer: PermissionAnswer::Cancel,
+            remember: false,
         });
     }
     let mut options: Vec<_> = options.iter().collect();
     options.sort_by_key(|option| option.kind.starts_with("allow"));
-    choices.extend(options.into_iter().map(|option| RequestChoice {
+    let refusals = options
+        .iter()
+        .filter(|option| !option.kind.starts_with("allow"))
+        .count();
+    choices.extend(options.iter().map(|option| RequestChoice {
         id: option.option_id.clone(),
         label: option.name.clone(),
         primary: option.kind.starts_with("allow"),
         answer: PermissionAnswer::Select(option.option_id.clone()),
+        remember: false,
     }));
+    if remember && let Some(once) = options.iter().find(|option| option.kind == "allow_once") {
+        let at = choices.len() - (options.len() - refusals);
+        choices.insert(
+            at,
+            RequestChoice {
+                id: REMEMBER_ID.to_owned(),
+                label: "Always in this project".to_owned(),
+                primary: false,
+                answer: PermissionAnswer::Select(once.option_id.clone()),
+                remember: true,
+            },
+        );
+    }
     choices
 }
 
@@ -847,7 +924,7 @@ mod tests {
 
     /// `(id, label, primary)` of each button, left to right.
     fn buttons(options: &[PermissionChoice]) -> Vec<(String, String, bool)> {
-        request_choices(options)
+        request_choices(options, false)
             .into_iter()
             .map(|choice| (choice.id, choice.label, choice.primary))
             .collect()
@@ -871,7 +948,7 @@ mod tests {
                 ("a2".into(), "Always for this folder".into(), true),
             ]
         );
-        let answers: Vec<_> = request_choices(&options)
+        let answers: Vec<_> = request_choices(&options, false)
             .into_iter()
             .map(|choice| choice.answer)
             .collect();
@@ -884,7 +961,7 @@ mod tests {
     #[test]
     fn decline_leads_only_when_the_agent_offers_no_refusal() {
         let options = [option("go", "Allow", "allow_once")];
-        let choices = request_choices(&options);
+        let choices = request_choices(&options, false);
         assert_eq!(
             buttons(&options),
             [
@@ -901,6 +978,45 @@ mod tests {
         assert!(buttons(&options).iter().all(|(id, ..)| id != "decline"));
         // No options at all still leaves a way out.
         assert_eq!(buttons(&[]), [("decline".into(), "Decline".into(), false)]);
+    }
+
+    #[test]
+    fn always_in_this_project_sits_between_refusals_and_allows_and_answers_once() {
+        let options = [
+            option("a2", "Always", "allow_always"),
+            option("a1", "Allow", "allow_once"),
+            option("r1", "Reject", "reject_once"),
+        ];
+        let choices = request_choices(&options, true);
+        let ids: Vec<_> = choices.iter().map(|choice| choice.id.as_str()).collect();
+        assert_eq!(ids, ["r1", REMEMBER_ID, "a2", "a1"]);
+        let project = &choices[1];
+        assert_eq!(project.label, "Always in this project");
+        assert!(project.remember && !project.primary);
+        // The agent's single allow, never its `allow_always`.
+        assert_eq!(project.answer, PermissionAnswer::Select("a1".into()));
+        assert_eq!(choices.iter().filter(|choice| choice.remember).count(), 1);
+        // Not offered without a safe rule, nor without an `allow_once` to answer with.
+        assert!(
+            request_choices(&options, false)
+                .iter()
+                .all(|choice| !choice.remember)
+        );
+        let always_only = [
+            option("a2", "Always", "allow_always"),
+            option("r1", "Reject", "reject_once"),
+        ];
+        assert!(
+            request_choices(&always_only, true)
+                .iter()
+                .all(|choice| !choice.remember && choice.id != REMEMBER_ID)
+        );
+        // With no refusal of the agent's own, Decline still leads.
+        let ids: Vec<_> = request_choices(&[option("go", "Allow", "allow_once")], true)
+            .into_iter()
+            .map(|choice| choice.id)
+            .collect();
+        assert_eq!(ids, ["decline", REMEMBER_ID, "go"]);
     }
 
     #[test]

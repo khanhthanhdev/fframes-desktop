@@ -13,9 +13,16 @@ use gpui::{
     AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement,
     ParentElement, StatefulInteractiveElement as _, Styled, Window, div, px,
 };
+use studio_engine::agent::PermissionPolicy;
 use studio_engine::agent::{OutcomeKind, Row, RowId, RowKind};
+use studio_engine::agent_settings::{AgentToolSettings, UserMcpServer};
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
-use studio_ui::agent::composer::{AttachmentDraft, Composer, ModelChoice, SteerMode};
+use studio_ui::agent::composer::{
+    AttachmentDraft, Composer, ComposerControl, ModelChoice, SteerMode,
+};
+use studio_ui::agent::composer_tools::{
+    ApprovalPopover, ToolsPopover, approval_menu, policy_name, policy_short_label, tools_menu,
+};
 use studio_ui::agent::history::{HistoryList, SessionEntry};
 use studio_ui::agent::markdown::{MarkdownRow, Voice};
 use studio_ui::agent::todo_panel::{TodoItem, TodoPanel, TodoStatus};
@@ -39,6 +46,31 @@ const WIDTHS: [f32; 2] = [320., 520.];
 const PANEL_H: f32 = 680.;
 /// The question's free-text field, as `question_card.rs` sizes it (Oleafly's `h-7`).
 const ANSWER_FIELD_H: f32 = 28.;
+
+/// The permission policy the composer's approval trigger shows.
+const GALLERY_POLICY: PermissionPolicy = PermissionPolicy::AllowInWorkingCopy;
+
+/// The Tools popover's sample: two project tools off, two servers on and one off.
+fn gallery_tools() -> AgentToolSettings {
+    let server = |name: &str, enabled| {
+        let mut server = UserMcpServer::stdio(
+            name,
+            r"C:\Program Files\nodejs\npx.cmd",
+            Vec::new(),
+            Vec::new(),
+        );
+        server.enabled = enabled;
+        server
+    };
+    AgentToolSettings {
+        mcp_servers: vec![
+            server("github", true),
+            server("context7", true),
+            server("sqlite", false),
+        ],
+        disabled_tools: vec!["render_strip".into(), "source_lookup".into()],
+    }
+}
 
 /// The entities one panel fixture draws: the composer, the todo list, the history list and
 /// the question's text field.
@@ -111,10 +143,12 @@ fn set_up(panel: &Panel, state: &str, theme: &Theme, cx: &mut Context<Gallery>) 
         "working"
             | "permission"
             | "permission-pending"
+            | "permission-project"
             | "question"
             | "todo-queue"
             | "steer-boundary"
             | "steer-native"
+            | "approval-open"
     );
     // Send shows beside Stop only when the agent takes a message mid-turn.
     let steer = match state {
@@ -133,6 +167,32 @@ fn set_up(panel: &Panel, state: &str, theme: &Theme, cx: &mut Context<Gallery>) 
                 label: "Sonnet 4.5".into(),
                 on_open: Rc::new(|_, _, _| {}),
             }),
+            cx,
+        );
+        // The Tools popover and the approval selector after the model, as the panel shows
+        // them; the last two states open them.
+        let tools = gallery_tools();
+        let on = tools.enabled_tools().len();
+        let total = studio_engine::agent_tools::TOOL_NAMES.len();
+        composer.set_controls(
+            vec![
+                ComposerControl {
+                    id: "composer-tools".into(),
+                    icon: Icon::Hammer,
+                    label: Some(format!("{on}/{total}").into()),
+                    name: format!("Tools: {on} of {total} on").into(),
+                    open: state == "tools-open",
+                    on_open: Rc::new(|_, _, _| {}),
+                },
+                ComposerControl {
+                    id: "composer-approval".into(),
+                    icon: Icon::ShieldQuestion,
+                    label: Some(policy_short_label(GALLERY_POLICY).into()),
+                    name: policy_name(GALLERY_POLICY).into(),
+                    open: state == "approval-open",
+                    on_open: Rc::new(|_, _, _| {}),
+                },
+            ],
             cx,
         );
         if state == "todo-queue" {
@@ -285,7 +345,7 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
         "not-set-up" => (Tone::Warning, "Agent not set up"),
         "failed" => (Tone::Danger, "Failed: Render the outro at 4K"),
         "changes" => (Tone::Info, "Ready for review: Make the intro bigger"),
-        "permission" | "permission-pending" => (
+        "permission" | "permission-pending" | "permission-project" => (
             Tone::Warning,
             "Waiting for permission: Make the intro bigger",
         ),
@@ -332,8 +392,8 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
     };
     match state {
         "empty" | "idle-image" => rows.push(new_chat(theme)),
-        "working" | "permission" | "permission-pending" | "todo-queue" | "steer-boundary"
-        | "steer-native" => {
+        "working" | "permission" | "permission-pending" | "permission-project" | "todo-queue"
+        | "steer-boundary" | "steer-native" => {
             rows.push(
                 user(1, "Make the intro bigger and slow the fade a little.").into_any_element(),
             );
@@ -600,6 +660,23 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
             .into_any_element(),
         );
     }
+    if state == "permission-project" {
+        // A request a safe rule describes: "Always in this project" between the refusals
+        // and the agent's allows, as `ConversationPanel` places it.
+        cards.push(
+            ActionCard::new(theme, ("perm", ix), Tone::Info, "Edit src/intro.rs")
+                .permission()
+                .body("The agent asks for permission to go on.")
+                .action(Button::new(theme, ("deny", ix)).label("Deny"))
+                .action(Button::new(theme, ("project", ix)).label("Always in this project"))
+                .action(
+                    Button::new(theme, ("allow", ix))
+                        .label("Allow")
+                        .emphasis(Emphasis::Primary),
+                )
+                .into_any_element(),
+        );
+    }
     if state == "question" {
         let options = [
             ("Episode number", Some("“Episode 12” above the title")),
@@ -676,13 +753,19 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
         .pt(px(METRICS.space_2))
         .pb(px(METRICS.space_3))
         .children(cards)
-        .child(
-            div()
-                .flex()
-                .flex_col()
-                .children(tray)
-                .child(panel.composer.clone()),
-        );
+        .child(div().flex().flex_col().children(tray).child(
+            // The open popover rises from the composer's top edge, as it does from
+            // its trigger in the panel.
+            div().relative().child(panel.composer.clone()).children(
+                composer_popover(theme, state).map(|popover| {
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left(px(METRICS.space_4))
+                        .child(popover)
+                }),
+            ),
+        ));
     div()
         .flex_1()
         .min_h_0()
@@ -692,6 +775,22 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
         .child(transcript)
         .child(dock)
         .into_any_element()
+}
+
+/// The composer's open Tools popover or approval selector, in the states that open them.
+fn composer_popover(theme: &Theme, state: &str) -> Option<AnyElement> {
+    match state {
+        "tools-open" => Some(
+            ToolsPopover::new(theme, gallery_tools(), &tools_menu(&gallery_tools(), None))
+                .into_any_element(),
+        ),
+        "approval-open" => Some(
+            ApprovalPopover::new(theme, GALLERY_POLICY, &approval_menu(GALLERY_POLICY, None))
+                .running(true)
+                .into_any_element(),
+        ),
+        _ => None,
+    }
 }
 
 /// The new-chat state: what to do, and suggestions to start from.

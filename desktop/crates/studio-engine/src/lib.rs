@@ -1,5 +1,6 @@
 //! Per-open-project state, isolated SDK builds, durable checkpoints and recovery.
 pub mod agent;
+pub mod agent_settings;
 pub mod agent_task;
 pub mod agent_tools;
 pub mod app_paths;

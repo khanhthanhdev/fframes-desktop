@@ -1,3 +1,4 @@
+mod agent_tools;
 mod create;
 mod engine_events;
 mod export_panel;
@@ -22,6 +23,7 @@ mod timeline_edits;
 mod transport;
 
 pub use keymap::bind_keys;
+pub use settings::AgentTab;
 
 use gpui::{AppContext, Context, Window};
 use std::{
@@ -191,7 +193,11 @@ pub struct StudioShell {
     settings_open: bool,
     /// The settings dialog over the main window, while it is open.
     settings_dialog: Option<gpui::Entity<settings_dialog::SettingsDialog>>,
+    /// What gets the focus back once the settings dialog has closed.
+    settings_return_focus: Option<gpui::FocusHandle>,
     settings_page: settings::SettingsPage,
+    /// The settings page's scrolling, which a deep link moves to its target.
+    settings_scroll: gpui::ScrollHandle,
     settings_writer: Arc<settings::SettingsWriter>,
     /// The first-run setup, while it shows in place of the workspace.
     onboarding: Option<onboarding::Onboarding>,
@@ -201,6 +207,9 @@ pub struct StudioShell {
     onboarding_completed: Option<bool>,
     /// How agent permission requests are answered, for every project.
     permission_policy: studio_proto::PermissionPolicy,
+    /// The gallery's saved rules for Settings → Agent → Permissions, in place of the open
+    /// project's; `None` outside the gallery.
+    approvals_fixture: Option<Vec<studio_engine::agent::ApprovalRule>>,
     /// Whether the launch check for a newer Studio is turned off.
     update_check_disabled: bool,
     /// The last check for a newer Studio and its answer.
@@ -237,6 +246,9 @@ pub struct StudioShell {
     panel: gpui::Entity<ConversationPanel>,
     /// The settings frame's Agent page, drawn by `panel`.
     setup_page: gpui::Entity<AgentSetupPage>,
+    /// Settings → Agent → MCP servers and Tools.
+    agent_tools: gpui::Entity<agent_tools::AgentToolsPage>,
+    _agent_tools_subscription: gpui::Subscription,
     _panel_subscription: gpui::Subscription,
     preset_panel: gpui::Entity<PresetPanel>,
     _preset_subscription: gpui::Subscription,
@@ -359,7 +371,18 @@ impl StudioShell {
         let panel_subscription =
             cx.subscribe_in(&panel, window, |shell, _, event, window, cx| match event {
                 PanelEvent::Leave => window.focus(&shell.focus, cx),
-                PanelEvent::OpenSetup => shell.open_agent_setup(cx),
+                PanelEvent::OpenSettings(link) => {
+                    shell.open_agent_settings(link.tab, link.target.clone(), window, cx)
+                }
+                // The composer's Tools popover and approval selector save through the same
+                // paths as Settings → Agent, so both stay in step.
+                // The page saves and announces the change (AgentToolsChanged).
+                PanelEvent::SetAgentTools(settings) => shell
+                    .agent_tools
+                    .update(cx, |page, cx| page.set_from_composer(settings, cx)),
+                PanelEvent::SetPermissionPolicy(policy) => {
+                    shell.choose_permission_policy(*policy, cx)
+                }
                 PanelEvent::Attention(attention) => {
                     // A new permission card brings the panel forward; one already waiting
                     // does not keep the user from other tabs.
@@ -372,6 +395,22 @@ impl StudioShell {
             });
         let review = review::ReviewState::new(&panel, cx);
         let setup_page = cx.new(|cx| AgentSetupPage::new(&panel, cx));
+        let settings_scroll = gpui::ScrollHandle::new();
+        let agent_tools = cx
+            .new(|_| agent_tools::AgentToolsPage::new(Default::default(), settings_scroll.clone()));
+        let agent_tools_subscription = cx.subscribe(&agent_tools, |shell, _, event, cx| {
+            let agent_tools::AgentToolsChanged(settings) = event;
+            shell.apply_agent_tools(settings.clone(), cx);
+        });
+        // The composer's Tools popover shows what the agent gets (the open project's
+        // override included), after every load or change.
+        cx.observe(&agent_tools, |shell, page, cx| {
+            let settings = page.read(cx).effective();
+            shell
+                .panel
+                .update(cx, |panel, cx| panel.set_agent_tools(settings, cx));
+        })
+        .detach();
         let preset_panel = cx.new(|cx| PresetPanel::new(window, cx));
         let preset_subscription =
             cx.subscribe_in(&preset_panel, window, |shell, _, event, window, cx| {
@@ -543,6 +582,8 @@ impl StudioShell {
             awaiting_preview: None,
             panel,
             setup_page,
+            agent_tools,
+            _agent_tools_subscription: agent_tools_subscription,
             _panel_subscription: panel_subscription,
             preset_panel,
             _preset_subscription: preset_subscription,
@@ -581,12 +622,15 @@ impl StudioShell {
             viewport: [0., 0.],
             settings_open: false,
             settings_dialog: None,
+            settings_return_focus: None,
             settings_page: settings::SettingsPage::default(),
+            settings_scroll,
             settings_writer: Arc::default(),
             onboarding: None,
             setup_checked: false,
             onboarding_completed: None,
             permission_policy: studio_proto::PermissionPolicy::default(),
+            approvals_fixture: None,
             update_check_disabled: false,
             update: settings::UpdateCheck::NotChecked,
             update_dismissed: false,

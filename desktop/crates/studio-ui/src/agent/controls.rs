@@ -1197,6 +1197,7 @@ mod tests {
             }],
             state,
             answered_by: None,
+            remember: None,
         }
     }
 

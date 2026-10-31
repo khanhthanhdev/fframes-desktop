@@ -353,9 +353,15 @@ impl Render for StudioShell {
             self.settings_dialog = Some(super::settings_dialog::SettingsDialog::open(
                 cx.entity(),
                 &self.panel,
+                super::AgentTab::default(),
                 window,
                 cx,
             ));
+        }
+        if !self.settings_open
+            && let Some(focus) = self.settings_return_focus.take()
+        {
+            window.focus(&focus, cx);
         }
         let settings_dialog = self.settings_dialog.clone();
         Self::on_actions(div(), cx)
