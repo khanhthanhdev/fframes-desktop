@@ -1,0 +1,25 @@
+name: Spellcheck
+# Separate from CI so it also checks the plans, docs and desktop changes that CI skips.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
+jobs:
+  spellcheck:
+    name: Spellcheck
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Spellcheck
+        # pinned: @master picks up new dictionary words and fails unrelated commits
+        uses: crate-ci/typos@v1.51.1
+        with:
+          config: ./typos.toml

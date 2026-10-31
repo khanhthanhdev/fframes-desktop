@@ -75,6 +75,8 @@ jobs:
           toolchain: "1.98.1"
           components: rustfmt, clippy
           cache-workspaces: "desktop -> target"
+          # A failed job saves a near-empty target that later runs restore as an exact hit
+          cache-on-failure: false
       - name: macOS native prerequisites
         run: |
           # The FFmpeg build compiles OpenH264 and finds it through pkg-config.

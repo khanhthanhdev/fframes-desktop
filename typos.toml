@@ -28,3 +28,7 @@ caf = "caf"
 FO = "FO"
 # Claude CLI's `ede_diagnostic` error tag in wire-shape reports
 ede = "ede"
+# Crate and example names in plans: `flate2`, chematic's `threed`, the `convnet` ml example
+flate = "flate"
+threed = "threed"
+convnet = "convnet"
