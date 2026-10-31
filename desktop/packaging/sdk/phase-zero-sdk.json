@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "sdk_id": "studio-sdk-x86_64-unknown-linux-gnu-v1",
-  "compatible_app_range": "^0.1.0",
+  "compatible_app_range": "^0.2.0",
   "target_triple": "x86_64-unknown-linux-gnu",
   "arch": "x86_64",
   "os_baseline": "Ubuntu 24.04 (glibc >= 2.39)",

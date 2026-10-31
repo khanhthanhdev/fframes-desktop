@@ -275,6 +275,9 @@ impl Backend {
                         manifest_path.display()
                     )
                 })?;
+                compatibility
+                    .validate_for_current_app_version(self.app_version)
+                    .map_err(|e| format!("{e}; install the current SDK in Setup"))?;
                 if !compatibility
                     .preview_contract_versions
                     .contains(&fframes_studio_protocol::PREVIEW_CONTRACT_VERSION)
@@ -524,7 +527,15 @@ impl Backend {
         self.sdk = match (sdk, selected) {
             (Some(path), Some(selected)) => {
                 let selected = match selected {
+                    // An SDK installed by an older app stays active after an update; its
+                    // app range is checked here because only the app knows its version.
                     Ok(manifest) => {
+                        if let Err(error) =
+                            manifest.validate_for_current_app_version(self.app_version)
+                        {
+                            self.sdk = format!("SDK failed: {error} · Install managed SDK");
+                            return;
+                        }
                         self.selected_sdk = Some(manifest.clone());
                         manifest
                     }

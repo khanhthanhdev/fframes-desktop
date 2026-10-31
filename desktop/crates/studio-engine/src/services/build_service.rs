@@ -204,7 +204,7 @@ impl CompileEnvironment {
         host: ChildEnvironment,
     ) -> Result<Self, String> {
         compatibility
-            .validate_for_current_app_version(env!("CARGO_PKG_VERSION"))
+            .validate_for_current_target()
             .map_err(|error| format!("SDK compatibility rejected before build: {error}"))?;
         let sdk_dir = std::fs::canonicalize(sdk)
             .map_err(|e| format!("SDK installation {} is unavailable: {e}", sdk.display()))?;

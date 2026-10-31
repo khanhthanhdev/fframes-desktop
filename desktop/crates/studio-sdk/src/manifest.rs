@@ -203,14 +203,7 @@ impl CompatibilityManifest {
         app_version: &str,
         host_target: &str,
     ) -> Result<(), ManifestError> {
-        self.validate()?;
-
-        if self.target_triple != host_target {
-            return Err(ManifestError::TargetMismatch {
-                manifest_target: self.target_triple.clone(),
-                host_target: host_target.to_owned(),
-            });
-        }
+        self.validate_for_target(host_target)?;
 
         let app_version = Version::parse(app_version).map_err(|error| {
             ManifestError::Validation(format!("invalid app version '{app_version}': {error}"))
@@ -248,14 +241,35 @@ impl CompatibilityManifest {
         }
     }
 
-    /// Validates against the app version supplied by the Studio executable and its native target.
-    pub fn validate_for_current_app_version(&self, app_version: &str) -> Result<(), ManifestError> {
-        let target = Self::host_target().ok_or_else(|| {
+    fn validate_for_target(&self, host_target: &str) -> Result<(), ManifestError> {
+        self.validate()?;
+        if self.target_triple != host_target {
+            return Err(ManifestError::TargetMismatch {
+                manifest_target: self.target_triple.clone(),
+                host_target: host_target.to_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    fn current_target() -> Result<&'static str, ManifestError> {
+        Self::host_target().ok_or_else(|| {
             ManifestError::Validation(
                 "this Studio build target has no supported SDK compatibility identity".into(),
             )
-        })?;
-        self.validate_for_app(app_version, target)
+        })
+    }
+
+    /// Validates against the app version supplied by the Studio executable and its native target.
+    pub fn validate_for_current_app_version(&self, app_version: &str) -> Result<(), ManifestError> {
+        self.validate_for_app(app_version, Self::current_target()?)
+    }
+
+    /// Validates the manifest and its target for this Studio build, but not the app range:
+    /// library code does not know the app's version, so the app checks it when it selects
+    /// the SDK.
+    pub fn validate_for_current_target(&self) -> Result<(), ManifestError> {
+        self.validate_for_target(Self::current_target()?)
     }
 
     /// Validates using the SDK crate version for standalone SDK consumers.
@@ -293,14 +307,14 @@ mod tests {
     fn app_compatibility_range_is_validated_and_enforced() {
         let manifest = CompatibilityManifest::default_linux_x64();
         manifest
-            .validate_for_app("0.1.7", &manifest.target_triple)
+            .validate_for_app("0.2.7", &manifest.target_triple)
             .expect("matching application version should be accepted");
         assert!(matches!(
-            manifest.validate_for_app("0.2.0", &manifest.target_triple),
+            manifest.validate_for_app("0.1.5", &manifest.target_triple),
             Err(ManifestError::Validation(_))
         ));
         assert!(matches!(
-            manifest.validate_for_app("0.1.0", "aarch64-apple-darwin"),
+            manifest.validate_for_app("0.2.0", "aarch64-apple-darwin"),
             Err(ManifestError::TargetMismatch { .. })
         ));
     }
@@ -323,7 +337,7 @@ mod tests {
         assert!(!json.contains("preview_contract"));
         assert_eq!(
             manifest.digest(),
-            "b122d5d7e7af533eed9dd9c32ab5a746005a41bd23287b3584a71a938b7293c8"
+            "c54573a5a322642969a34277dc11b61932e24d392eb025642eb6177d0e428354"
         );
     }
 

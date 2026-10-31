@@ -458,11 +458,7 @@ impl SdkInstaller {
         manifest: &CompatibilityManifest,
         artifact_files: &[(SdkArtifact, P)],
     ) -> Result<PathBuf, InstallError> {
-        self.install_from_local_artifacts_for_app(
-            manifest,
-            artifact_files,
-            env!("CARGO_PKG_VERSION"),
-        )
+        self.install_local(manifest, artifact_files, None)
     }
 
     /// Transactionally installs an SDK after checking it against the owning Studio app version.
@@ -472,9 +468,21 @@ impl SdkInstaller {
         artifact_files: &[(SdkArtifact, P)],
         app_version: &str,
     ) -> Result<PathBuf, InstallError> {
-        manifest
-            .validate_for_current_app_version(app_version)
-            .map_err(|error| InstallError::Other(error.to_string()))?;
+        self.install_local(manifest, artifact_files, Some(app_version))
+    }
+
+    /// Without an app version (tools and tests) only the manifest and its target are checked.
+    fn install_local<P: AsRef<Path>>(
+        &self,
+        manifest: &CompatibilityManifest,
+        artifact_files: &[(SdkArtifact, P)],
+        app_version: Option<&str>,
+    ) -> Result<PathBuf, InstallError> {
+        match app_version {
+            Some(app_version) => manifest.validate_for_current_app_version(app_version),
+            None => manifest.validate_for_current_target(),
+        }
+        .map_err(|error| InstallError::Other(error.to_string()))?;
         let _lock = self.acquire_install_lock()?;
         self.recover_interrupted_transactions_locked()?;
 
@@ -1098,7 +1106,7 @@ mod tests {
 
         assert_eq!(
             installer
-                .reusable_active_for_app(&manifest, env!("CARGO_PKG_VERSION"), None)
+                .reusable_active_for_app(&manifest, "0.2.0", None)
                 .unwrap(),
             Some(active.clone())
         );
@@ -1113,7 +1121,7 @@ mod tests {
         .unwrap();
         assert!(
             installer
-                .reusable_active_for_app(&manifest, env!("CARGO_PKG_VERSION"), None)
+                .reusable_active_for_app(&manifest, "0.2.0", None)
                 .unwrap()
                 .is_none()
         );
@@ -1135,7 +1143,7 @@ mod tests {
 
         assert_eq!(
             installer
-                .reusable_active_for_app(&manifest, env!("CARGO_PKG_VERSION"), None)
+                .reusable_active_for_app(&manifest, "0.2.0", None)
                 .unwrap(),
             None
         );

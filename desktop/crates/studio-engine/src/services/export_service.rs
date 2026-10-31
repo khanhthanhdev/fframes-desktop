@@ -495,7 +495,7 @@ fn load_sdk_manifest(sdk: &Path) -> Result<studio_sdk::CompatibilityManifest, St
     )
     .map_err(|error| format!("SDK manifest is invalid: {error}"))?;
     manifest
-        .validate_for_current_app_version(env!("CARGO_PKG_VERSION"))
+        .validate_for_current_target()
         .map_err(|error| format!("SDK is not compatible with this app: {error}"))?;
     Ok(manifest)
 }

@@ -101,7 +101,7 @@ pub fn manifest() -> CompatibilityManifest {
     manifest.os_baseline = format!("{} test runner", std::env::consts::OS);
     manifest.rust_toolchain.targets = vec![target_triple.into()];
     manifest
-        .validate_for_current_app_version(env!("CARGO_PKG_VERSION"))
+        .validate_for_current_target()
         .expect("fake SDK manifest must match the current test host");
     manifest
 }
