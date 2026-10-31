@@ -3,9 +3,10 @@
 //!
 //! A row is a single line `list_row_h` high, or two lines `list_row_2_h` high when it has a
 //! [`ListRow::meta`] line. Its slots, left to right: `leading` (an icon or any element), the
-//! title (and meta under it), `trailing` (a badge, a status dot) and `actions`, which are laid
-//! out all the time (so the row does not reflow) and shown while the pointer is over the row,
-//! the row is selected or keyboard focus is inside them.
+//! title (and meta under it), `actions`, which are laid out all the time (so the row does not
+//! reflow) and shown while the pointer is over the row, the row is selected or keyboard focus
+//! is inside them, and `trailing` (a badge, a status dot), which stays at the row's right end
+//! whether the actions show or not.
 //!
 //! A row is a tab stop when it has an [`ListRow::on_click`]; Enter and Space activate it.
 
@@ -35,13 +36,14 @@ pub(crate) struct RowLook {
     pub opacity: f32,
 }
 
-/// The look of a row: selected rows are `ctl_active`, others turn `ctl_hover` under the
-/// pointer; a disabled row has no hover and is dimmed; a muted row's title is `text_3`.
+/// The look of a row, after Oleafly's file tree (`hover:bg-sidebar-accent`): selected rows
+/// are `ctl_hover`, others turn the quieter `ctl` under the pointer; a disabled row has no
+/// hover and is dimmed; a muted row's title is `text_3`.
 pub(crate) fn row_look(theme: &Theme, selected: bool, disabled: bool, muted: bool) -> RowLook {
     let colors = theme.colors;
     RowLook {
-        fill: selected.then(|| colors.ctl_active.into()),
-        hover: (!selected && !disabled).then(|| colors.ctl_hover.into()),
+        fill: selected.then(|| colors.ctl_hover.into()),
+        hover: (!selected && !disabled).then(|| colors.ctl.into()),
         title: if muted { colors.text_3 } else { colors.text_1 }.into(),
         actions_always: selected && !disabled,
         opacity: if disabled {
@@ -108,7 +110,7 @@ impl ListRow {
         self
     }
 
-    /// The row's name: `Label` in `text_1`, or `text_3` when [`ListRow::muted`].
+    /// The row's name: `Body` in `text_1`, or `text_3` when [`ListRow::muted`].
     pub fn title(mut self, title: impl Into<SharedString>) -> Self {
         self.title = Some(title.into());
         self
@@ -210,7 +212,7 @@ impl RenderOnce for ListRow {
             .min_w_0()
             .overflow_hidden()
             .children(title.map(|title| {
-                text_style(div(), TextStyle::Label)
+                text_style(div(), TextStyle::Body)
                     .text_color(look.title)
                     .truncate()
                     .child(title)
@@ -261,10 +263,12 @@ impl RenderOnce for ListRow {
             .opacity(look.opacity)
             .children(leading.map(|leading| div().flex().flex_none().items_center().child(leading)))
             .child(text)
+            // The actions' space is held even while they are hidden, so they go before the
+            // trailing element, which keeps to the row's right end.
+            .children(actions)
             .children(
                 trailing.map(|trailing| div().flex().flex_none().items_center().child(trailing)),
             )
-            .children(actions)
     }
 }
 
@@ -324,13 +328,17 @@ mod tests {
             let c = theme.colors;
             let plain = row_look(&theme, false, false, false);
             assert_eq!(plain.fill, None);
-            assert_eq!(plain.hover, Some(c.ctl_hover.into()));
+            assert_eq!(plain.hover, Some(c.ctl.into()));
             assert_eq!(plain.title, Hsla::from(c.text_1));
             assert!(!plain.actions_always);
             assert_eq!(plain.opacity, 1.);
 
             let selected = row_look(&theme, true, false, false);
-            assert_eq!(selected.fill, Some(c.ctl_active.into()));
+            assert_eq!(selected.fill, Some(c.ctl_hover.into()));
+            assert_ne!(
+                selected.fill, plain.hover,
+                "selection stays apart from hover"
+            );
             assert_eq!(selected.hover, None);
             assert!(selected.actions_always);
 

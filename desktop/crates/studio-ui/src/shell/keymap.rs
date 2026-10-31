@@ -39,57 +39,142 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys(key_bindings());
 }
 
-fn key_bindings() -> Vec<KeyBinding> {
-    let player = Some(PLAYER);
-    let timeline = Some(TIMELINE);
-    let outside_fields = Some(WORKSPACE_OUTSIDE_FIELDS);
-    let present = Some(PRESENT);
-    vec![
-        KeyBinding::new("space", actions::TogglePlayback, player),
-        KeyBinding::new("left", actions::StepBackward, player),
-        KeyBinding::new("right", actions::StepForward, player),
-        KeyBinding::new("home", actions::SeekToStart, player),
-        KeyBinding::new("end", actions::SeekToEnd, player),
-        KeyBinding::new("c", actions::CycleCanvasSelection, player),
-        KeyBinding::new("0", actions::ResetCanvasView, player),
-        KeyBinding::new("escape", actions::ClearCanvasSelection, player),
-        KeyBinding::new("space", actions::TogglePlayback, timeline),
-        KeyBinding::new("m", actions::ToggleMute, timeline),
-        KeyBinding::new("left", actions::StepBackward, timeline),
-        KeyBinding::new("right", actions::StepForward, timeline),
-        KeyBinding::new("home", actions::SeekToStart, timeline),
-        KeyBinding::new("end", actions::SeekToEnd, timeline),
-        KeyBinding::new("+", actions::ZoomIn, timeline),
-        KeyBinding::new("=", actions::ZoomIn, timeline),
-        KeyBinding::new("shift-=", actions::ZoomIn, timeline),
-        KeyBinding::new("-", actions::ZoomOut, timeline),
-        KeyBinding::new("pageup", actions::PageTimelineBack, timeline),
-        KeyBinding::new("pagedown", actions::PageTimelineForward, timeline),
-        KeyBinding::new("s", actions::CycleScene, timeline),
-        KeyBinding::new("c", actions::SplitAtPlayhead, timeline),
-        KeyBinding::new("secondary-z", actions::UndoTimelineEdit, timeline),
-        KeyBinding::new("secondary-shift-z", actions::RedoTimelineEdit, timeline),
-        KeyBinding::new("secondary-z", actions::UndoTimelineEdit, outside_fields),
-        KeyBinding::new(
-            "secondary-shift-z",
-            actions::RedoTimelineEdit,
-            outside_fields,
-        ),
-        KeyBinding::new("[", actions::MarkRangeStart, timeline),
-        KeyBinding::new("]", actions::MarkRangeEnd, timeline),
-        KeyBinding::new("k", actions::AddStopAtPlayhead, timeline),
-        KeyBinding::new("delete", actions::RemoveStop, timeline),
-        KeyBinding::new("backspace", actions::RemoveStop, timeline),
-        KeyBinding::new("f5", actions::Present, outside_fields),
-        KeyBinding::new("right", actions::PresentNext, present),
-        KeyBinding::new("space", actions::PresentNext, present),
-        KeyBinding::new("pagedown", actions::PresentNext, present),
-        KeyBinding::new("left", actions::PresentPrevious, present),
-        KeyBinding::new("pageup", actions::PresentPrevious, present),
-        KeyBinding::new("home", actions::PresentFirst, present),
-        KeyBinding::new("end", actions::PresentLast, present),
-        KeyBinding::new("escape", actions::ExitPresent, present),
-    ]
+/// Where a shortcut works: its key context, and its group on Settings → Keyboard
+/// Shortcuts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ShortcutScope {
+    Player,
+    Timeline,
+    Present,
+    /// The window, outside its text fields.
+    Anywhere,
+}
+
+impl ShortcutScope {
+    /// The groups in the order the settings page shows them.
+    pub(super) const ALL: [ShortcutScope; 4] = [
+        ShortcutScope::Player,
+        ShortcutScope::Timeline,
+        ShortcutScope::Present,
+        ShortcutScope::Anywhere,
+    ];
+
+    /// The key context the scope's bindings are bound in.
+    pub(super) fn context(self) -> &'static str {
+        match self {
+            ShortcutScope::Player => PLAYER,
+            ShortcutScope::Timeline => TIMELINE,
+            ShortcutScope::Present => PRESENT,
+            ShortcutScope::Anywhere => WORKSPACE_OUTSIDE_FIELDS,
+        }
+    }
+
+    /// The group's heading on the settings page.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            ShortcutScope::Player => "Player",
+            ShortcutScope::Timeline => "Timeline",
+            ShortcutScope::Present => "Present",
+            ShortcutScope::Anywhere => "Anywhere",
+        }
+    }
+
+    /// When the group's keys work.
+    pub(super) fn description(self) -> &'static str {
+        match self {
+            ShortcutScope::Player => "While the preview has focus.",
+            ShortcutScope::Timeline => "While the timeline has focus.",
+            ShortcutScope::Present => "While presenting the slides.",
+            ShortcutScope::Anywhere => "Anywhere in the window outside a text field.",
+        }
+    }
+}
+
+/// One key binding of the shell: what it does, its keys and where. [`SHORTCUTS`] is the one
+/// list both the keymap and Settings → Keyboard Shortcuts are made from.
+pub(super) struct Shortcut {
+    pub(super) scope: ShortcutScope,
+    /// The keystrokes in gpui's syntax (`secondary-shift-z`).
+    pub(super) keys: &'static str,
+    /// What the keys do, as the settings page names it.
+    pub(super) label: &'static str,
+    bind: fn(&str, Option<&str>) -> KeyBinding,
+}
+
+const fn shortcut<A: gpui::Action + Default>(
+    scope: ShortcutScope,
+    keys: &'static str,
+    label: &'static str,
+) -> Shortcut {
+    Shortcut {
+        scope,
+        keys,
+        label,
+        bind: bind::<A>,
+    }
+}
+
+fn bind<A: gpui::Action + Default>(keys: &str, context: Option<&str>) -> KeyBinding {
+    KeyBinding::new(keys, A::default(), context)
+}
+
+use ShortcutScope::{Anywhere, Player, Present, Timeline};
+
+/// Every key the shell binds. Bindings that share a scope and a label are one row on the
+/// settings page, their keys side by side.
+pub(super) const SHORTCUTS: &[Shortcut] = &[
+    shortcut::<actions::TogglePlayback>(Player, "space", "Play or pause"),
+    shortcut::<actions::StepBackward>(Player, "left", "Step back one frame"),
+    shortcut::<actions::StepForward>(Player, "right", "Step forward one frame"),
+    shortcut::<actions::SeekToStart>(Player, "home", "Go to the start"),
+    shortcut::<actions::SeekToEnd>(Player, "end", "Go to the end"),
+    shortcut::<actions::CycleCanvasSelection>(
+        Player,
+        "c",
+        "Select the next object under the pointer",
+    ),
+    shortcut::<actions::ResetCanvasView>(Player, "0", "Reset the canvas view"),
+    shortcut::<actions::ClearCanvasSelection>(Player, "escape", "Clear the selection"),
+    shortcut::<actions::TogglePlayback>(Timeline, "space", "Play or pause"),
+    shortcut::<actions::ToggleMute>(Timeline, "m", "Mute or unmute"),
+    shortcut::<actions::StepBackward>(Timeline, "left", "Step back one frame"),
+    shortcut::<actions::StepForward>(Timeline, "right", "Step forward one frame"),
+    shortcut::<actions::SeekToStart>(Timeline, "home", "Go to the start"),
+    shortcut::<actions::SeekToEnd>(Timeline, "end", "Go to the end"),
+    shortcut::<actions::ZoomIn>(Timeline, "+", "Zoom in"),
+    shortcut::<actions::ZoomIn>(Timeline, "=", "Zoom in"),
+    shortcut::<actions::ZoomIn>(Timeline, "shift-=", "Zoom in"),
+    shortcut::<actions::ZoomOut>(Timeline, "-", "Zoom out"),
+    shortcut::<actions::PageTimelineBack>(Timeline, "pageup", "Scroll back a page"),
+    shortcut::<actions::PageTimelineForward>(Timeline, "pagedown", "Scroll forward a page"),
+    shortcut::<actions::CycleScene>(Timeline, "s", "Select the next scene"),
+    shortcut::<actions::SplitAtPlayhead>(Timeline, "c", "Split at the playhead"),
+    shortcut::<actions::UndoTimelineEdit>(Timeline, "secondary-z", "Undo a timeline edit"),
+    shortcut::<actions::RedoTimelineEdit>(Timeline, "secondary-shift-z", "Redo a timeline edit"),
+    shortcut::<actions::UndoTimelineEdit>(Anywhere, "secondary-z", "Undo a timeline edit"),
+    shortcut::<actions::RedoTimelineEdit>(Anywhere, "secondary-shift-z", "Redo a timeline edit"),
+    shortcut::<actions::MarkRangeStart>(Timeline, "[", "Mark the range's start"),
+    shortcut::<actions::MarkRangeEnd>(Timeline, "]", "Mark the range's end"),
+    shortcut::<actions::AddStopAtPlayhead>(Timeline, "k", "Add a slide stop at the playhead"),
+    shortcut::<actions::RemoveStop>(Timeline, "delete", "Remove the selected stop"),
+    shortcut::<actions::RemoveStop>(Timeline, "backspace", "Remove the selected stop"),
+    shortcut::<actions::Present>(Anywhere, "f5", "Present"),
+    shortcut::<actions::PresentNext>(Present, "right", "Next slide"),
+    shortcut::<actions::PresentNext>(Present, "space", "Next slide"),
+    shortcut::<actions::PresentNext>(Present, "pagedown", "Next slide"),
+    shortcut::<actions::PresentPrevious>(Present, "left", "Previous slide"),
+    shortcut::<actions::PresentPrevious>(Present, "pageup", "Previous slide"),
+    shortcut::<actions::PresentFirst>(Present, "home", "First slide"),
+    shortcut::<actions::PresentLast>(Present, "end", "Last slide"),
+    shortcut::<actions::ExitPresent>(Present, "escape", "Leave the presentation"),
+];
+
+/// The shell's key bindings, made from [`SHORTCUTS`].
+pub(super) fn key_bindings() -> Vec<KeyBinding> {
+    SHORTCUTS
+        .iter()
+        .map(|shortcut| (shortcut.bind)(shortcut.keys, Some(shortcut.scope.context())))
+        .collect()
 }
 
 impl StudioShell {

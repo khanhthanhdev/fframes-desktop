@@ -372,13 +372,15 @@ impl StudioShell {
         }
     }
 
-    /// The window's content while presenting: the player section alone, on black.
+    /// The window's content while presenting: the player section alone, on black. It
+    /// replaces the shell's root, so it sets the UI font itself.
     pub(super) fn render_presenting_root(
         &self,
         player: gpui::AnyElement,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         Self::on_actions(div(), cx)
+            .font_family(studio_theme::UI_FONT)
             .size_full()
             .key_context(super::keymap::WORKSPACE)
             .track_focus(&self.focus)

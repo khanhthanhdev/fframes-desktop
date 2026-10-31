@@ -11,8 +11,8 @@ use studio_theme::Theme;
 
 use super::interact::{dim_disabled, focusable};
 
-/// The track (`w-9 h-5 p-0.5`, 34 by 20 with a 2 px inset) and its 16 px knob.
-const TRACK_W: f32 = 34.;
+/// The track (Oleafly's `h-5 w-9`, 36 by 20 with a 2 px inset) and its 16 px knob.
+const TRACK_W: f32 = 36.;
 const TRACK_H: f32 = 20.;
 const TRACK_INSET: f32 = 2.;
 const KNOB: f32 = TRACK_H - 2. * TRACK_INSET;

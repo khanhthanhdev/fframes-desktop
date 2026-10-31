@@ -1,27 +1,36 @@
-//! The settings frame, shown in a window of its own as in Cap
-//! ([`SettingsWindow`](super::settings_window::SettingsWindow)) while the editor stays as it
-//! was. The header's Settings button opens the window or brings it to the front. The
-//! General page holds the theme, the audio output, setup again and updates; the Agent page
-//! the review policy, the permissions and the agent panel's adapter setup; the SDK page the
-//! managed SDK; the Presets page the project's style presets; the Export page the defaults
-//! every export starts from.
+//! The settings frame, shown as Oleafly's dialog over the main window
+//! ([`SettingsDialog`](super::settings_dialog::SettingsDialog)). The header's Settings button
+//! and the home dock's open it.
+//!
+//! The pages, after Oleafly's settings: General (the audio output and setup again),
+//! Appearance (theme and motion), Agent (Review, Permissions and the agent panel's Adapter
+//! setup, on a pill tab bar), SDK (the managed SDK), Presets (the project's style presets),
+//! Export (the defaults every export starts from), Keyboard Shortcuts (the keymap's
+//! bindings, read from [`SHORTCUTS`](super::keymap::SHORTCUTS)) and Help & About (the
+//! version, updates and links). The nav column's search field keeps the pages whose name or
+//! settings match; its footer links to the documentation, the website, the issue tracker
+//! and the release notes.
 
+use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use fframes_studio_protocol::export::ExportSettings;
-use gpui::{Context, IntoElement, ParentElement, SharedString, Styled, div, px};
+use gpui::{App, AppContext, Context, Entity, IntoElement, ParentElement, Styled, Window, div, px};
 use studio_engine::export_options::{FORMATS, REDUCED_FPS, SCALES, format_label};
 use studio_engine::services::audio_service::OutputDevice;
+use studio_engine::updates::RELEASES_REPOSITORY;
 use studio_engine::{ReviewPolicy, app_settings::AppSettings, updates::AvailableUpdate};
 use studio_proto::{AppTheme, MotionPreference};
-use studio_theme::{METRICS, TextStyle, Theme, text_style};
+use studio_theme::{Appearance, METRICS, TextStyle, Theme, text_style};
 
 use super::StudioShell;
+use super::keymap::{SHORTCUTS, ShortcutScope};
 use super::sections::box_probe;
-use super::settings_window::{self, SettingsWindow};
 use crate::kit::{
-    FormField, Icon, PanelSection, RadioCard, RadioCards, SegmentOption, SegmentedControl,
-    SettingsFrame, SettingsNavItem, Toggle, selectable,
+    Icon, KbdChip, MODAL_RADIUS, PanelSection, PictureCard, PictureCards, RadioCard, RadioCards,
+    SegmentOption, SegmentedControl, SettingRow, SettingsFooterLink, SettingsFrame,
+    SettingsNavItem, TextInput, TextInputState, Toggle, appearance_picture, keystroke_caps,
+    selectable, setting_card, setting_note,
 };
 
 /// The check for a newer Studio release.
@@ -53,30 +62,241 @@ const MOTIONS: [(MotionPreference, &str); 3] = [
 pub(super) enum SettingsPage {
     #[default]
     General,
+    Appearance,
     Agent,
     Sdk,
     Presets,
     Export,
+    Shortcuts,
+    About,
 }
 
 impl SettingsPage {
-    const ALL: [SettingsPage; 5] = [
+    const ALL: [SettingsPage; 8] = [
         SettingsPage::General,
+        SettingsPage::Appearance,
         SettingsPage::Agent,
         SettingsPage::Sdk,
         SettingsPage::Presets,
         SettingsPage::Export,
+        SettingsPage::Shortcuts,
+        SettingsPage::About,
     ];
 
+    /// The page's name, in its nav row and over the page.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            SettingsPage::General => "General",
+            SettingsPage::Appearance => "Appearance",
+            SettingsPage::Agent => "Agent",
+            SettingsPage::Sdk => "SDK",
+            SettingsPage::Presets => "Presets",
+            SettingsPage::Export => "Export",
+            SettingsPage::Shortcuts => "Keyboard Shortcuts",
+            SettingsPage::About => "Help & About",
+        }
+    }
+
     fn nav_item(self, selected: bool) -> SettingsNavItem {
-        let (id, label, icon) = match self {
-            SettingsPage::General => ("settings-general", "General", Icon::Settings),
-            SettingsPage::Agent => ("settings-agent", "Agent", Icon::Bot),
-            SettingsPage::Sdk => ("settings-sdk", "SDK", Icon::Package),
-            SettingsPage::Presets => ("settings-presets", "Presets", Icon::Palette),
-            SettingsPage::Export => ("settings-export", "Export", Icon::Download),
+        let (id, icon) = match self {
+            SettingsPage::General => ("settings-general", Icon::Settings),
+            SettingsPage::Appearance => ("settings-appearance", Icon::Palette),
+            SettingsPage::Agent => ("settings-agent", Icon::Bot),
+            SettingsPage::Sdk => ("settings-sdk", Icon::Package),
+            SettingsPage::Presets => ("settings-presets", Icon::SlidersHorizontal),
+            SettingsPage::Export => ("settings-export", Icon::Download),
+            SettingsPage::Shortcuts => ("settings-shortcuts", Icon::Keyboard),
+            SettingsPage::About => ("settings-about", Icon::LifeBuoy),
         };
-        SettingsNavItem::new(id, label, icon, selected)
+        SettingsNavItem::new(id, self.label(), icon, selected)
+    }
+
+    /// The titles of the page's settings and sections, which the search looks through
+    /// besides the page's name. Keyboard Shortcuts adds every shortcut's name.
+    fn titles(self) -> &'static [&'static str] {
+        match self {
+            SettingsPage::General => &[
+                "Audio output",
+                "Output device",
+                "Next output",
+                "Retry audio",
+                "No audio",
+                "Setup",
+                "First-run setup",
+                "Run setup again",
+            ],
+            SettingsPage::Appearance => &[
+                "Theme",
+                "System",
+                "Light",
+                "Dark",
+                "Motion",
+                "Reduced",
+                "Animations",
+            ],
+            SettingsPage::Agent => &[
+                "Review",
+                "Apply automatically",
+                "Review before Apply",
+                "Permissions",
+                "Adapter",
+                "Protocol",
+                "Executable",
+                "Arguments",
+                "Sign-in variable names",
+                "Project tools",
+                "MCP",
+                "Status",
+            ],
+            SettingsPage::Sdk => &["Managed SDK", "Install SDK", "Rust", "FFmpeg"],
+            SettingsPage::Presets => &["Style presets", "Colors", "Fonts"],
+            SettingsPage::Export => &["Export defaults", "Format", "Size", "Frame rate"],
+            SettingsPage::Shortcuts => &["Keys", "Hotkeys", "Player", "Timeline", "Present"],
+            SettingsPage::About => &[
+                "Version",
+                "Updates",
+                "Check for updates at launch",
+                "Latest version",
+                "Check now",
+                "Resources",
+                "Documentation",
+                "Website",
+                "Report a problem",
+                "What's new",
+                "Release notes",
+                "Source code",
+            ],
+        }
+    }
+
+    /// Whether the search `query` finds the page: its name or one of its titles holds every
+    /// word of the query, ignoring case. An empty query finds every page.
+    fn matches(self, query: &str) -> bool {
+        let query = query.trim().to_lowercase();
+        if query.is_empty() {
+            return true;
+        }
+        let shortcuts = SHORTCUTS
+            .iter()
+            .filter(|_| self == SettingsPage::Shortcuts)
+            .map(|shortcut| shortcut.label);
+        std::iter::once(self.label())
+            .chain(self.titles().iter().copied())
+            .chain(shortcuts)
+            .any(|title| {
+                let title = title.to_lowercase();
+                query.split_whitespace().all(|word| title.contains(word))
+            })
+    }
+}
+
+/// The sub-pages of the Agent page, on its pill tab bar; tab `i` is `agent-tab-{i}`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum AgentTab {
+    #[default]
+    Review,
+    Permissions,
+    Adapter,
+}
+
+impl AgentTab {
+    const ALL: [AgentTab; 3] = [AgentTab::Review, AgentTab::Permissions, AgentTab::Adapter];
+
+    fn label(self) -> &'static str {
+        match self {
+            AgentTab::Review => "Review",
+            AgentTab::Permissions => "Permissions",
+            AgentTab::Adapter => "Adapter",
+        }
+    }
+}
+
+/// Receives the Agent tab the user picks.
+pub(super) type AgentTabHandler = Rc<dyn Fn(AgentTab, &mut App)>;
+
+/// What the settings window holds around the shell's pages: the strip above the nav rows,
+/// the search field and the Agent page's tab.
+#[derive(Default)]
+pub(super) struct SettingsChrome {
+    pub(super) nav_header: Option<gpui::AnyElement>,
+    /// The dialog's close button, at the end of the page header.
+    pub(super) header_end: Option<gpui::AnyElement>,
+    pub(super) search: Option<Entity<TextInputState>>,
+    pub(super) agent_tab: AgentTab,
+    pub(super) on_agent_tab: Option<AgentTabHandler>,
+}
+
+/// A page of the project's site the settings link to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Link {
+    Docs,
+    Website,
+    Issues,
+    Releases,
+    Source,
+}
+
+impl Link {
+    /// The links in the nav column's footer.
+    const FOOTER: [Link; 4] = [Link::Docs, Link::Website, Link::Issues, Link::Releases];
+    /// The links on Help & About.
+    const RESOURCES: [Link; 5] = [
+        Link::Docs,
+        Link::Website,
+        Link::Releases,
+        Link::Issues,
+        Link::Source,
+    ];
+
+    fn url(self) -> String {
+        let repository = format!("https://github.com/{RELEASES_REPOSITORY}");
+        match self {
+            Link::Docs => format!("{repository}/blob/main/docs/desktop/README.md"),
+            Link::Website => "https://fframes.studio".to_owned(),
+            Link::Issues => format!("{repository}/issues/new"),
+            Link::Releases => format!("{repository}/releases"),
+            Link::Source => repository,
+        }
+    }
+
+    fn key(self) -> &'static str {
+        match self {
+            Link::Docs => "docs",
+            Link::Website => "website",
+            Link::Issues => "issues",
+            Link::Releases => "releases",
+            Link::Source => "source",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Link::Docs => "Documentation",
+            Link::Website => "Website",
+            Link::Issues => "Report a problem",
+            Link::Releases => "What's new",
+            Link::Source => "Source code",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Link::Docs => "How Studio works, from setup to export.",
+            Link::Website => "fframes, the video framework Studio is built on.",
+            Link::Issues => "Open an issue on GitHub with what happened.",
+            Link::Releases => "The release notes of every version.",
+            Link::Source => "The project on GitHub.",
+        }
+    }
+
+    fn icon(self) -> Icon {
+        match self {
+            Link::Docs => Icon::BookOpen,
+            Link::Website => Icon::Globe,
+            Link::Issues => Icon::LifeBuoy,
+            Link::Releases => Icon::ScrollText,
+            Link::Source => Icon::FileCode,
+        }
     }
 }
 
@@ -127,27 +347,8 @@ impl StudioShell {
         self.overflow_open = false;
         // The Export page shows them; a render cannot read the file.
         self.export_defaults();
-        if let Some(window) = self.settings_window {
-            // After this update too: activating fires the platform's focus callbacks.
-            cx.defer(move |cx| settings_window::activate(window.into(), cx));
-            cx.notify();
-            return;
-        }
-        // After this update: a new window draws at once, and its pages update the shell.
-        let shell = cx.entity();
-        cx.defer(move |cx| {
-            if shell.read(cx).settings_window.is_some() {
-                return;
-            }
-            let window = SettingsWindow::open(shell.clone(), cx);
-            shell.update(cx, |shell, cx| {
-                if window.is_none() {
-                    shell.error = Some("Cannot open the settings window".into());
-                }
-                shell.settings_window = window;
-                cx.notify();
-            });
-        });
+        // The main window's next render builds the dialog: its search field needs the window.
+        self.settings_open = true;
         cx.notify();
     }
 
@@ -163,19 +364,13 @@ impl StudioShell {
     }
 
     pub(super) fn close_settings(&mut self, cx: &mut Context<Self>) {
-        if let Some(window) = self.settings_window.take() {
-            settings_window::close(window.into(), cx);
-        }
+        self.settings_open = false;
+        self.settings_dialog = None;
         cx.notify();
     }
 
-    /// The settings window, while it is open.
-    pub fn settings_window(&self) -> Option<gpui::AnyWindowHandle> {
-        self.settings_window.map(Into::into)
-    }
-
     /// Applies `choice` to every window and saves it in the background.
-    fn choose_theme(&mut self, choice: AppTheme, cx: &mut Context<Self>) {
+    pub(super) fn choose_theme(&mut self, choice: AppTheme, cx: &mut Context<Self>) {
         if studio_theme::current_preference(cx) == choice {
             return;
         }
@@ -327,9 +522,11 @@ impl StudioShell {
         .detach();
     }
 
-    /// The Updates section: the launch check, its answer, Check now and Download.
-    fn render_updates(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+    /// Help & About: the app and its version with the update check, the launch check, and
+    /// the project's links.
+    fn render_about(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
+        let colors = theme.colors;
         let entity = cx.entity();
         let toggle = Toggle::new(&theme, "update-check", !self.update_check_disabled)
             .label("Check for updates at launch")
@@ -346,33 +543,88 @@ impl StudioShell {
             ),
             UpdateCheck::Failed(error) => error.clone(),
         };
-        let mut actions = div()
-            .flex()
-            .gap(px(METRICS.space_2))
-            .child(self.action_button(
-                "check-update",
-                "Check now",
-                self.update != UpdateCheck::Checking,
-                false,
-                None,
-                cx,
-                |shell, cx| shell.check_for_update(cx),
-            ));
+        let mut actions =
+            div()
+                .flex()
+                .flex_wrap()
+                .gap(px(METRICS.space_2))
+                .child(self.action_button(
+                    "check-update",
+                    "Check now",
+                    self.update != UpdateCheck::Checking,
+                    false,
+                    Some(Icon::RefreshCw),
+                    cx,
+                    |shell, cx| shell.check_for_update(cx),
+                ));
         if let UpdateCheck::Available(update) = &self.update {
             actions = actions.child(self.download_update_button(update.url.clone(), cx));
         }
-        PanelSection::new(&theme, "Updates")
-            .description(
-                "Studio asks GitHub for a newer release. Nothing is downloaded or installed \
-                 without you.",
+        // Oleafly's About card: the name and version, a line on what the app is, and the
+        // update actions under them.
+        let app = setting_card(&theme)
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_3))
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(METRICS.space_1))
+                    .child(
+                        div()
+                            .flex()
+                            .items_baseline()
+                            .gap(px(METRICS.space_2))
+                            .child(
+                                text_style(div(), TextStyle::Title)
+                                    .text_color(colors.text_1)
+                                    .child("fframes Studio"),
+                            )
+                            .child(
+                                text_style(div(), TextStyle::Small)
+                                    .text_color(colors.text_2)
+                                    .child(selectable(format!("v{}", self.app_version))),
+                            ),
+                    )
+                    .child(
+                        text_style(div(), TextStyle::Small)
+                            .text_color(colors.text_2)
+                            .child(selectable(
+                                "Describe a video, watch it, select a scene or an object and \
+                                 ask a coding agent to change it. The video stays an ordinary \
+                                 fframes Rust project.",
+                            )),
+                    ),
             )
-            .card()
-            .child(FormField::row(
-                &theme,
-                "Check for updates at launch",
-                toggle,
-            ))
-            .child(FormField::row(&theme, status, actions))
+            .child(actions);
+        let links = Link::RESOURCES.map(|link| {
+            let url = link.url();
+            SettingRow::new(&theme, link.label())
+                .description(link.description())
+                .icon(link.icon())
+                .link(format!("about-{}", link.key()), move |_, cx| {
+                    cx.open_url(&url)
+                })
+                .into_any_element()
+        });
+        settings_page()
+            .child(app)
+            .child(
+                PanelSection::new(&theme, "Updates").children([
+                    SettingRow::new(&theme, "Check for updates at launch")
+                        .description(
+                            "Studio asks GitHub for a newer release. Nothing is downloaded or \
+                             installed without you.",
+                        )
+                        .control(toggle)
+                        .into_any_element(),
+                    SettingRow::new(&theme, "Latest version")
+                        .description(status)
+                        .into_any_element(),
+                ]),
+            )
+            .child(PanelSection::new(&theme, "Resources").children(links))
             .into_any_element()
     }
 
@@ -393,81 +645,91 @@ impl StudioShell {
         )
     }
 
-    /// The settings window's frame, with `nav_header` above the nav rows.
+    /// The settings window's frame: the nav column with the search field, the pages the
+    /// search keeps and the footer links, beside the selected page.
     pub(super) fn render_settings(
         &self,
-        nav_header: Option<gpui::AnyElement>,
+        chrome: SettingsChrome,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         let theme = self.theme;
         let entity = cx.entity();
+        let query = chrome
+            .search
+            .as_ref()
+            .map(|search| search.read(cx).text().to_owned())
+            .unwrap_or_default();
+        let visible: Rc<Vec<SettingsPage>> = Rc::new(
+            SettingsPage::ALL
+                .into_iter()
+                .filter(|page| page.matches(&query))
+                .collect(),
+        );
         let page = match self.settings_page {
             SettingsPage::General => settings_page()
-                .child(self.render_appearance(cx))
                 .child(self.render_audio_output(cx))
                 .child(
-                    PanelSection::new(&theme, "Setup")
-                        .description(
-                            "Walk through the theme, SDK, first video, agent and permissions \
-                             again.",
-                        )
-                        .card()
-                        .child(FormField::row(
-                            &theme,
-                            "First-run setup",
-                            self.action_button(
-                                "run-setup-again",
-                                "Run setup again",
-                                true,
-                                false,
-                                None,
-                                cx,
-                                |shell, cx| shell.run_setup_again(cx),
-                            ),
-                        )),
+                    PanelSection::new(&theme, "Setup").children([SettingRow::new(
+                        &theme,
+                        "First-run setup",
+                    )
+                    .description(
+                        "Walk through the theme, SDK, first video, agent and permissions \
+                         again.",
+                    )
+                    .control(self.action_button(
+                        "run-setup-again",
+                        "Run setup again",
+                        true,
+                        false,
+                        None,
+                        cx,
+                        |shell, cx| shell.run_setup_again(cx),
+                    ))
+                    .into_any_element()]),
                 )
-                .child(self.render_updates(cx))
                 .into_any_element(),
-            // The two short choices first: the provider setup below them runs long.
-            SettingsPage::Agent => settings_page()
-                .child(self.render_review_policy(cx))
-                .child(
-                    PanelSection::new(&theme, "Permissions")
-                        .description(
-                            "How the agent's permission requests are answered. A running task \
-                             keeps the choice it started with.",
-                        )
-                        .child(self.permission_choice(
-                            self.permission_policy,
-                            |shell, policy, cx| shell.choose_permission_policy(policy, cx),
-                            cx,
-                        )),
-                )
-                .child(self.setup_page.clone())
-                .into_any_element(),
+            SettingsPage::Appearance => self.render_appearance(cx),
+            SettingsPage::Agent => self.render_agent(chrome.agent_tab, chrome.on_agent_tab, cx),
             SettingsPage::Sdk => PanelSection::new(&theme, "Managed SDK")
                 .description(
                     "Studio builds previews and exports with this SDK. Selecting an installed \
                      one applies to the open project.",
                 )
-                .card()
-                .child(self.sdk_controls(cx))
+                .children([setting_card(&theme)
+                    .child(self.sdk_controls(cx))
+                    .into_any_element()])
                 .into_any_element(),
             SettingsPage::Presets => self.preset_panel.clone().into_any_element(),
             SettingsPage::Export => self.render_export_defaults(cx),
+            SettingsPage::Shortcuts => render_shortcuts(&theme),
+            SettingsPage::About => self.render_about(cx),
         };
-        let frame = SettingsFrame::new(
+        let footer = Link::FOOTER
+            .into_iter()
+            .map(|link| {
+                let url = link.url();
+                SettingsFooterLink::new(
+                    format!("settings-footer-{}", link.key()),
+                    link.label(),
+                    link.icon(),
+                    move |_, cx| cx.open_url(&url),
+                )
+            })
+            .collect();
+        let mut frame = SettingsFrame::new(
             &theme,
             "settings",
-            SettingsPage::ALL
+            visible
                 .iter()
                 .map(|page| page.nav_item(*page == self.settings_page))
                 .collect(),
         )
         .on_select({
             let entity = entity.clone();
+            let visible = visible.clone();
             move |index, _, cx| {
-                if let Some(page) = SettingsPage::ALL.get(*index) {
+                if let Some(page) = visible.get(*index) {
                     entity.update(cx, |shell, cx| {
                         shell.settings_page = *page;
                         cx.notify();
@@ -475,11 +737,24 @@ impl StudioShell {
                 }
             }
         })
-        .nav_header(nav_header)
+        .heading("Settings")
+        .title(self.settings_page.label())
+        .header_end(chrome.header_end)
+        .radius(MODAL_RADIUS)
+        .empty("No settings match")
+        .footer(footer)
+        .nav_header(chrome.nav_header)
         .children([page]);
+        if let Some(search) = &chrome.search {
+            frame = frame.search(
+                TextInput::new(&theme, "settings-search", search)
+                    .search()
+                    .height(px(METRICS.size.control_h)),
+            );
+        }
         let frame = if self.qualifying {
             frame.on_item_bounds(move |index, bounds, cx| {
-                if let Some(page) = SettingsPage::ALL.get(index) {
+                if let Some(page) = visible.get(index) {
                     entity.update(cx, |shell, _| {
                         shell.button_bounds.insert(
                             page.nav_item(false).id.to_string(),
@@ -499,22 +774,117 @@ impl StudioShell {
             .into_any_element()
     }
 
-    /// The settings frame on page `page` (0 General … 4 Export), drawn with `theme` the way
-    /// the settings window draws it. For the UI gallery's captures.
+    /// Follows a new search `query`: when it no longer finds the open page, opens the first
+    /// page it finds, as Oleafly opens its best match.
+    pub(super) fn follow_settings_search(&mut self, query: &str, cx: &mut Context<Self>) {
+        if self.settings_page.matches(query) {
+            return;
+        }
+        if let Some(page) = SettingsPage::ALL
+            .into_iter()
+            .find(|page| page.matches(query))
+        {
+            self.settings_page = page;
+            cx.notify();
+        }
+    }
+
+    /// The settings frame in the gallery's fixture `state` (0 General … 7 Help & About, in
+    /// nav order; 8 the Agent page's Adapter tab; 9 a search for "frame"), drawn with
+    /// `theme` the way the settings window draws it. For the UI gallery's captures.
     pub fn render_settings_fixture(
         &mut self,
-        page: usize,
+        state: usize,
         theme: Theme,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
-        if let Some(page) = SettingsPage::ALL.get(page) {
-            self.settings_page = *page;
+        let search = cx.new(|cx| {
+            let mut input = TextInputState::single_line(window, cx);
+            input.set_placeholder(SEARCH_PLACEHOLDER);
+            input
+        });
+        let mut agent_tab = AgentTab::default();
+        match state {
+            8 => {
+                self.settings_page = SettingsPage::Agent;
+                agent_tab = AgentTab::Adapter;
+            }
+            9 => {
+                search.update(cx, |input, cx| input.set_text("frame", cx));
+                self.follow_settings_search("frame", cx);
+            }
+            page => {
+                if let Some(page) = SettingsPage::ALL.get(page) {
+                    self.settings_page = *page;
+                }
+            }
         }
         self.export_defaults();
         let main = std::mem::replace(&mut self.theme, theme);
-        let frame = self.render_settings(None, cx);
+        let frame = self.render_settings(
+            SettingsChrome {
+                header_end: Some(
+                    crate::kit::IconButton::new(&theme, "settings-close", Icon::X.path())
+                        .emphasis(crate::kit::Emphasis::Ghost)
+                        .size(crate::kit::IconButtonSize::Md)
+                        .label("Close settings")
+                        .into_any_element(),
+                ),
+                search: Some(search),
+                agent_tab,
+                ..SettingsChrome::default()
+            },
+            cx,
+        );
         self.theme = main;
         frame
+    }
+
+    /// The Agent page: Review, Permissions and the agent panel's Adapter setup, one at a
+    /// time under a pill tab bar.
+    fn render_agent(
+        &self,
+        tab: AgentTab,
+        on_tab: Option<AgentTabHandler>,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        let theme = self.theme;
+        let mut tabs = SegmentedControl::new(
+            &theme,
+            "agent-tab",
+            AgentTab::ALL
+                .iter()
+                .map(|each| SegmentOption::new(each.label(), *each == tab))
+                .collect(),
+        )
+        .tabs();
+        if let Some(on_tab) = on_tab {
+            tabs = tabs.on_select(move |index, _, cx| {
+                if let Some(tab) = AgentTab::ALL.get(*index) {
+                    on_tab(*tab, cx);
+                }
+            });
+        }
+        let content = match tab {
+            AgentTab::Review => self.render_review_policy(cx),
+            AgentTab::Permissions => PanelSection::new(&theme, "Permissions")
+                .description(
+                    "How the agent's permission requests are answered. A running task keeps \
+                     the choice it started with.",
+                )
+                .children([self.permission_choice(
+                    self.permission_policy,
+                    |shell, policy, cx| shell.choose_permission_policy(policy, cx),
+                    cx,
+                )])
+                .into_any_element(),
+            AgentTab::Adapter => self.setup_page.clone().into_any_element(),
+        };
+        settings_page()
+            .child(tabs)
+            .child(content)
+            .into_any_element()
     }
 
     /// A settings segmented control whose option `i` reports its bounds as `{id}-{i}`, and
@@ -591,8 +961,10 @@ impl StudioShell {
                 "Where the preview plays its sound. Retry audio goes back to the system's \
                  default device.",
             )
-            .card()
-            .child(FormField::stacked(&theme, status, actions))
+            .children([SettingRow::new(&theme, "Output device")
+                .description(status)
+                .below(actions)
+                .into_any_element()])
             .into_any_element()
     }
 
@@ -603,11 +975,9 @@ impl StudioShell {
         let mut children = Vec::new();
         match self.panel.read(cx).review_policy() {
             None => children.push(
-                settings_note(
-                    &theme,
-                    "Open a project to choose how its agent's changes are applied.",
-                )
-                .into_any_element(),
+                SettingRow::new(&theme, "No project open")
+                    .description("Open a project to choose how its agent's changes are applied.")
+                    .into_any_element(),
             ),
             Some((current, running)) => {
                 let entity = cx.entity();
@@ -645,10 +1015,10 @@ impl StudioShell {
                     });
                 }
                 children.push(control.into_any_element());
-                children.push(settings_note(&theme, ReviewPolicy::SCOPE_NOTICE).into_any_element());
+                children.push(setting_note(&theme, ReviewPolicy::SCOPE_NOTICE).into_any_element());
                 if let Some(running) = running {
                     children.push(
-                        settings_note(
+                        setting_note(
                             &theme,
                             format!("The running task keeps {}.", review_label(running)),
                         )
@@ -742,40 +1112,64 @@ impl StudioShell {
                 "Every export starts with these. The export panel changes them for that export \
                  only.",
             )
-            .card()
-            .child(
-                FormField::row(&theme, "Format", format)
-                    .hint("When the project's SDK lacks it, MP4 · MPEG-4 is used."),
-            )
-            .child(
-                FormField::row(&theme, "Size", size)
-                    .hint("Half size renders faster and makes a smaller file."),
-            )
-            .child(
-                FormField::row(&theme, "Frame rate", fps)
-                    .hint("30 fps applies where it divides the video's rate."),
-            )
+            .children([
+                // Four formats are too wide to sit beside the label.
+                SettingRow::new(&theme, "Format")
+                    .description("When the project's SDK lacks it, MP4 · MPEG-4 is used.")
+                    .below(format)
+                    .into_any_element(),
+                SettingRow::new(&theme, "Size")
+                    .description("Half size renders faster and makes a smaller file.")
+                    .control(size)
+                    .into_any_element(),
+                SettingRow::new(&theme, "Frame rate")
+                    .description("30 fps applies where it divides the video's rate.")
+                    .control(fps)
+                    .into_any_element(),
+            ])
             .into_any_element()
     }
 
-    /// The General page's Appearance: the theme.
+    /// The Appearance page (and the setup's step): the theme as three picture cards, as in
+    /// Oleafly's appearance settings, and the motion.
     pub(super) fn render_appearance(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
         let current = studio_theme::current_preference(cx);
-        let options = THEMES
-            .iter()
-            .map(|(value, label)| SegmentOption::new(*label, *value == current))
-            .collect();
-        let control = self.measured_segments(
+        let entity = cx.entity();
+        let mut control = PictureCards::new(
+            &theme,
             "theme",
-            options,
-            |shell, index, cx| {
-                if let Some((choice, _)) = THEMES.get(index) {
-                    shell.choose_theme(*choice, cx);
+            THEMES
+                .iter()
+                .map(|(value, label)| {
+                    let (icon, appearance) = match value {
+                        AppTheme::System => (Icon::Monitor, None),
+                        AppTheme::Light => (Icon::Sun, Some(Appearance::Light)),
+                        AppTheme::Dark => (Icon::Moon, Some(Appearance::Dark)),
+                    };
+                    PictureCard::new(*label, appearance_picture(appearance)).icon(icon)
+                })
+                .collect(),
+            THEMES.iter().position(|(value, _)| *value == current),
+        )
+        .on_select({
+            let entity = entity.clone();
+            move |index, _, cx| {
+                if let Some((choice, _)) = THEMES.get(*index) {
+                    entity.update(cx, |shell, cx| shell.choose_theme(*choice, cx));
                 }
-            },
-            cx,
-        );
+            }
+        });
+        if self.qualifying {
+            control = control.on_option_bounds(move |index, bounds, cx| {
+                entity.update(cx, |shell, _| {
+                    shell.button_bounds.insert(
+                        format!("theme-{index}"),
+                        crate::probe::bounds_to_record(bounds),
+                    );
+                });
+            });
+        }
         let current_motion = studio_theme::current_motion(cx);
         let motion = self.measured_segments(
             "motion",
@@ -791,13 +1185,19 @@ impl StudioShell {
             cx,
         );
         PanelSection::new(&theme, "Appearance")
-            .description("Follow the system's light or dark appearance, or pick one.")
-            .card()
-            .child(FormField::row(&theme, "Theme", control))
-            .child(
-                FormField::row(&theme, "Motion", motion)
-                    .hint("Reduced makes animations snap into place."),
-            )
+            .children([
+                SettingRow::new(&theme, "Theme")
+                    .description(
+                        "System follows the operating system's light or dark appearance and \
+                         changes when it does.",
+                    )
+                    .below(control)
+                    .into_any_element(),
+                SettingRow::new(&theme, "Motion")
+                    .description("Reduced makes animations snap into place.")
+                    .control(motion)
+                    .into_any_element(),
+            ])
             .into_any_element()
     }
 }
@@ -815,16 +1215,72 @@ fn review_label(policy: ReviewPolicy) -> &'static str {
     }
 }
 
-/// A note on a settings page: `Small` in `text_2`.
-fn settings_note(theme: &Theme, text: impl Into<SharedString>) -> gpui::Div {
-    text_style(div(), TextStyle::Small)
-        .text_color(theme.colors.text_2)
-        .child(selectable(text))
+/// The search field's placeholder, Oleafly's.
+pub(super) const SEARCH_PLACEHOLDER: &str = "Search settings";
+
+/// One row of Keyboard Shortcuts: the bindings of a scope that share a name, with the
+/// keystrokes of each, in [`SHORTCUTS`] order.
+fn shortcut_rows(scope: ShortcutScope) -> Vec<(&'static str, Vec<&'static str>)> {
+    let mut rows: Vec<(&'static str, Vec<&'static str>)> = Vec::new();
+    for shortcut in SHORTCUTS.iter().filter(|shortcut| shortcut.scope == scope) {
+        match rows.iter_mut().find(|(label, _)| *label == shortcut.label) {
+            Some((_, keys)) => keys.push(shortcut.keys),
+            None => rows.push((shortcut.label, vec![shortcut.keys])),
+        }
+    }
+    rows
 }
 
-/// A settings page's column of sections, `space_8` apart.
+/// Keyboard Shortcuts: every binding of the keymap, grouped by where it works, its keys as
+/// key chips. Read-only.
+fn render_shortcuts(theme: &Theme) -> gpui::AnyElement {
+    let colors = theme.colors;
+    let keys = |strokes: Vec<&'static str>| {
+        let mut row = div()
+            .flex()
+            .flex_wrap()
+            .justify_end()
+            .items_center()
+            .gap(px(METRICS.space_1));
+        for (index, stroke) in strokes.into_iter().enumerate() {
+            if index > 0 {
+                row = row.child(
+                    text_style(div(), TextStyle::Small)
+                        .px(px(METRICS.space_1))
+                        .text_color(colors.text_3)
+                        .child("or"),
+                );
+            }
+            let caps = keystroke_caps(stroke).unwrap_or_else(|| vec![stroke.into()]);
+            row = row.children(caps.into_iter().map(|cap| KbdChip::literal(theme, cap)));
+        }
+        row
+    };
+    let sections = ShortcutScope::ALL.into_iter().map(|scope| {
+        PanelSection::new(theme, scope.label())
+            .description(scope.description())
+            .children(shortcut_rows(scope).into_iter().map(|(label, strokes)| {
+                SettingRow::new(theme, label)
+                    .control(keys(strokes))
+                    .into_any_element()
+            }))
+    });
+    settings_page()
+        .child(
+            text_style(div(), TextStyle::Body)
+                .text_color(colors.text_2)
+                .child(selectable(
+                    "The keys Studio answers. Each group works while its part of the window \
+                     has focus, never while you type in a field.",
+                )),
+        )
+        .children(sections)
+        .into_any_element()
+}
+
+/// A settings page's column of sections, `space_6` apart as in Oleafly's settings.
 fn settings_page() -> gpui::Div {
-    div().flex().flex_col().gap(px(METRICS.space_8))
+    div().flex().flex_col().gap(px(METRICS.space_6))
 }
 
 /// Writes the motion `choice` into the app's settings unless a later choice was made
@@ -876,7 +1332,7 @@ mod tests {
     }
 
     #[test]
-    fn the_pages_are_general_agent_sdk_presets_and_export() {
+    fn the_pages_follow_oleaflys_order_from_general_to_help_and_about() {
         let ids: Vec<_> = SettingsPage::ALL
             .iter()
             .map(|page| page.nav_item(false).id)
@@ -885,13 +1341,72 @@ mod tests {
             ids,
             [
                 "settings-general",
+                "settings-appearance",
                 "settings-agent",
                 "settings-sdk",
                 "settings-presets",
-                "settings-export"
+                "settings-export",
+                "settings-shortcuts",
+                "settings-about",
             ]
         );
         assert_eq!(SettingsPage::default(), SettingsPage::General);
+    }
+
+    #[test]
+    fn the_search_finds_pages_by_name_and_by_their_settings() {
+        let found = |query| -> Vec<_> {
+            SettingsPage::ALL
+                .into_iter()
+                .filter(|page| page.matches(query))
+                .collect()
+        };
+        assert_eq!(found(""), SettingsPage::ALL);
+        assert_eq!(found("  appear "), [SettingsPage::Appearance]);
+        assert_eq!(found("FRAME RATE"), [SettingsPage::Export]);
+        assert_eq!(found("rate frame"), [SettingsPage::Export]);
+        assert_eq!(found("split"), [SettingsPage::Shortcuts]);
+        assert!(found("updates").contains(&SettingsPage::About));
+        assert!(found("zzz").is_empty());
+    }
+
+    #[test]
+    fn keyboard_shortcuts_list_every_binding_of_the_keymap() {
+        let listed: Vec<_> = ShortcutScope::ALL
+            .into_iter()
+            .flat_map(|scope| {
+                shortcut_rows(scope)
+                    .into_iter()
+                    .flat_map(move |(label, keys)| {
+                        keys.into_iter().map(move |keys| (scope, label, keys))
+                    })
+            })
+            .collect();
+        // Every binding the keymap makes comes from SHORTCUTS, so a binding missing here is
+        // one the keymap does not have either.
+        assert_eq!(listed.len(), SHORTCUTS.len());
+        assert_eq!(super::super::keymap::key_bindings().len(), SHORTCUTS.len());
+        for shortcut in SHORTCUTS {
+            assert!(
+                listed.contains(&(shortcut.scope, shortcut.label, shortcut.keys)),
+                "{} {} is not listed",
+                shortcut.scope.label(),
+                shortcut.keys
+            );
+            assert!(
+                keystroke_caps(shortcut.keys).is_some(),
+                "{} does not parse",
+                shortcut.keys
+            );
+        }
+    }
+
+    #[test]
+    fn the_links_lead_to_the_project() {
+        for link in Link::RESOURCES.into_iter().chain(Link::FOOTER) {
+            assert!(link.url().starts_with("https://"), "{link:?}");
+        }
+        assert!(Link::Issues.url().contains(RELEASES_REPOSITORY));
     }
 
     #[test]

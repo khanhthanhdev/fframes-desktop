@@ -10,7 +10,9 @@ use gpui::{
 use studio_project::ProjectTemplate;
 use studio_theme::{METRICS, Theme};
 
-use crate::kit::{Button, Card, Emphasis, RadioCard, RadioCards, heading, muted};
+use crate::kit::{
+    Button, Card, Emphasis, PanelSection, RadioCard, RadioCards, workflow_column, workflow_title,
+};
 
 type Choose = Rc<dyn Fn(ProjectTemplate, &mut Window, &mut App)>;
 type Click = Rc<dyn Fn(&mut Window, &mut App)>;
@@ -94,6 +96,7 @@ impl RenderOnce for CreatePanel {
         let on_back = self.on_back.clone();
         let actions = div()
             .flex()
+            .items_center()
             .gap(px(METRICS.space_2))
             .child(
                 Button::new(&theme, "create-back")
@@ -105,6 +108,7 @@ impl RenderOnce for CreatePanel {
                         }
                     }),
             )
+            .child(div().flex_1())
             .child(
                 Button::new(&theme, "create-continue")
                     .emphasis(Emphasis::Primary)
@@ -115,6 +119,8 @@ impl RenderOnce for CreatePanel {
                         }
                     }),
             );
+        // Title, the choice under a section heading, and the actions, Back left and the
+        // one primary action right, as on the export panel.
         Card::raised(&theme)
             .id("create-panel")
             .flex_1()
@@ -123,11 +129,17 @@ impl RenderOnce for CreatePanel {
             .p(px(METRICS.space_6))
             .flex()
             .flex_col()
-            .gap(px(METRICS.space_4))
-            .child(heading(&theme, "Create a project"))
-            .child(muted(&theme, "Start from"))
-            .child(choice)
-            .child(actions)
+            .child(
+                workflow_column()
+                    .gap(px(METRICS.space_6))
+                    .child(workflow_title(
+                        &theme,
+                        "Create a project",
+                        "Pick what the new video starts from; Studio asks for its folder next.",
+                    ))
+                    .child(PanelSection::new(&theme, "Start from").child(choice))
+                    .child(actions),
+            )
     }
 }
 

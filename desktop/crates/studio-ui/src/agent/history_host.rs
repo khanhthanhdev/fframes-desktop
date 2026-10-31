@@ -74,7 +74,8 @@ impl ConversationPanel {
         div()
             .flex_1()
             .min_h_0()
-            .p(px(METRICS.space_3))
+            .px(px(super::ui::metrics::transcript::INSET_X))
+            .py(px(super::ui::metrics::transcript::INSET_Y))
             .child(self.host.history.clone())
             .into_any_element()
     }

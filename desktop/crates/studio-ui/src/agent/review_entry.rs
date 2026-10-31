@@ -3,10 +3,12 @@
 
 use super::changes::ReviewTarget;
 use super::*;
+use crate::kit::ButtonSize;
 
 impl ConversationPanel {
-    /// The button on the change summary of the candidate that waits for review. Older change
-    /// summaries in the transcript have none: their candidate is gone.
+    /// The button on the change summary of the candidate that waits for review (the card
+    /// makes it compact). Older change summaries in the transcript have none: their candidate
+    /// is gone.
     pub(super) fn candidate_review_button(
         &mut self,
         card: &ChangeCard,
@@ -44,7 +46,8 @@ impl ConversationPanel {
         )
     }
 
-    /// The button under an accepted edit in the history.
+    /// The button under an accepted edit in the history: compact (24 px), like the one on a
+    /// change card, so it sits inside the history row.
     pub(super) fn revision_review_button(
         &mut self,
         revision: &str,
@@ -59,5 +62,6 @@ impl ConversationPanel {
             cx,
             move |this, _, cx| this.request_review(target.clone(), cx),
         )
+        .size(ButtonSize::Sm)
     }
 }

@@ -107,7 +107,7 @@ pub(super) fn track_row(
 }
 
 /// Segment box with its accent bar and clipped label, `detail` (the length) after the
-/// label in `text-3`. The caller adds ids and handlers.
+/// label in mono `text-3`. The caller adds ids and handlers.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn segment(
     theme: &Theme,
@@ -169,7 +169,7 @@ pub(super) fn segment(
                         .child(label),
                 )
                 .child(
-                    div()
+                    text_style(div(), TextStyle::CodeSmall)
                         .flex_none()
                         .text_color(theme.colors.text_3)
                         .child(detail),

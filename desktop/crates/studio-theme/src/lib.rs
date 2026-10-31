@@ -1,9 +1,8 @@
 //! Colour tokens, metrics and type for the fframes studio chrome.
 //!
-//! The palette is Cap's, transcribed from the web app's resolved values: the
-//! Radix scales plus the editor's layered `--ed-*` surfaces. A few dark-mode
-//! entries are Cap's `theme.css` overrides rather than stock Radix, so
-//! regenerating this from a Radix crate would silently change the palette.
+//! Studio uses Oleafly-inspired neutral surfaces, blue actions and Geist type.
+//! Semantic status and timeline colours remain Studio's; the private Radix
+//! scales also continue to supply the code highlighter's colours.
 //!
 //! Video style presets belong to project content; this crate owns only the
 //! studio's own surfaces. A view resolves a [`Theme`] once per render with
@@ -14,6 +13,7 @@ use gpui::{Hsla, Rgba, WindowAppearance};
 mod appearance;
 #[cfg(test)]
 mod contrast;
+mod cover;
 mod elevation;
 mod metrics;
 mod motion;
@@ -26,6 +26,7 @@ pub use appearance::{
     prefers_reduced_motion, resolve_appearance, resolve_reduced_motion, set_motion, set_preference,
     set_prefs,
 };
+pub use cover::{BookCover, COVER_COUNT, book_cover, missing_cover};
 pub use elevation::{Shadow, shadow_for};
 pub use metrics::{Layout, METRICS, Metrics, Opacity, Radius, Size};
 pub use motion::{MOTION, Motion, ease_out, reduced_motion};
@@ -121,6 +122,10 @@ pub struct Colors {
     pub window: Rgba,
     pub card: Rgba,
     pub card_2: Rgba,
+    /// Persistent navigation, separate from the document surface.
+    pub sidebar: Rgba,
+    /// Floating menus and overlays, darker than cards in dark mode.
+    pub popover: Rgba,
     pub stage: Rgba,
     pub line: Rgba,
     pub line_strong: Rgba,
@@ -158,7 +163,7 @@ pub struct Colors {
     pub focus: Rgba,
     /// Canvas and text selection: `accent` at 25 %.
     pub selection: Rgba,
-    /// Tooltip surface and text: Radix gray 12 on gray 1, the inverse of the window.
+    /// Tooltip surface and text, matching the neutral popover palette.
     pub tooltip_bg: Rgba,
     pub tooltip_text: Rgba,
     /// Status foregrounds (Radix step 11) and their surfaces (step 3).
@@ -332,27 +337,27 @@ mod tests {
     }
 
     #[test]
-    fn light_palette_matches_cap_spec() {
+    fn light_palette_matches_studio_spec() {
         assert_roles(
             Appearance::Light,
             [
-                0xf1f1f3ff, 0xffffffff, 0xf6f6f7ff, 0xe9e9ecff, 0x00000013, 0x0000001f, 0x1c1c1eff,
-                0x66666dff, 0x7a7a82ff, 0x0000000b, 0x00000013, 0x0000001c, 0x0066e0ff, 0x0b6fe6ff,
+                0xffffffff, 0xfafafaff, 0xf1f1f1ff, 0xf7f7f7ff, 0xdededeff, 0xa1a1a1ff, 0x0a0a0aff,
+                0x6b6b6bff, 0x737373ff, 0x0000000f, 0x0000001a, 0x00000024, 0x2563ebff, 0x1d4ed8ff,
                 0xffffffff, 0xff3b30ff, 0xffffffff, 0x218358ff, 0xe6f6ebff, 0xab6400ff, 0xfff7c2ff,
-                0xce2c31ff, 0xfeebecff, 0x0066e040, 0x202020ff, 0xfcfcfcff,
+                0xce2c31ff, 0xfeebecff, 0x2563eb40, 0xfafafaff, 0x0a0a0aff,
             ],
         );
     }
 
     #[test]
-    fn dark_palette_matches_cap_spec() {
+    fn dark_palette_matches_studio_spec() {
         assert_roles(
             Appearance::Dark,
             [
-                0x131315ff, 0x1b1b1eff, 0x202024ff, 0x121214ff, 0xffffff14, 0xffffff21, 0xf4f4f5ff,
-                0x9a9aa3ff, 0x7c7c86ff, 0xffffff0f, 0xffffff17, 0xffffff21, 0x0866d8ff, 0x1272e4ff,
+                0x0a0a0aff, 0x171717ff, 0x262626ff, 0x171717ff, 0xffffff1a, 0xffffff26, 0xfafafaff,
+                0xa1a1a1ff, 0x8b8b8bff, 0xffffff14, 0xffffff1f, 0xffffff29, 0x2563ebff, 0x1d4ed8ff,
                 0xffffffff, 0xff453aff, 0xe8e8eaff, 0x3dd68cff, 0x132d21ff, 0xffca16ff, 0x302008ff,
-                0xff9592ff, 0x3b1219ff, 0x0866d840, 0xeeeeeeff, 0x111111ff,
+                0xff9592ff, 0x3b1219ff, 0x2563eb40, 0x121212ff, 0xfafafaff,
             ],
         );
     }
@@ -418,28 +423,50 @@ mod tests {
                 0x3dd68cff, 0x132d21ff, 0xffca16ff, 0x302008ff, 0xff9592ff, 0x3b1219ff
             ]
         );
-        assert_eq!(bytes(light.colors.selection), 0x0066e040);
-        assert_eq!(bytes(dark.colors.selection), 0x0866d840);
+        assert_eq!(bytes(light.colors.selection), 0x2563eb40);
+        assert_eq!(bytes(dark.colors.selection), 0x2563eb40);
         assert_eq!(
             [light.colors.tooltip_bg, light.colors.tooltip_text].map(bytes),
-            [0x202020ff, 0xfcfcfcff]
+            [0xfafafaff, 0x0a0a0aff]
         );
         assert_eq!(
             [dark.colors.tooltip_bg, dark.colors.tooltip_text].map(bytes),
-            [0xeeeeeeff, 0x111111ff]
+            [0x121212ff, 0xfafafaff]
         );
     }
 
     #[test]
-    fn translucent_roles_keep_alpha() {
+    fn neutral_surfaces_are_opaque_and_dark_hairlines_keep_alpha() {
         for theme in [Theme::light(), Theme::dark()] {
             let p = theme.colors;
-            for color in [p.line, p.line_strong, p.ctl, p.ctl_hover, p.ctl_active] {
-                assert!(
-                    color.a > 0. && color.a < 1.,
-                    "{:?} {color:?}",
-                    theme.appearance
-                );
+            for color in [p.window, p.card, p.card_2, p.sidebar, p.popover] {
+                assert_eq!(color.a, 1., "{:?} {color:?}", theme.appearance);
+            }
+            if theme.is_dark() {
+                assert!(p.line.a > 0. && p.line.a < 1.);
+                assert!(p.line_strong.a > p.line.a && p.line_strong.a < 1.);
+            }
+        }
+    }
+
+    #[test]
+    fn control_fills_show_on_every_surface() {
+        // A control fill equal to `card_2` once made neutral buttons look like plain text
+        // on nested cards. Each step must be visible over every surface a control sits on.
+        use crate::contrast::lightness;
+        for theme in [Theme::light(), Theme::dark()] {
+            let p = theme.colors;
+            for surface in [p.window, p.card, p.card_2, p.sidebar, p.popover] {
+                let l = |fill: gpui::Rgba| lightness(fill, surface);
+                let steps = [l(surface), l(p.ctl), l(p.ctl_hover), l(p.ctl_active)];
+                // Rest stands 3 L* off the surface; hover and pressed each step 1.5 further.
+                for (i, pair) in steps.windows(2).enumerate() {
+                    assert!(
+                        (pair[1] - pair[0]).abs() >= if i == 0 { 3. } else { 1.5 },
+                        "{:?} on {surface:?}: {steps:?}",
+                        theme.appearance
+                    );
+                }
             }
         }
     }
@@ -532,7 +559,7 @@ mod tests {
             mix(theme.red_3, theme.red_11, 0.12),
             mix(theme.red_3, theme.red_11, 0.22),
             e.accent,
-            e.ctl,
+            rgba_alpha(e.accent, 0.10),
             theme.amber_11,
             Rgba::from(gpui::black().opacity(0.55)),
             track_color(TrackKind::Clip),
@@ -556,18 +583,18 @@ mod tests {
         assert_eq!(
             light,
             [
-                0x000000ff, 0xffffffff, 0x0066e0ff, 0x0066e040, 0x202020ff, 0xfcfcfcff, 0x218358ff,
+                0x000000ff, 0xffffffff, 0x2563ebff, 0x2563eb40, 0xfafafaff, 0x0a0a0aff, 0x218358ff,
                 0xe6f6ebff, 0xab6400ff, 0xfff7c2ff, 0xce2c31ff, 0xfeebecff, 0xf8d4d6ff, 0xf3c1c3ff,
-                0x0066e0ff, 0x0000000b, 0xab6400ff, 0x0000008c, 0x3b82f6ff, 0x8b5cf6ff, 0x22c55eff,
+                0x2563ebff, 0x2563eb1a, 0xab6400ff, 0x0000008c, 0x3b82f6ff, 0x8b5cf6ff, 0x22c55eff,
             ]
         );
         let dark = new_roles(&Theme::dark()).map(|(_, c)| bytes(c));
         assert_eq!(
             dark,
             [
-                0x000000ff, 0xffffffff, 0x0866d8ff, 0x0866d840, 0xeeeeeeff, 0x111111ff, 0x3dd68cff,
+                0x000000ff, 0xffffffff, 0x2563ebff, 0x2563eb40, 0x121212ff, 0xfafafaff, 0x3dd68cff,
                 0x132d21ff, 0xffca16ff, 0x302008ff, 0xff9592ff, 0x3b1219ff, 0x532228ff, 0x662f34ff,
-                0x0866d8ff, 0xffffff0f, 0xffca16ff, 0x0000008c, 0x3b82f6ff, 0x8b5cf6ff, 0x22c55eff,
+                0x2563ebff, 0x2563eb1a, 0xffca16ff, 0x0000008c, 0x3b82f6ff, 0x8b5cf6ff, 0x22c55eff,
             ]
         );
     }

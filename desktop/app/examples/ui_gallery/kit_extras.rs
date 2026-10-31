@@ -1,16 +1,16 @@
 //! Kit components the `kit` page's main cards do not cover: the button matrix, text input and
 //! number field states, radio cards, the colour picker, circular progress, nested cards and
-//! popovers, the tooltip with its key chips and selectable text.
+//! popovers, the tooltip with its key chips, selectable text and every icon.
 
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, FocusHandle, IntoElement, ParentElement, Styled,
-    Window, div, point, px,
+    AnyElement, AppContext as _, Context, Entity, FocusHandle, InteractiveElement, IntoElement,
+    ParentElement, SharedString, StatefulInteractiveElement, Styled, Window, div, point, px,
 };
 use studio_theme::{METRICS, Theme};
 use studio_ui::kit::{
     Button, ButtonSize, Card, CircularProgress, ColorPicker, ColorPickerSnapshot, Emphasis,
     FormField, Icon, NumberField, PanelSection, Popover, RadioCard, RadioCards, StatusDot,
-    TextInput, TextInputState, Tone, Tooltip, color_swatch, muted, selectable,
+    TextInput, TextInputState, Tone, Tooltip, color_swatch, icon, muted, selectable,
 };
 
 use crate::Gallery;
@@ -236,12 +236,26 @@ impl Gallery {
             .view(cx);
         let text = PanelSection::new(&theme, "Tooltip with keys, selectable text")
             .description("the tooltip shows on hover; here its content is drawn in place")
-            .child(div().child(tooltip))
+            // A row, so the bubble keeps its own width instead of the column's.
+            .child(div().flex().child(tooltip))
             .child(
                 div()
                     .text_color(colors.text_1)
                     .child(selectable("Drag to select this text, then press Ctrl+C.")),
             );
+
+        // Every glyph in `Icon::ALL`, at the default 16 px, so a missing or broken asset shows.
+        let icons = PanelSection::new(&theme, "Icons")
+            .description(format!(
+                "all {} glyphs of Icon::ALL at 16 px",
+                Icon::ALL.len()
+            ))
+            .child(wrap().children(Icon::ALL.into_iter().map(|glyph| {
+                div()
+                    .id(SharedString::from(format!("icon-{glyph:?}")))
+                    .tooltip(move |_, cx| Tooltip::new(&theme, format!("{glyph:?}")).view(cx))
+                    .child(icon(glyph, METRICS.size.icon_md, colors.text_1))
+            })));
 
         div()
             .flex()
@@ -260,7 +274,8 @@ impl Gallery {
                     .w(px(METRICS.layout.sidebar_w + 40.))
                     .child(choices)
                     .child(surfaces)
-                    .child(text),
+                    .child(text)
+                    .child(icons),
             )
     }
 }

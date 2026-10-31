@@ -109,6 +109,7 @@ pub struct SegmentedControl {
     theme: Theme,
     options: Vec<SegmentOption>,
     stretch: bool,
+    tabs: bool,
     on_select: Option<SegmentHandler>,
     on_option_bounds: Option<OptionBoundsHandler>,
 }
@@ -123,9 +124,18 @@ impl SegmentedControl {
             theme: *theme,
             options,
             stretch: false,
+            tabs: false,
             on_select: None,
             on_option_bounds: None,
         }
+    }
+
+    /// A pill tab bar, Oleafly's `TabsList` ("Providers and keys | CLI agents | …"): the
+    /// same trough and raised pill with 28 px items in `Body` text, announced as tabs. For
+    /// switching the sub-pages of a page.
+    pub fn tabs(mut self) -> Self {
+        self.tabs = true;
+        self
     }
 
     /// The options share the control's full width.
@@ -156,9 +166,27 @@ impl RenderOnce for SegmentedControl {
             theme,
             options,
             stretch,
+            tabs,
             on_select,
             on_option_bounds,
         } = self;
+        let (group_role, item_role, item_h, item_pad, item_text) = if tabs {
+            (
+                Role::TabList,
+                Role::Tab,
+                METRICS.size.control_h - 2. * TROUGH_INSET,
+                METRICS.space_3,
+                TextStyle::Body,
+            )
+        } else {
+            (
+                Role::RadioGroup,
+                Role::RadioButton,
+                METRICS.size.control_sm_h,
+                ITEM_PAD_X,
+                TextStyle::Label,
+            )
+        };
         let colors = theme.colors;
         let states = States::of(&theme);
         let selected_bg = Hsla::from(colors.segment_selected);
@@ -175,9 +203,10 @@ impl RenderOnce for SegmentedControl {
 
         div()
             .id(id)
-            .role(Role::RadioGroup)
+            .role(group_role)
             .flex()
             .flex_row()
+            .when(tabs, |this| this.flex_none().self_start())
             .p(px(TROUGH_INSET))
             .rounded(px(METRICS.radius.segment))
             .bg(states.rest)
@@ -193,7 +222,7 @@ impl RenderOnce for SegmentedControl {
                     .clone()
                     .unwrap_or_else(|| SharedString::from(format!("{prefix}-{index}")));
                 let item = focusable(div().id(item_id), &theme, disabled)
-                    .role(Role::RadioButton)
+                    .role(item_role)
                     .aria_selected(selected)
                     .relative()
                     .children(on_option_bounds.clone().map(|report| {
@@ -207,11 +236,11 @@ impl RenderOnce for SegmentedControl {
                     .items_center()
                     .justify_center()
                     .gap(px(METRICS.space_1))
-                    .px(px(ITEM_PAD_X))
-                    .h(px(METRICS.size.control_sm_h))
+                    .px(px(item_pad))
+                    .h(px(item_h))
                     .rounded(px(METRICS.radius.item))
                     .when(stretch, |this| this.flex_1());
-                dim_disabled(text_style(item, TextStyle::Label), disabled)
+                dim_disabled(text_style(item, item_text), disabled)
                     .map(|this| {
                         if selected {
                             this.text_color(selected_text)

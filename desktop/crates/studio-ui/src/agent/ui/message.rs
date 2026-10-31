@@ -1,19 +1,23 @@
-//! The two voices of the transcript: the user's bubble on the right and the agent's flush
-//! answer on the left, each followed by a hover lane with the time and Copy.
+//! The two voices of the transcript: the user's accent bubble on the right and the agent's
+//! lightly framed answer across the row, each followed by a footer with the time and Copy.
+
+use std::time::Duration;
 
 use gpui::{
     AnyElement, App, ClipboardItem, Div, ElementId, InteractiveElement, IntoElement, ParentElement,
     RenderOnce, SharedString, Styled, Window, div, prelude::FluentBuilder, px, relative,
 };
-use studio_theme::{METRICS, TextStyle, Theme, text_style};
+use studio_theme::{TextStyle, Theme, text_style};
 
-use super::{CARD_RADIUS, HOVER_LANE_H};
-use crate::kit::{Button, ButtonSize, Emphasis, Handler, focusable, on_activate, selectable};
+use super::CARD_RADIUS;
+use super::metrics::message as m;
+use crate::kit::{
+    Emphasis, Handler, Icon, IconButton, IconButtonSize, focusable, on_activate, reveal_actions,
+    selectable,
+};
 
 /// A longer user message shows this many lines until the reader asks for the rest.
 pub const USER_MESSAGE_MAX_LINES: usize = 6;
-/// The widest a user bubble grows, as a share of the row.
-const BUBBLE_MAX_W: f32 = 0.85;
 /// About how many characters fit on one line of a bubble in the narrowest sidebar.
 const CHARS_PER_LINE: usize = 44;
 
@@ -25,42 +29,97 @@ pub fn estimated_lines(text: &str) -> usize {
         .sum()
 }
 
-/// The lane under a message: its time and a Copy button, shown while the pointer is over the
-/// message. Its height is always reserved, so hovering never moves the transcript.
-fn hover_lane(
+/// The fill and hairline of the agent's answer: the document fill and `line` at 60 % in
+/// light, the muted fill and no visible line in dark.
+fn answer_frame(theme: &Theme) -> (gpui::Hsla, gpui::Hsla) {
+    let colors = theme.colors;
+    if theme.is_dark() {
+        (colors.card_2.into(), Theme::with_alpha(colors.card_2, 0.))
+    } else {
+        (
+            colors.window.into(),
+            Theme::with_alpha(colors.line, m::FRAME_LINE_ALPHA),
+        )
+    }
+}
+
+/// Copy in a message's footer: a 14 px glyph that shows while the pointer is over the message
+/// or the button has the keyboard focus, and turns into a check for a moment after copying.
+fn copy_action(
+    theme: &Theme,
+    group: SharedString,
+    id: ElementId,
+    text: SharedString,
+    window: &mut Window,
+    cx: &mut App,
+) -> impl IntoElement {
+    let copied = window.use_keyed_state(ElementId::from((id.clone(), "copied")), cx, |_, _| false);
+    let done = *copied.read(cx);
+    let button = IconButton::new(
+        theme,
+        id.clone(),
+        if done { Icon::Check } else { Icon::Copy }.path(),
+    )
+    .size(IconButtonSize::Sm)
+    .emphasis(Emphasis::Ghost)
+    .label(if done { "Copied" } else { "Copy" })
+    .tooltip("Copy")
+    .on_click(move |_, _, cx| {
+        cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()));
+        copied.update(cx, |copied, cx| {
+            *copied = true;
+            cx.notify();
+        });
+        let copied = copied.clone();
+        cx.spawn(async move |cx| {
+            cx.background_executor()
+                .timer(Duration::from_millis(m::COPIED_MS))
+                .await;
+            copied.update(cx, |copied, cx| {
+                *copied = false;
+                cx.notify();
+            });
+        })
+        .detach();
+    });
+    let wrap = div().id(ElementId::from((id, "reveal")));
+    // After a copy the check stays in view until it turns back.
+    if done {
+        wrap.child(button)
+    } else {
+        reveal_actions(wrap, group).child(button)
+    }
+}
+
+/// The footer under a message: its time in `Caption` `text_3`, then Copy. Its height is
+/// always reserved, so hovering or focusing never moves the transcript.
+fn footer(
     theme: &Theme,
     group: SharedString,
     meta: Option<SharedString>,
     copy: Option<(ElementId, SharedString)>,
     end: bool,
+    window: &mut Window,
+    cx: &mut App,
 ) -> Div {
     let colors = theme.colors;
     div()
-        .h(px(HOVER_LANE_H))
+        .h(px(m::FOOTER_H))
         .flex()
         .items_center()
-        .gap(px(METRICS.space_2))
-        .when(end, |lane| lane.justify_end())
-        .invisible()
-        .group_hover(group, |style| style.visible())
+        .gap(px(m::FOOTER_GAP))
+        .when(end, |footer| footer.justify_end())
         .children(meta.map(|meta| {
-            text_style(div(), TextStyle::Small)
+            text_style(div(), TextStyle::Caption)
                 .text_color(colors.text_3)
                 .child(meta)
         }))
-        .children(copy.map(|(id, text)| {
-            Button::new(theme, id)
-                .emphasis(Emphasis::Ghost)
-                .size(ButtonSize::Sm)
-                .label("Copy")
-                .on_click(move |_, _, cx| {
-                    cx.write_to_clipboard(ClipboardItem::new_string(text.to_string()))
-                })
-        }))
+        .children(copy.map(|(id, text)| copy_action(theme, group, id, text, window, cx)))
 }
 
-/// The user's message: a `ctl` bubble on the right, at most 85 % of the row wide, with an
-/// optional caption above ("Your answer", "Follow-up") and a hover lane below.
+/// The user's message: an `accent` bubble with `on_accent` text on the right, at most 85 % of
+/// the row wide, with an optional caption above ("Your answer", "Follow-up") and a footer
+/// below.
 #[derive(IntoElement)]
 pub struct UserMessage {
     theme: Theme,
@@ -92,7 +151,7 @@ impl UserMessage {
         self
     }
 
-    /// The time shown in the hover lane.
+    /// The time shown in the footer.
     pub fn meta(mut self, meta: impl Into<SharedString>) -> Self {
         self.meta = Some(meta.into());
         self
@@ -111,7 +170,7 @@ impl UserMessage {
 }
 
 impl RenderOnce for UserMessage {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let UserMessage {
             theme,
             id,
@@ -139,7 +198,7 @@ impl RenderOnce for UserMessage {
             .flex()
             .flex_col()
             .items_end()
-            .gap(px(METRICS.space_1))
+            .gap(px(m::FOOTER_GAP))
             .children(caption.map(|caption| {
                 text_style(div(), TextStyle::Small)
                     .text_color(colors.text_3)
@@ -147,30 +206,33 @@ impl RenderOnce for UserMessage {
             }))
             .child(
                 div()
-                    .max_w(relative(BUBBLE_MAX_W))
+                    .max_w(relative(m::BUBBLE_MAX_W))
                     .rounded(CARD_RADIUS)
-                    .bg(colors.ctl)
-                    .px(px(METRICS.space_3))
-                    .py(px(METRICS.space_2))
+                    .bg(colors.accent)
+                    .px(px(m::PAD_X))
+                    .py(px(m::PAD_Y))
                     .child(
                         text_style(div(), TextStyle::Body)
-                            .text_color(colors.text_1)
+                            .text_color(colors.on_accent)
                             .when(clamped, |text| text.line_clamp(USER_MESSAGE_MAX_LINES))
                             .child(selectable(text.clone()).id(("agent-row-text", id))),
                     ),
             )
             .children(toggle)
-            .child(hover_lane(
+            .child(footer(
                 &theme,
                 group,
                 meta,
                 Some((("agent-row-copy", id as usize).into(), text)),
                 true,
+                window,
+                cx,
             ))
     }
 }
 
-/// The agent's answer: flush with the panel inset, no frame, then the hover lane.
+/// The agent's answer across the row in a light frame (see [`answer_frame`]), then the
+/// footer.
 #[derive(IntoElement)]
 pub struct AssistantMessage {
     theme: Theme,
@@ -192,7 +254,7 @@ impl AssistantMessage {
         }
     }
 
-    /// The raw text Copy puts on the clipboard; without it the lane has no Copy.
+    /// The raw text Copy puts on the clipboard; without it the footer has no Copy.
     pub fn copy(mut self, text: impl Into<SharedString>) -> Self {
         self.copy = Some(text.into());
         self
@@ -205,18 +267,38 @@ impl AssistantMessage {
 }
 
 impl RenderOnce for AssistantMessage {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut App) -> impl IntoElement {
         let group = SharedString::from(format!("agent-answer-{}", self.id));
         let copy = self
             .copy
             .map(|text| (("agent-row-copy", self.id as usize).into(), text));
+        let (fill, line) = answer_frame(&self.theme);
         div()
             .group(group.clone())
             .w_full()
             .flex()
             .flex_col()
-            .child(self.body)
-            .child(hover_lane(&self.theme, group, self.meta, copy, false))
+            .gap(px(m::FOOTER_GAP))
+            .child(
+                div()
+                    .w_full()
+                    .rounded(CARD_RADIUS)
+                    .border_1()
+                    .border_color(line)
+                    .bg(fill)
+                    .px(px(m::PAD_X))
+                    .py(px(m::PAD_Y))
+                    .child(self.body),
+            )
+            .child(footer(
+                &self.theme,
+                group,
+                self.meta,
+                copy,
+                false,
+                window,
+                cx,
+            ))
     }
 }
 
@@ -230,5 +312,15 @@ mod tests {
         assert_eq!(estimated_lines("one\ntwo\n\nfour"), 4);
         assert_eq!(estimated_lines(&"x".repeat(CHARS_PER_LINE * 2 + 1)), 3);
         assert!(estimated_lines(&"line\n".repeat(7)) > USER_MESSAGE_MAX_LINES);
+    }
+
+    #[test]
+    fn the_answer_frame_shows_a_line_in_light_only() {
+        let (light_fill, light_line) = answer_frame(&Theme::light());
+        assert_eq!(light_fill, Theme::light().colors.window.into());
+        assert!(light_line.a > 0.);
+        let (dark_fill, dark_line) = answer_frame(&Theme::dark());
+        assert_eq!(dark_fill, Theme::dark().colors.card_2.into());
+        assert_eq!(dark_line.a, 0.);
     }
 }

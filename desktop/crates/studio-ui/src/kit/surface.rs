@@ -8,11 +8,19 @@ use studio_theme::{METRICS, Shadow, Theme, shadow_for};
 pub struct Card;
 
 impl Card {
+    /// A persistent workspace pane: flat document surface, hairline edges, no shadow.
+    pub fn panel(theme: &Theme) -> Div {
+        div()
+            .border(px(METRICS.size.divider))
+            .border_color(theme.colors.line)
+            .bg(theme.colors.window)
+    }
+
     /// A panel on the window: the card fill and the card shadow.
     pub fn raised(theme: &Theme) -> Div {
         div()
             .rounded(px(METRICS.radius.card))
-            .border_1()
+            .border(px(METRICS.size.divider))
             .border_color(theme.colors.line)
             .bg(theme.colors.card)
             .shadow(shadow_for(theme.appearance, Shadow::Card).into_vec())
@@ -22,13 +30,13 @@ impl Card {
     pub fn nested(theme: &Theme) -> Div {
         div()
             .rounded(px(METRICS.radius.card))
-            .border_1()
+            .border(px(METRICS.size.divider))
             .border_color(theme.colors.line)
             .bg(theme.colors.card_2)
     }
 }
 
-/// A 1 px horizontal rule in the `line` colour.
+/// A hairline horizontal rule in the `line` colour.
 pub fn divider(theme: &Theme) -> Div {
     div()
         .h(px(METRICS.size.divider))
@@ -37,7 +45,7 @@ pub fn divider(theme: &Theme) -> Div {
         .bg(theme.colors.line)
 }
 
-/// An anchored floating panel, not a modal: `card` behind a `line` hairline with the
+/// An anchored floating panel, not a modal: `popover` behind a `line` hairline with the
 /// popover shadow. Positioning stays with the caller.
 pub struct Popover;
 
@@ -50,9 +58,9 @@ impl Popover {
             .flex()
             .flex_col()
             .rounded(px(METRICS.radius.popover))
-            .border_1()
+            .border(px(METRICS.size.divider))
             .border_color(theme.colors.line)
-            .bg(theme.colors.card)
+            .bg(theme.colors.popover)
             .shadow(shadow_for(theme.appearance, Shadow::Pop).into_vec())
     }
 }

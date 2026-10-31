@@ -24,10 +24,10 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, RwLock};
 
 use fframes::{EditorObjectKey, Scene};
-use fframes_kit::props::{EditableObject, PropValues, PropsSource, SuggestedStop};
+use fframes_kit::props::{EditableObject, PropValues, PropsSource};
 use fframes_studio_protocol::{
-    EditorObjectIdentity, MAX_STOPS_PER_ORIGIN, MAX_SUGGESTED_STOPS, PropField, PropKind,
-    PropsDocument, PropsInfo, PropsSchema, StopSuggestions, SuggestedSlideStop,
+    EditorObjectIdentity, PropField, PropKind, PropsDocument, PropsInfo, PropsSchema,
+    StopSuggestions, SuggestedSlideStop,
 };
 use fframes_studio_runtime::PropsHooks;
 
@@ -154,51 +154,6 @@ impl PropsStore {
         *self.suggested.lock().expect("suggestions lock poisoned") = Suggestions::default();
     }
 
-    fn suggest(&self, scene: &str, origin: &str, stops: &[SuggestedStop]) {
-        if !self.listening.load(Ordering::Relaxed) {
-            return;
-        }
-        let mut state = self.suggested.lock().expect("suggestions lock poisoned");
-        if scene.is_empty() || scene.len() > 256 || origin.is_empty() || origin.len() > 1024 {
-            state.truncated = true;
-            return;
-        }
-        let key = (scene.to_owned(), origin.to_owned());
-        state.origins.remove(&key);
-        let available =
-            MAX_SUGGESTED_STOPS.saturating_sub(state.origins.values().map(Vec::len).sum());
-        let limit = available.min(MAX_STOPS_PER_ORIGIN);
-        let mut accepted = Vec::new();
-        for stop in stops {
-            if accepted.len() == limit {
-                state.truncated = true;
-                break;
-            }
-            if !stop.seconds.is_finite()
-                || stop.seconds < 0.0
-                || stop.label.as_ref().is_some_and(|text| text.len() > 256)
-                || stop
-                    .notes
-                    .as_ref()
-                    .is_some_and(|text| text.len() > 8 * 1024)
-            {
-                state.truncated = true;
-                continue;
-            }
-            accepted.push(SuggestedSlideStop {
-                scene: scene.to_owned(),
-                origin: origin.to_owned(),
-                seconds: stop.seconds,
-                label: stop.label.clone(),
-                notes: stop.notes.clone(),
-            });
-        }
-        // Empty reports remove a previous origin instead of growing an unbounded key map.
-        if !accepted.is_empty() {
-            state.origins.insert(key, accepted);
-        }
-    }
-
     fn record(&self, identity: EditorObjectIdentity, info: PropsInfo) {
         self.rendered
             .lock()
@@ -237,10 +192,6 @@ impl PropsSource for PropsView<'_> {
 
     fn rendered(&self, object: EditableObject<'_>, info: fframes_kit::props::PropsInfo) {
         self.store.record(self.identity(object), props_info(info));
-    }
-
-    fn suggest_stops(&self, origin: &str, stops: &[SuggestedStop]) {
-        self.store.suggest(&self.scene, origin, stops);
     }
 
     fn element_id(&self, object: EditableObject<'_>) -> Option<String> {

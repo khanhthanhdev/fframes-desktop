@@ -598,8 +598,9 @@ dependencies = [
 
 [[package]]
 name = "fframes-kit"
-version = "0.1.0"
-source = "git+https://github.com/khanhthanhdev/fframes-kit?rev=01f5b326ecb74e2dfab54c215ba3de7e217eb965#01f5b326ecb74e2dfab54c215ba3de7e217eb965"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4a6d9ce4e0b2bad9bd8569d45f8fa433c8833359c5cf4838e89170a84269242b"
 dependencies = [
  "fframes",
  "fframes-kit-macros",
@@ -611,7 +612,8 @@ dependencies = [
 [[package]]
 name = "fframes-kit-macros"
 version = "0.1.0"
-source = "git+https://github.com/khanhthanhdev/fframes-kit?rev=01f5b326ecb74e2dfab54c215ba3de7e217eb965#01f5b326ecb74e2dfab54c215ba3de7e217eb965"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8ac25e9f1007b9413081939758a8983a11ab5d3bbbb72b4cbbd39d5f0a6c4dcc"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -650,7 +652,7 @@ dependencies = [
 
 [[package]]
 name = "fframes-studio-kit"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "fframes",
  "fframes-kit",

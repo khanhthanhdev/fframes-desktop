@@ -4,6 +4,7 @@
 
 use std::ops::Range;
 
+use gpui::{Pixels, px};
 use unicode_segmentation::UnicodeSegmentation;
 
 /// Input text size in pixels: the `Body` style.
@@ -27,14 +28,72 @@ pub const HIT_INSET: f32 = 0.5;
 /// Drag-selection autoscroll runs at a 60 fps cadence.
 pub const DRAG_SCROLL_FRAME_MS: u64 = 16;
 
-/// Edge length of an attachment thumbnail in the strip.
+/// Edge length of an attachment thumbnail in the strip. Oleafly's is 24; Studio keeps 56 so a
+/// video frame or screenshot stays legible.
 pub const STRIP_THUMB: f32 = 56.0;
 /// Gap between strip chips.
 pub const STRIP_GAP: f32 = 8.0;
-/// Space above the strip.
-pub const STRIP_PAD_TOP: f32 = 12.0;
-/// Space left and right of the strip.
-pub const STRIP_PAD_X: f32 = 12.0;
+/// Space left and right of the strip, inside the card's own padding.
+pub const STRIP_PAD_X: f32 = 0.0;
+/// The widest a file chip's name runs before it truncates.
+pub const FILE_CHIP_NAME_MAX_W: f32 = 160.0;
+/// A file chip's padding before its glyph; the remove target sits closer to the end.
+pub const FILE_CHIP_PAD_LEFT: f32 = 8.0;
+/// A file chip's padding after its remove target.
+pub const FILE_CHIP_PAD_RIGHT: f32 = 2.0;
+/// Space between a file chip's glyph, name and remove target.
+pub const FILE_CHIP_GAP: f32 = 6.0;
+
+/// The composer card's corner radius (Oleafly `rounded-[1.375rem]`).
+pub const SHELL_RADIUS: f32 = 22.0;
+/// [`SHELL_RADIUS`] for `rounded`.
+pub const SHELL_CORNER: Pixels = px(SHELL_RADIUS);
+/// The corners of the model trigger and the file chips: the kit's control radius.
+pub const CONTROL_CORNER: Pixels = px(studio_theme::METRICS.radius.control);
+/// The card's padding left and right.
+pub const SHELL_PAD_X: f32 = 12.0;
+/// The card's padding above the input.
+pub const SHELL_PAD_TOP: f32 = 10.0;
+/// The card's padding under the controls row.
+pub const SHELL_PAD_BOTTOM: f32 = 8.0;
+/// The input's inset inside the card, left and right.
+pub const INPUT_INSET_X: f32 = 2.0;
+/// The input's inset inside the card, above and below the text.
+pub const INPUT_INSET_Y: f32 = 8.0;
+/// The input's resting height, insets included: what an empty or one-line draft shows.
+pub const INPUT_REST_HEIGHT: f32 = 56.0;
+/// The text area's resting height once the insets are taken out.
+pub const INPUT_REST_TEXT_HEIGHT: f32 = INPUT_REST_HEIGHT - 2.0 * INPUT_INSET_Y;
+
+/// The controls row's least height.
+pub const CONTROLS_MIN_H: f32 = 28.0;
+/// Space between the input and the controls row.
+pub const CONTROLS_GAP_TOP: f32 = 8.0;
+/// Space between controls in a group.
+pub const CONTROLS_GAP: f32 = 4.0;
+/// Space between controls in a narrow composer.
+pub const CONTROLS_GAP_NARROW: f32 = 2.0;
+/// The widest controls row that still counts as narrow (Oleafly's 24rem container query).
+pub const NARROW_MAX_W: f32 = 384.0;
+/// The model trigger's height, padding and widest extent before its label truncates.
+pub const MODEL_H: f32 = 28.0;
+pub const MODEL_PAD_X: f32 = 8.0;
+pub const MODEL_MAX_W: f32 = 176.0;
+/// The model trigger's chevron.
+pub const MODEL_CHEVRON: f32 = 14.0;
+/// The filled square of the Stop button (Oleafly's filled 14 px `Square`). It covers the whole
+/// outlined glyph (about 13.3 px at the 16 px glyph size), outline included.
+pub const STOP_FILL: f32 = 14.0;
+/// The filled square's corner radius.
+pub const STOP_FILL_RADIUS: f32 = 3.0;
+/// [`STOP_FILL_RADIUS`] for `rounded`.
+pub const STOP_FILL_CORNER: Pixels = px(STOP_FILL_RADIUS);
+
+/// Whether a controls row this wide uses the narrow sizes (2 px gaps, 24 px attachment
+/// targets, 28 px send and stop).
+pub fn is_narrow(controls_width: f32) -> bool {
+    controls_width <= NARROW_MAX_W
+}
 
 /// Caret blink phase for the time since the last keystroke or caret move.
 ///
@@ -147,9 +206,10 @@ pub fn input_drag_scroll_delta(
     distance.signum() * (distance.abs() * 0.2).clamp(1.0, line_height)
 }
 
-/// Height the wrapping chip strip takes for `count` chips in `inner_width`.
+/// Height the wrapping strip of image thumbnails takes for `count` thumbnails in
+/// `inner_width`.
 ///
-/// Zero when there are none. As many chips per row as fit between the side
+/// Zero when there are none. As many thumbnails per row as fit between the side
 /// insets, with [`STRIP_GAP`] between them.
 pub fn attachment_strip_height(count: usize, inner_width: f32) -> f32 {
     if count == 0 {
@@ -158,5 +218,5 @@ pub fn attachment_strip_height(count: usize, inner_width: f32) -> f32 {
     let usable = (inner_width - 2.0 * STRIP_PAD_X).max(STRIP_THUMB);
     let per_row = (((usable + STRIP_GAP) / (STRIP_THUMB + STRIP_GAP)).floor() as usize).max(1);
     let rows = count.div_ceil(per_row);
-    STRIP_PAD_TOP + rows as f32 * STRIP_THUMB + (rows - 1) as f32 * STRIP_GAP
+    rows as f32 * STRIP_THUMB + (rows - 1) as f32 * STRIP_GAP
 }

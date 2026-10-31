@@ -19,7 +19,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::time::Instant;
 
-use gpui::{App, Context, IntoElement, ParentElement, RenderOnce, Styled, Window, div, px};
+use gpui::{
+    App, Context, InteractiveElement, IntoElement, ParentElement, RenderOnce,
+    StatefulInteractiveElement, Styled, Window, div, px,
+};
 use studio_engine::agent::{Row, RowKind};
 use studio_markdown::{IncrementalParser, TopBlock};
 use studio_theme::{METRICS, TextStyle, Theme, reduced_motion, text_style};
@@ -30,6 +33,7 @@ use super::selection::Selection;
 use super::style::MdStyle;
 use super::text_element::{LinkActivate, SelectRoot, SharedSelection};
 use super::veil::{RowVeil, veil_wanted};
+use crate::agent::ui::metrics::activity as a;
 use blocks::{BuildCx, Prepared, build, prepare, tagged};
 
 /// Whether a row is the agent's answer or its reasoning (set in the quieter text colour).
@@ -387,6 +391,21 @@ impl RenderOnce for MarkdownRow {
                 },
             ));
         }
-        SelectRoot::new(content.into_any_element(), sel, activate_link)
+        let root = SelectRoot::new(content.into_any_element(), sel, activate_link);
+        if self.voice != Voice::Reasoning {
+            return root.into_any_element();
+        }
+        // Open reasoning: plain text behind a hairline rule, scrolling past its cap.
+        div()
+            .id(("agent-md-reasoning", id as usize))
+            .ml(px(a::REASONING_RULE_MARGIN))
+            .max_h(px(a::REASONING_MAX_H))
+            .overflow_y_scroll()
+            .border_l_1()
+            .border_color(style.rule)
+            .pl(px(a::REASONING_INSET))
+            .py(px(a::REASONING_PAD_Y))
+            .child(root)
+            .into_any_element()
     }
 }

@@ -1,9 +1,10 @@
 //! `EmptyState`: what a list, panel or stage shows when it has nothing to show.
 //!
-//! Two sizes. Inline (the default) sits in panels and tabs: a `Label` title in `text_2` and a
-//! `Small` body in `text_3`, left-aligned. [`EmptyState::centered`] fills the stage, the start
-//! screen and the timeline: a `Title` in `text_1` and a `Body` in `text_2`, centred. Either
-//! takes one action, usually a button.
+//! Two sizes, after Oleafly's compact and default empty states. Inline (the default) sits in
+//! panels and tabs: a `Label` title in `text_1` and a `Small` body in `text_2`, left-aligned.
+//! [`EmptyState::centered`] fills the stage, the start screen and the timeline: a `Heading`
+//! (Oleafly's `EmptyTitle`) in `text_1` and a `Body` in `text_2`, centred. Either takes one
+//! action, usually a button.
 
 use gpui::{
     AnyElement, App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px,
@@ -24,7 +25,7 @@ impl EmptyStateSize {
     pub(crate) fn styles(self) -> (TextStyle, TextStyle) {
         match self {
             Self::Inline => (TextStyle::Label, TextStyle::Small),
-            Self::Centered => (TextStyle::Title, TextStyle::Body),
+            Self::Centered => (TextStyle::Heading, TextStyle::Body),
         }
     }
 }
@@ -72,11 +73,7 @@ impl RenderOnce for EmptyState {
         let colors = self.theme.colors;
         let centered = self.size == EmptyStateSize::Centered;
         let (title_style, body_style) = self.size.styles();
-        let (title_color, body_color) = if centered {
-            (colors.text_1, colors.text_2)
-        } else {
-            (colors.text_2, colors.text_3)
-        };
+        let (title_color, body_color) = (colors.text_1, colors.text_2);
 
         let text = div()
             .flex()
@@ -137,7 +134,7 @@ mod tests {
         );
         assert_eq!(
             EmptyStateSize::Centered.styles(),
-            (TextStyle::Title, TextStyle::Body)
+            (TextStyle::Heading, TextStyle::Body)
         );
         let theme = Theme::new(studio_theme::Appearance::Light);
         assert_eq!(EmptyState::new(&theme, "x").size, EmptyStateSize::Inline);

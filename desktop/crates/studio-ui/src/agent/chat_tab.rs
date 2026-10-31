@@ -1,7 +1,8 @@
 //! The Chat tab: the status line and its details, the transcript with its empty state,
 //! working trailer and jump pill, then the dock and the options bar.
 
-use super::ui::{ActionCard, JumpPill, StatusLine, WorkingTrailer, elapsed_label, panel_empty};
+use super::ui::metrics::{status, transcript as inset};
+use super::ui::{ActionCard, JumpPill, StatusLine, WorkingTrailer, elapsed_label, panel_home};
 use super::*;
 use studio_harness::AdapterStatus;
 use studio_harness::driver::ConfigOption;
@@ -310,8 +311,8 @@ impl ConversationPanel {
             .flex()
             .flex_col()
             .gap(px(METRICS.space_2))
-            .px(px(METRICS.space_3))
-            .pt(px(METRICS.space_2))
+            .px(px(status::PAD_X))
+            .pt(px(status::PAD_Y))
             .child(self.status_line(&snapshot, controls, &g, cx));
         top = top.children(self.task_well(&snapshot, controls, cx));
         let setup = self.setup_notice(&snapshot, controls, &g, cx);
@@ -330,8 +331,8 @@ impl ConversationPanel {
             .flex()
             .flex_col()
             .gap(px(METRICS.space_2))
-            .px(px(METRICS.space_3))
-            .pt(px(METRICS.space_2));
+            .px(px(inset::INSET_X))
+            .pt(px(inset::INSET_Y));
         if self.log_has_older() {
             let loading = self.page.loading.load(Ordering::Acquire);
             transcript = transcript.child(div().flex_none().child(self.action_button(
@@ -599,27 +600,20 @@ impl ConversationPanel {
                 })
                 .child(Chip::new(&theme, ("agent-suggestion-chip", ix), *text))
         });
-        div()
-            .flex_none()
-            .flex()
-            .flex_col()
-            .items_center()
-            .gap(px(METRICS.space_3))
-            .pt(px(METRICS.space_8))
-            .child(panel_empty(
-                &theme,
-                TextStyle::Title,
-                "What should we change?",
-                "Describe an edit; the agent changes the project and you review it.",
-            ))
-            .child(
-                div()
-                    .flex()
-                    .flex_wrap()
-                    .justify_center()
-                    .gap(px(METRICS.space_2))
-                    .children(chips),
-            )
+        panel_home(
+            &theme,
+            "What should we change?",
+            "Describe an edit; the agent changes the project and you review it.",
+        )
+        .flex_none()
+        .child(
+            div()
+                .flex()
+                .flex_wrap()
+                .justify_center()
+                .gap(px(METRICS.space_2))
+                .children(chips),
+        )
     }
 
     /// Under the last row while the agent works: what it does and for how long.

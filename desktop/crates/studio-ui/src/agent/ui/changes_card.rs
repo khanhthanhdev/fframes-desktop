@@ -1,15 +1,22 @@
 //! The files a task changed, as one card in the transcript with its Review button.
 
 use gpui::{
-    AnyElement, App, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window, div, px,
+    AnyElement, App, IntoElement, ParentElement, Pixels, RenderOnce, SharedString, Styled, Window,
+    div, px,
 };
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::{ROW_H, STATUS_MARK};
-use crate::kit::{Card, selectable};
+use crate::kit::{Button, ButtonSize, Icon, icon, selectable};
 
 /// The most files the card lists before "…and N more".
 pub const CHANGES_SHOWN: usize = 5;
+
+/// Inside the card: 10 px left and right, 6 px top and bottom (Oleafly's `px-2.5 py-1.5`).
+const PAD_X: f32 = 10.;
+const PAD_Y: f32 = 6.;
+/// Corner of the card: the control radius (Oleafly's `rounded-md`).
+const RADIUS: Pixels = px(METRICS.radius.control);
 
 /// How a file changed: one letter in its colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,8 +46,10 @@ pub struct ChangedFile {
     pub path: SharedString,
 }
 
-/// `card` fill, `line` border, a `BodyStrong` count with the action on the right, then one
-/// 24 px row per file (at most [`CHANGES_SHOWN`]): the mark, the name and its folder.
+/// A muted card after Oleafly's turn changes: `card` fill, `line` border at the control
+/// radius, 10 × 6 px inside. The header has the 14 px file-diff glyph, the count in `Label`
+/// and the compact Review button on the right; then one 24 px row per file (at most
+/// [`CHANGES_SHOWN`]) with its mark and its path in 11 px mono.
 #[derive(IntoElement)]
 pub struct ChangesCard {
     theme: Theme,
@@ -60,9 +69,9 @@ impl ChangesCard {
         }
     }
 
-    /// The Review button in the header.
-    pub fn action(mut self, action: impl IntoElement) -> Self {
-        self.action = Some(action.into_any_element());
+    /// The Review button in the header, made compact (24 px) to sit on the header line.
+    pub fn action(mut self, action: Button) -> Self {
+        self.action = Some(action.size(ButtonSize::Sm).into_any_element());
         self
     }
 }
@@ -89,7 +98,7 @@ impl RenderOnce for ChangesCard {
                 Some((folder, name)) => (Some(format!("{folder}/")), name.to_owned()),
                 None => (None, file.path.to_string()),
             };
-            text_style(div(), TextStyle::Label)
+            text_style(div(), TextStyle::CodeSmall)
                 .h(px(ROW_H))
                 .flex()
                 .items_center()
@@ -119,19 +128,25 @@ impl RenderOnce for ChangesCard {
                         ),
                 )
         });
-        Card::raised(&theme)
+        div()
             .w_full()
             .flex()
             .flex_col()
-            .gap(px(METRICS.space_2))
-            .p(px(METRICS.space_3))
+            .px(px(PAD_X))
+            .py(px(PAD_Y))
+            .rounded(RADIUS)
+            .border(px(METRICS.size.divider))
+            .border_color(colors.line)
+            .bg(colors.card)
             .child(
                 div()
+                    .min_h(px(ROW_H))
                     .flex()
                     .items_center()
                     .gap(px(METRICS.space_2))
+                    .child(icon(Icon::FileDiff, METRICS.size.icon_sm, colors.text_2))
                     .child(
-                        text_style(div().flex_1().min_w_0(), TextStyle::BodyStrong)
+                        text_style(div().flex_1().min_w_0(), TextStyle::Label)
                             .text_color(colors.text_1)
                             .child(selectable(format!(
                                 "{total} file{} changed",
@@ -143,6 +158,9 @@ impl RenderOnce for ChangesCard {
             .child(div().flex().flex_col().children(rows))
             .children((more > 0).then(|| {
                 text_style(div(), TextStyle::Small)
+                    .h(px(ROW_H))
+                    .flex()
+                    .items_center()
                     .text_color(colors.text_3)
                     .child(format!("…and {more} more"))
             }))

@@ -7,7 +7,7 @@ default-run = "projectile-motion"
 
 [dependencies]
 fframes = { workspace = true, features = ["compile-time-svgtree", "cli"] }
-fframes-kit = { version = "=0.3.0", features = ["studio"] }
+fframes-kit = { version = "=0.2.0", features = ["studio"] }
 fframes-studio-kit = { path = "../../fframes-studio-kit" }
 fframes-studio-runtime = { workspace = true }
 fframes-studio-protocol = { workspace = true }

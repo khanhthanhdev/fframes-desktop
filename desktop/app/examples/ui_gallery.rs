@@ -494,7 +494,7 @@ impl Render for Gallery {
 
         let buttons = row(
             &theme,
-            "Button: Ghost (default), Neutral, Primary, Danger; Md 28 and Sm 24",
+            "Button: Ghost (default), Neutral, Primary, Danger; Md 32 and Sm 24",
             [
                 Button::new(&theme, "rest").label("Rest").into_any_element(),
                 Button::new(&theme, "pressed")
@@ -864,7 +864,11 @@ impl Render for Gallery {
             [div()
                 .rounded(px(METRICS.radius_control))
                 .shadow(focus_ring(&theme))
-                .child(Button::new(&theme, "ring").label("Focused"))
+                .child(
+                    Button::new(&theme, "ring")
+                        .label("Focused")
+                        .emphasis(Emphasis::Neutral),
+                )
                 .into_any_element()],
         );
 
@@ -960,6 +964,7 @@ impl Render for Gallery {
             .track_scroll(&self.scroll)
             .bg(colors.window)
             .text_color(colors.text_1)
+            .font_family(studio_theme::UI_FONT)
             .child(content)
             .children(menu)
     }
@@ -1288,29 +1293,22 @@ impl Gallery {
         let shell = self.fixture_shell(window, cx);
         let theme = *theme;
         let colors = theme.colors;
-        let layout = METRICS.layout;
         Some(if page == Page::Settings {
-            // The settings window at its size, the Windows title strip on top.
+            // The settings dialog's card at its largest, on the dimmed window around it.
             let frame = shell.update(cx, |shell, cx| {
-                shell.render_settings_fixture(index, theme, cx)
+                shell.render_settings_fixture(index, theme, window, cx)
             });
             div()
-                .w(px(layout.settings_w))
-                .h(px(layout.settings_h))
-                .flex()
-                .flex_col()
-                .overflow_hidden()
-                .border_1()
-                .border_color(colors.line)
-                .bg(colors.window)
+                .p(px(32.))
+                .bg(colors.scrim)
                 .child(
-                    div()
-                        .flex_none()
-                        .h(px(layout.windows_title_h))
-                        .border_b_1()
-                        .border_color(colors.line),
+                    studio_ui::kit::modal_card(
+                        &theme,
+                        studio_ui::kit::MODAL_MAX_W,
+                        studio_ui::kit::MODAL_MAX_H,
+                    )
+                    .child(div().flex().flex_1().min_h_0().child(frame)),
                 )
-                .child(div().flex().flex_1().min_h_0().child(frame))
                 .into_any_element()
         } else {
             let page = shell.update(cx, |shell, cx| shell.render_setup_fixture(index, theme, cx));
@@ -1377,6 +1375,7 @@ fn main() -> std::process::ExitCode {
     gpui_platform::application()
         .with_assets(fframes_studio::assets::Assets)
         .run(move |cx: &mut App| {
+            fframes_studio::assets::init_fonts(cx).expect("bundled gallery fonts must load");
             bind_text_input_keys(cx);
             studio_theme::init(cx, AppTheme::System);
             let bounds = Bounds::centered(None, size(px(1120.), px(900.)), cx);

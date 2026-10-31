@@ -495,8 +495,9 @@ impl ConversationPanel {
             .flex_shrink(1.)
             .min_h_0()
             .gap(px(METRICS.space_2))
+            // Oleafly's composer wrapper: 12 px at the sides and bottom, 4 px above.
             .px(px(METRICS.space_3))
-            .pt(px(METRICS.space_2))
+            .pt(px(METRICS.space_1))
             .pb(px(METRICS.space_3));
         if !cards.is_empty() {
             // A short window scrolls the cards; the choice stays reachable and the
@@ -577,13 +578,17 @@ impl ConversationPanel {
         }
         let theme = self.theme;
         let mut tray = div().flex().flex_col().child(
-            TrayHeader::new(&theme, "agent-queue", Icon::Layers, "Queued")
+            TrayHeader::new(&theme, "agent-queue", Icon::Clock, "Queued")
                 .count(snapshot.queue.len().to_string()),
         );
         for item in &snapshot.queue {
             let id = item.id;
-            let mut row = TrayRow::new(&theme, ("queue-item", id as usize), item.summary.clone())
-                .mark(icon(Icon::ArrowUp, STATUS_MARK, theme.colors.text_3))
+            // The first line of the message, on one line: the whole text is in the transcript
+            // once it is sent.
+            let first_line = item.summary.lines().next().unwrap_or_default().to_owned();
+            let mut row = TrayRow::new(&theme, ("queue-item", id as usize), first_line)
+                .single_line()
+                .mark(icon(Icon::Clock, STATUS_MARK, theme.colors.text_3))
                 .action(self.icon_button(
                     format!("queue-remove-{id}"),
                     Icon::X,

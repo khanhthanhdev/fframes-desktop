@@ -5,10 +5,12 @@
 //! settings pages here, deletes `surface::Section`, `titled_group` and `text::section_title`,
 //! and may rename this one to `Section`.
 //!
-//! The title is `Label` in `text_2` with an optional description under it and an optional
-//! trailing element (a count, an action) at the end of the title row; the content follows
-//! 8 px below. Sections stacked in a column sit 24 px apart ([`PanelSection::column`]).
-//! [`PanelSection::card`] puts the content on a nested card (`card_2`), as settings pages do.
+//! The title is an Oleafly section heading: `Overline` (12 px semibold) in `text_2`, in
+//! capitals (gpui has no letter spacing, so Oleafly's wide tracking is left out). An optional
+//! description (`Small`, `text_2`) sits 4 px under it and an optional trailing element (a
+//! count, an action) at the end of the title row; the content follows 8 px below. Sections
+//! stacked in a column sit 24 px apart ([`PanelSection::column`]). [`PanelSection::card`]
+//! puts the content on a nested card (`card_2`), as settings pages do.
 
 use gpui::{
     AnyElement, App, Div, IntoElement, ParentElement, RenderOnce, SharedString, Styled, Window,
@@ -55,7 +57,7 @@ impl PanelSection {
         div().flex().flex_col().gap(px(METRICS.space_6))
     }
 
-    /// A line under the title (`Small`, `text_3`).
+    /// A line under the title (`Small`, `text_2`).
     pub fn description(mut self, description: impl Into<SharedString>) -> Self {
         self.description = Some(description.into());
         self
@@ -99,14 +101,15 @@ impl RenderOnce for PanelSection {
                     .flex_col()
                     .flex_1()
                     .min_w_0()
+                    .gap(px(METRICS.space_1))
                     .child(
-                        text_style(div(), TextStyle::Label)
+                        text_style(div(), TextStyle::Overline)
                             .text_color(colors.text_2)
-                            .child(self.title),
+                            .child(self.title.to_uppercase()),
                     )
                     .children(self.description.map(|description| {
                         text_style(div(), TextStyle::Small)
-                            .text_color(colors.text_3)
+                            .text_color(colors.text_2)
                             .child(selectable(description))
                     })),
             )

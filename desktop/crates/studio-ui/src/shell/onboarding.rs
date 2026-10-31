@@ -15,7 +15,10 @@ use studio_proto::PermissionPolicy;
 use studio_theme::{METRICS, TextStyle, text_style};
 
 use super::StudioShell;
-use crate::kit::{Card, Emphasis, PanelSection, Progress, RadioCard, RadioCards, selectable};
+use crate::kit::{
+    Card, Emphasis, PanelSection, Progress, RadioCard, RadioCards, SettingRow, selectable,
+    setting_card,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Step {
@@ -401,36 +404,56 @@ impl StudioShell {
             Step::Welcome => Vec::new(),
             Step::Appearance => vec![self.render_appearance(cx)],
             Step::Sdk => {
-                let mut sdk = PanelSection::new(&theme, "Managed SDK")
-                    .card()
-                    .child(self.sdk_controls(cx));
+                let mut rows = vec![
+                    setting_card(&theme)
+                        .child(self.sdk_controls(cx))
+                        .into_any_element(),
+                ];
                 if self.presentation.agent_sdk.is_none() {
-                    sdk = sdk.child(note(
-                        &theme,
-                        "Without the SDK, Studio cannot build previews or export. You can \
-                         install it later from Settings → SDK.",
-                    ));
+                    rows.push(
+                        note(
+                            &theme,
+                            "Without the SDK, Studio cannot build previews or export. You can \
+                             install it later from Settings → SDK.",
+                        )
+                        .into_any_element(),
+                    );
                 }
-                vec![sdk.into_any_element()]
+                vec![
+                    PanelSection::new(&theme, "Managed SDK")
+                        .children(rows)
+                        .into_any_element(),
+                ]
             }
             Step::Project => {
-                let mut project = PanelSection::new(&theme, "Project");
+                let mut row = SettingRow::new(
+                    &theme,
+                    if self.presentation.project.is_some() {
+                        "Open project"
+                    } else {
+                        "No project open"
+                    },
+                );
                 if let Some(open) = &self.presentation.project {
-                    project = project.child(note(
-                        &theme,
-                        format!(
-                            "Open: {} · {}",
-                            open.name,
-                            studio_bootstrap::external_path(&open.root).display()
-                        ),
+                    row = row.description(format!(
+                        "{} · {}",
+                        open.name,
+                        studio_bootstrap::external_path(&open.root).display()
                     ));
                 }
-                vec![project.child(self.project_actions(cx)).into_any_element()]
+                let row = row
+                    .below(self.project_actions(false, cx))
+                    .into_any_element();
+                vec![
+                    PanelSection::new(&theme, "Project")
+                        .children([row])
+                        .into_any_element(),
+                ]
             }
             Step::Agent => vec![self.setup_page.clone().into_any_element()],
             Step::Permissions => vec![
                 PanelSection::new(&theme, "Permission requests")
-                    .child(self.permission_choice(
+                    .children([self.permission_choice(
                         policy,
                         |shell, policy, cx| {
                             if let Some(onboarding) = &mut shell.onboarding {
@@ -439,7 +462,7 @@ impl StudioShell {
                             }
                         },
                         cx,
-                    ))
+                    )])
                     .into_any_element(),
             ],
         }

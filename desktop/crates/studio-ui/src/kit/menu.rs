@@ -23,13 +23,17 @@ use studio_theme::{METRICS, Shadow, TextStyle, Theme, shadow_for, text_style};
 
 use super::interact::{States, dim_disabled};
 
-/// A menu's least width and greatest height.
-const MIN_W: f32 = 180.;
-const MAX_H: f32 = 320.;
-/// A row: its height, the check column and the row radius.
-const ROW_H: f32 = 24.;
+/// A menu's least width and greatest height (Oleafly's dropdown `min-w-40` and select
+/// `max-h-96`).
+const MIN_W: f32 = 160.;
+const MAX_H: f32 = 384.;
+/// A row: its height, the check column, the row radius and its padding and gap (Oleafly's
+/// `px-2 gap-2 rounded-md` menu row).
+const ROW_H: f32 = 32.;
 const CHECK: f32 = 12.;
-const ROW_RADIUS: f32 = 4.;
+const ROW_RADIUS: f32 = METRICS.radius.item;
+const ROW_PAD_X: f32 = METRICS.space_2;
+const ROW_GAP: f32 = METRICS.space_2;
 /// The gap kept between a menu, its trigger and the window edge.
 const GAP: f32 = 4.;
 const MARGIN: f32 = 12.;
@@ -234,8 +238,8 @@ pub struct Menu {
 }
 
 impl Menu {
-    /// A menu panel: `card` behind a `line` hairline with the popover shadow, rows that
-    /// hover on `ctl_hover`.
+    /// A menu panel: `popover` behind a `line` hairline with the popover shadow, rows that
+    /// highlight on the quiet `ctl` fill (Oleafly's `focus:bg-accent`).
     pub fn new(
         theme: &Theme,
         id: impl Into<ElementId>,
@@ -254,9 +258,9 @@ impl Menu {
             max_height: px(MAX_H),
             radius: px(METRICS.radius.popover),
             shadow: shadow_for(theme.appearance, Shadow::Pop).into_vec(),
-            bg: colors.card.into(),
+            bg: colors.popover.into(),
             border: colors.line.into(),
-            hover: States::of(theme).hover,
+            hover: States::of(theme).rest,
             text: colors.text_1.into(),
             on_highlight: None,
             on_select: None,
@@ -452,11 +456,11 @@ impl RenderOnce for Menu {
                             .p(px(METRICS.space_1))
                             .rounded(radius)
                             .shadow(shadow)
-                            .border_1()
+                            .border(px(METRICS.size.divider))
                             .border_color(border)
                             .bg(bg)
                             .text_color(text)
-                            .map(|this| text_style(this, TextStyle::Label))
+                            .map(|this| text_style(this, TextStyle::Body))
                             .children(items.into_iter().enumerate().map(|(index, item)| {
                                 let handler = handler.clone();
                                 let disabled = disabled_rows.get(index).copied().unwrap_or(false);
@@ -470,9 +474,9 @@ impl RenderOnce for Menu {
                                     .flex_row()
                                     .flex_shrink_0()
                                     .items_center()
-                                    .gap(px(METRICS.space_1 + 2.))
+                                    .gap(px(ROW_GAP))
                                     .h(px(ROW_H))
-                                    .px(px(METRICS.space_1 + 2.))
+                                    .px(px(ROW_PAD_X))
                                     .rounded(px(ROW_RADIUS));
                                 dim_disabled(row, disabled)
                                     .when(!disabled && highlighted == Some(index), |this| {

@@ -880,7 +880,7 @@ fn tool_verb(kind: Option<&str>) -> (&'static str, Icon) {
         Some("search") => ("Search", Icon::Search),
         Some("execute") => ("Run", Icon::Hammer),
         Some("fetch") => ("Fetch", Icon::Download),
-        Some("think") => ("Think", Icon::Bot),
+        Some("think") => ("Think", Icon::Brain),
         Some("switch_mode") => ("Mode", Icon::Settings),
         _ => ("Tool", Icon::Package),
     }
@@ -943,14 +943,16 @@ impl Render for ConversationPanel {
         };
         let controls = derive_controls(&snapshot, self.prompt_is_empty(cx), self.sdk_ready);
         self.sync_config_menu();
-        let open_setup = self.icon_button(
-            "agent-open-setup",
-            Icon::Settings,
-            "Agent settings",
-            Emphasis::Ghost,
-            cx,
-            |_, _, cx| cx.emit(PanelEvent::OpenSetup),
-        );
+        let open_setup = self
+            .icon_button(
+                "agent-open-setup",
+                Icon::Settings,
+                "Agent settings",
+                Emphasis::Ghost,
+                cx,
+                |_, _, cx| cx.emit(PanelEvent::OpenSetup),
+            )
+            .size(IconButtonSize::Md);
         let new_chat = self
             .icon_button(
                 "agent-new-chat",
@@ -967,6 +969,7 @@ impl Render for ConversationPanel {
                     cx.notify();
                 },
             )
+            .size(IconButtonSize::Md)
             .disabled(!controls.new_chat);
         // The sidebar's Agent tab names the panel, so the header holds the sub-tabs and the
         // panel's own buttons.

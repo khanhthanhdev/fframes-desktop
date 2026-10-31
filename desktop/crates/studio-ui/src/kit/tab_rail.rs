@@ -93,8 +93,9 @@ const RAIL_PAD_X: f32 = 10.;
 const DOT_TOP: f32 = 4.;
 const DOT_RIGHT: f32 = 8.;
 
-/// The sidebar's icon tabs: a bar on `card` under a `line` hairline, `tab_bar_h` high,
-/// the selected tab on `ctl_active`.
+/// The sidebar's icon tabs: a bar on `sidebar` under a `line` hairline, `tab_bar_h` high.
+/// As in Oleafly's sidebar, the selected tab sits on `ctl_hover` and the others turn the
+/// quieter `ctl` under the pointer, the same pair a list row uses.
 #[derive(IntoElement)]
 pub struct TabRail {
     id: ElementId,
@@ -148,13 +149,11 @@ impl RenderOnce for TabRail {
             .h(px(METRICS.layout.tab_bar_h))
             .flex_none()
             .overflow_hidden()
-            // Inside the card's 1 px border.
-            .rounded_t(px(METRICS.radius.card - METRICS.size.divider))
             .justify_around()
             .px(px(RAIL_PAD_X))
-            .border_b_1()
+            .border_b(px(METRICS.size.divider))
             .border_color(colors.line)
-            .bg(colors.card)
+            .bg(colors.sidebar)
             .children(items.into_iter().enumerate().map(|(index, item)| {
                 let handler = handler.clone();
                 let keyed = keyed.clone();
@@ -179,10 +178,10 @@ impl RenderOnce for TabRail {
                     .w(px(TAB_W))
                     .rounded(px(METRICS.radius.tab));
                 dim_disabled(tab, disabled)
-                    .when(selected, |this| this.bg(states.selected))
+                    .when(selected, |this| this.bg(states.hover))
                     .when(!selected && !disabled, |this| {
                         this.cursor_pointer()
-                            .hover(move |style| style.bg(states.hover))
+                            .hover(move |style| style.bg(states.rest))
                     })
                     .tooltip_show_delay(crate::kit::TOOLTIP_SHOW_DELAY)
                     .tooltip(move |_, cx| crate::kit::Tooltip::new(&theme, label.clone()).view(cx))

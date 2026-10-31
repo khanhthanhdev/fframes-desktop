@@ -601,7 +601,15 @@ impl PropsPanel {
             Some(Err(error)) => {
                 return (
                     None,
-                    vec![Notice::new("props-unavailable", Tone::Warning, error).into_any_element()],
+                    vec![
+                        Notice::new(
+                            "props-unavailable",
+                            Tone::Warning,
+                            "Could not read this component's props",
+                        )
+                        .body(error)
+                        .into_any_element(),
+                    ],
                 );
             }
             Some(Ok(None)) => {
@@ -785,11 +793,10 @@ impl Render for PropsPanel {
         }
         let mut section = PanelSection::new(&theme, "Props").trailing(history);
         if let PropsEditing::Disabled(reason) = &snapshot.editing {
-            section = section.child(Notice::new(
-                "props-disabled",
-                Tone::Warning,
-                format!("Props edits are disabled: {reason}"),
-            ));
+            section = section.child(
+                Notice::new("props-disabled", Tone::Warning, "Props edits are disabled")
+                    .body(reason.clone()),
+            );
         }
         if let Some(notice) = &snapshot.notice {
             section = section.child(Notice::new("props-notice", Tone::Info, notice.clone()));

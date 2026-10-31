@@ -30,10 +30,11 @@ pub fn tone_icon(tone: Tone) -> Icon {
     }
 }
 
-/// Fill of the notice card: the status surfaces, the plain card otherwise.
+/// Fill of the notice card: the plain card for neutral, the tone's soft surface otherwise
+/// (info is the accent wash, like Oleafly's `bg-primary/10` banners).
 pub fn notice_surface(theme: &Theme, tone: Tone) -> Rgba {
     match tone {
-        Tone::Neutral | Tone::Info => theme.colors.card,
+        Tone::Neutral => theme.colors.card,
         tone => tone_surface(theme, tone),
     }
 }
@@ -210,7 +211,10 @@ mod tests {
     #[test]
     fn surfaces_and_icons_follow_tone() {
         let theme = Theme::new(Appearance::Light);
-        assert_eq!(notice_surface(&theme, Tone::Info), theme.colors.card);
+        assert_eq!(
+            notice_surface(&theme, Tone::Info),
+            tone_surface(&theme, Tone::Info)
+        );
         assert_eq!(notice_surface(&theme, Tone::Neutral), theme.colors.card);
         assert_eq!(
             notice_surface(&theme, Tone::Success),

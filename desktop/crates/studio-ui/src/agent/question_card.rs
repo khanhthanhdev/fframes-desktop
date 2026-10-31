@@ -9,6 +9,10 @@ use super::ui::ActionCard;
 use super::*;
 use crate::kit::{RadioCard, RadioCards};
 
+/// The free-text answer field: compact, 28 px (Oleafly's `h-7` question fields), where the
+/// panel's other fields keep the 36 px default.
+const ANSWER_FIELD_H: f32 = 28.;
+
 /// What the user has answered for one item so far.
 pub(super) struct ItemDraft {
     /// The labels of the chosen options.
@@ -120,13 +124,14 @@ impl ConversationPanel {
         let mut card = ActionCard::new(
             &theme,
             SharedString::from(format!("question-{index}")),
-            UiTone::Warning,
+            UiTone::Info,
             if question.title.is_empty() {
                 "The agent has a question"
             } else {
                 question.title.as_str()
             },
-        );
+        )
+        .question();
         for (item_index, item) in question.items.iter().enumerate() {
             let Some(draft) = self
                 .host
@@ -187,7 +192,9 @@ impl ConversationPanel {
                     probe.into_bounds_handler(),
                 )));
             }
-            block = block.child(wrapper.child(TextInput::new(&theme, id, &field)));
+            block = block.child(
+                wrapper.child(TextInput::new(&theme, id, &field).height(px(ANSWER_FIELD_H))),
+            );
             card = card.child(block);
         }
         let send_reference = question.reference.clone();

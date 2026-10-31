@@ -87,7 +87,8 @@ pub(super) fn render_ruler(
             continue;
         }
         ruler = ruler.child(
-            text_style(div(), TextStyle::Small)
+            // Times are mono so the digits keep their width as the view scrolls.
+            text_style(div(), TextStyle::CodeSmall)
                 .absolute()
                 .left(px(left))
                 .bottom(px(layout.ruler_label_bottom))

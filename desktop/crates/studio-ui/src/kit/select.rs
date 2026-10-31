@@ -1,5 +1,5 @@
 //! `Select`'s trigger -- the closed half of the control [`crate::kit::Menu`]
-//! opens: a borderless `ctl` pill with the value and a chevron.
+//! opens: an outlined document-surface field with the value and a chevron.
 //!
 //! The chevron does not rotate: this gpui rev has no transform.
 
@@ -14,8 +14,8 @@ use super::menu::OpenHandler;
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 /// The trigger's horizontal padding and its chevron.
-const PAD_X: f32 = 10.;
-const CHEVRON: f32 = 12.;
+const PAD_X: f32 = METRICS.space_3;
+const CHEVRON: f32 = METRICS.size.icon_md;
 
 #[derive(IntoElement)]
 pub struct Select {
@@ -103,7 +103,11 @@ impl RenderOnce for Select {
             .px(px(PAD_X))
             .h(px(METRICS.size.select_h))
             .rounded(px(METRICS.radius.control))
-            .when(!ghost, |this| this.bg(states.rest))
+            .when(!ghost, |this| {
+                this.bg(colors.window)
+                    .border(px(METRICS.size.divider))
+                    .border_color(colors.line_strong)
+            })
             .when(!disabled, |this| {
                 this.cursor_pointer()
                     .hover(move |style| style.bg(states.hover))

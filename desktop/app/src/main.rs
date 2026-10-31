@@ -162,6 +162,7 @@ fn run_studio(observation: Option<Observed>) {
     gpui_platform::application()
         .with_assets(fframes_studio::assets::Assets)
         .run(move |cx: &mut App| {
+            fframes_studio::assets::init_fonts(cx).expect("bundled Studio fonts must load");
             studio_ui::shell::bind_keys(cx);
             let settings = studio_engine::app_paths::AppPaths::system()
                 .map(|paths| studio_engine::app_settings::AppSettings::load(&paths))

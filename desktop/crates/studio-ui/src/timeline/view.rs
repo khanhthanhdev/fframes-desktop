@@ -16,7 +16,7 @@ use studio_engine::timing::{ResolvedClip, TimelineCommand, TimelineSnapshot, Tri
 use studio_engine::{
     PreviewFrame, TaskScope, TimelineModel, TimelineSelection, TimelineTransform, TimingEditing,
 };
-use studio_theme::{METRICS, TextStyle, Theme, TrackKind, text_style, track_color};
+use studio_theme::{METRICS, MONO_FAMILY, TextStyle, Theme, TrackKind, text_style, track_color};
 
 use super::edit::{
     DRAG_THRESHOLD_PX, SnapTargets, drop_marker, drop_position, split_at, trim_for_edge,
@@ -1427,7 +1427,7 @@ impl Render for TimelineView {
             painted += 1;
             scene_rows[clip.lane.min(scene_lanes - 1)].push(match scene {
                 Some((index, scene)) => self
-                    .selectable_scene(element, index, clip.clip, scene, colors.accent.into(), cx)
+                    .selectable_scene(element, index, clip.clip, scene, colors.focus.into(), cx)
                     .into_any_element(),
                 None => element
                     .id(("clip", number))
@@ -1678,7 +1678,9 @@ impl Render for TimelineView {
                 let pill = div()
                     .debug_selector(|| "stop-readout".into())
                     .absolute()
-                    .top(px(metrics.ruler_h + gap));
+                    .top(px(metrics.ruler_h + gap))
+                    // The toast's text inherits the family: a time, so mono.
+                    .font_family(MONO_FAMILY);
                 let pill = if x > view_width / 2. {
                     pill.right(px(view_width - x + gap))
                 } else {
@@ -1771,7 +1773,7 @@ impl TimelineView {
         index: usize,
         clip: Option<usize>,
         scene: &fframes_studio_protocol::PreviewSceneInfo,
-        accent: Hsla,
+        focus: Hsla,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         element
@@ -1779,7 +1781,7 @@ impl TimelineView {
             .role(gpui::Role::Button)
             .aria_label(format!("Scene {} instance {}", scene.name, scene.index))
             .tab_index(0)
-            .focus_visible(move |s| s.border_color(accent))
+            .focus_visible(move |s| s.border_color(focus))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |v, e: &gpui::MouseDownEvent, w, cx| {

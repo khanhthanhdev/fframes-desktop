@@ -7,7 +7,7 @@ use std::rc::Rc;
 use fframes_studio_protocol::export::ExportSettings;
 use gpui::{
     AnyElement, App, InteractiveElement, IntoElement, ParentElement, RenderOnce, SharedString,
-    StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    StatefulInteractiveElement, Styled, Window, div, px,
 };
 use studio_engine::export_options::{
     SCALES, estimate_bytes, format_label, format_size, fps_options, output_size,
@@ -17,8 +17,8 @@ use studio_theme::{METRICS, TextStyle, Theme, text_style};
 use super::progress::ExportPhase;
 use super::settings::{DeckSummary, ExportSupport, ExportTarget, deck_blocker};
 use crate::kit::{
-    Button, Card, Emphasis, FormField, Notice, PanelSection, Progress, SegmentOption,
-    SegmentedControl, Tone, selectable,
+    Button, Card, Emphasis, Notice, PanelSection, Progress, SegmentOption, SegmentedControl,
+    SettingRow, Tone, selectable, setting_card, workflow_column, workflow_title,
 };
 
 type Change = Rc<dyn Fn(ExportSettings, &mut Window, &mut App)>;
@@ -111,8 +111,9 @@ impl ExportPanel {
                 }
             },
         );
-        FormField::row(theme, "Export as", control)
-            .hint("A video file, or a folder that plays the video as slides in a browser.")
+        SettingRow::new(theme, "Export as")
+            .description("A video file, or a folder that plays the video as slides in a browser.")
+            .control(control)
             .into_any_element()
     }
 
@@ -127,8 +128,9 @@ impl ExportPanel {
         let value = text_style(div().id(id), TextStyle::Body)
             .text_color(theme.colors.text_1)
             .child(selectable(SharedString::from(text)));
-        FormField::row(theme, title, value)
-            .hint(hint)
+        SettingRow::new(theme, title)
+            .description(hint)
+            .control(value)
             .into_any_element()
     }
 
@@ -209,8 +211,9 @@ impl ExportPanel {
                 }
             },
         );
-        FormField::row(theme, "Format", control)
-            .hint("The container and the codec the video is encoded with.")
+        SettingRow::new(theme, "Format")
+            .description("The container and the codec the video is encoded with.")
+            .control(control)
             .into_any_element()
     }
 
@@ -247,8 +250,9 @@ impl ExportPanel {
                 }
             },
         );
-        FormField::row(theme, "Size", control)
-            .hint("Half size renders faster and makes a smaller file.")
+        SettingRow::new(theme, "Size")
+            .description("Half size renders faster and makes a smaller file.")
+            .control(control)
             .into_any_element()
     }
 
@@ -283,8 +287,9 @@ impl ExportPanel {
                 }
             },
         );
-        FormField::row(theme, "Frame rate", control)
-            .hint("A lower rate must divide the video's.")
+        SettingRow::new(theme, "Frame rate")
+            .description("A lower rate must divide the video's.")
+            .control(control)
             .into_any_element()
     }
 
@@ -421,27 +426,38 @@ impl RenderOnce for ExportPanel {
             ExportSupport::Ready(_) => None,
         };
 
-        // A finished or failed export says so in its notice; the line is for the rest.
+        // A finished or failed export says so in its notice; the status card is for the
+        // rest: a running export with its bar, or one that was cancelled.
         let outcome = self.outcome(can_start);
         let status = phase
             .message()
             .filter(|_| outcome.is_none())
             .map(|message| {
-                text_style(div().id("export-message"), TextStyle::Small)
-                    .text_color(colors.text_2)
-                    .child(selectable(SharedString::from(message)))
+                let mut card = setting_card(&theme)
+                    .flex()
+                    .flex_col()
+                    .gap(px(METRICS.space_2))
+                    .child(
+                        text_style(div().id("export-message"), TextStyle::Body)
+                            .text_color(colors.text_1)
+                            .child(selectable(SharedString::from(message))),
+                    );
+                if phase.shows_progress() {
+                    card = card.child(Progress::linear(
+                        &theme,
+                        phase.fraction().unwrap_or_default(),
+                    ));
+                }
+                card
             });
 
-        let settings = PanelSection::column()
+        let settings = div()
+            .flex()
+            .flex_col()
+            .gap(px(METRICS.space_6))
+            .child(PanelSection::new(&theme, "Output").child(self.target_row(busy)))
             .child(
-                PanelSection::new(&theme, "Output")
-                    .card()
-                    .child(self.target_row(busy)),
-            )
-            .child(
-                PanelSection::new(&theme, if deck { "Slide deck" } else { "Video" })
-                    .card()
-                    .children(rows),
+                PanelSection::new(&theme, if deck { "Slide deck" } else { "Video" }).children(rows),
             );
 
         let on_start = self.on_start.clone();
@@ -484,21 +500,31 @@ impl RenderOnce for ExportPanel {
                     })
             });
 
+        // The outcome or the running export first, then what keeps the export from its
+        // options, then the options and what they make.
+        let column = workflow_column()
+            .gap(px(METRICS.space_6))
+            .pb(px(METRICS.space_6))
+            .child(workflow_title(
+                &theme,
+                "Export",
+                "The choices here apply to this export only; Settings → Export holds the \
+                 defaults.",
+            ))
+            .children(outcome)
+            .children(status)
+            .children(notice)
+            .children(deck_notices)
+            .child(settings)
+            .child(self.estimate_line());
+
         Card::raised(&theme)
             .id("export-panel")
             .flex_1()
             .min_h_0()
             .overflow_hidden()
-            .p(px(METRICS.space_4))
             .flex()
             .flex_col()
-            .gap(px(METRICS.space_3))
-            .child(
-                text_style(div(), TextStyle::Display)
-                    .flex_none()
-                    .text_color(colors.text_1)
-                    .child("Export"),
-            )
             .child(
                 div()
                     .id("export-body")
@@ -506,21 +532,19 @@ impl RenderOnce for ExportPanel {
                     .flex_col()
                     .flex_1()
                     .min_h_0()
-                    .gap(px(METRICS.space_3))
                     .overflow_y_scroll()
-                    .children(notice)
-                    .children(deck_notices)
-                    .child(settings)
-                    .child(self.estimate_line())
-                    .when(phase.shows_progress(), |body| {
-                        body.child(Progress::linear(
-                            &theme,
-                            phase.fraction().unwrap_or_default(),
-                        ))
-                    })
-                    .children(status)
-                    .children(outcome),
+                    .pt(px(METRICS.space_6))
+                    .px(px(METRICS.space_6))
+                    .child(column),
             )
-            .child(actions)
+            .child(
+                div()
+                    .flex_none()
+                    .border_t(px(METRICS.size.divider))
+                    .border_color(colors.line)
+                    .py(px(METRICS.space_3))
+                    .px(px(METRICS.space_6))
+                    .child(workflow_column().child(actions)),
+            )
     }
 }

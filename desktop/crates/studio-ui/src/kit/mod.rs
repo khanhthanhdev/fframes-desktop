@@ -54,7 +54,7 @@ pub use interact::{
     dim_disabled, focus_ring, focusable, nav_key, on_activate, reveal_actions, step_enabled,
     with_tooltip,
 };
-pub use kbd::{KbdChip, kbd_symbol};
+pub use kbd::{KbdChip, kbd_symbol, keystroke_caps};
 pub use menu::{Menu, MenuItem, MenuKey, MenuState};
 pub use notice::{DETAILS_MAX_H, Notice, notice_surface, tone_icon};
 pub use number_field::{
@@ -67,7 +67,9 @@ pub use select::Select;
 pub use selectable_text::{
     CopySelection, SelectableText, bind_selectable_text_keys, selectable, selected_text,
 };
-pub use settings_frame::{SETTINGS_NAV_PAD, SETTINGS_NAV_W, SettingsFrame, SettingsNavItem};
+pub use settings_frame::{
+    SETTINGS_NAV_PAD, SETTINGS_NAV_W, SettingsFooterLink, SettingsFrame, SettingsNavItem,
+};
 pub use slider::{
     Slider, SliderDrag, SliderTrack, fraction_from_x, slider_key, snap_to_step,
     value_at as slider_value_at, value_from_fraction,
@@ -89,21 +91,35 @@ pub use windows_caption::{CAPTION_BUTTON_W, windows_caption_controls};
 mod chip;
 mod divider;
 mod empty_state;
+mod file_tree;
 mod form_field;
 mod list_row;
 mod panel_section;
 mod progress_bar;
 mod resize_grip;
+mod setting_row;
 mod spinner;
+mod split_button;
 mod toast;
+mod workflow;
 
 pub use chip::Chip;
 pub use divider::Divider;
 pub use empty_state::{EmptyState, EmptyStateSize};
+pub use file_tree::{
+    ExplorerSection, FileKind, FileTree, TreeExpansion, TreeNode, TreeRow, build_tree, visible_rows,
+};
 pub use form_field::FormField;
 pub use list_row::{List, ListRow};
 pub use panel_section::PanelSection;
 pub use progress_bar::Progress;
 pub use resize_grip::ResizeGrip;
+pub use setting_row::{SettingRow, setting_card, setting_note};
+mod modal;
+pub use modal::{MODAL_MAX_H, MODAL_MAX_W, MODAL_RADIUS, modal, modal_card, modal_size};
+mod picture_cards;
+pub use picture_cards::{PictureCard, PictureCards, appearance_picture};
 pub use spinner::{Spinner, SpinnerKind};
+pub use split_button::SplitButton;
 pub use toast::{HostedToast, TOAST_DURATION, Toast, ToastHost, toast_remaining};
+pub use workflow::{workflow_column, workflow_title};

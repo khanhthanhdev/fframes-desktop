@@ -23,10 +23,10 @@ pub struct Motion {
 }
 
 pub const MOTION: Motion = Motion {
-    fast: Duration::from_millis(120),
+    fast: Duration::from_millis(150),
     normal: Duration::from_millis(200),
     slow: Duration::from_millis(320),
-    tooltip_delay: Duration::from_millis(200),
+    tooltip_delay: Duration::from_millis(300),
     spin_period: Duration::from_millis(1100),
     caret_blink: Duration::from_millis(500),
     veil_min: Duration::from_millis(120),
@@ -56,11 +56,11 @@ mod tests {
         let ms = |d: Duration| d.as_millis();
         assert_eq!(
             [MOTION.fast, MOTION.normal, MOTION.slow].map(ms),
-            [120, 200, 320]
+            [150, 200, 320]
         );
         assert_eq!(
             [MOTION.tooltip_delay, MOTION.spin_period, MOTION.caret_blink].map(ms),
-            [200, 1100, 500]
+            [300, 1100, 500]
         );
         assert_eq!([MOTION.veil_min, MOTION.veil_max].map(ms), [120, 400]);
         assert!(MOTION.fast < MOTION.normal && MOTION.normal < MOTION.slow);

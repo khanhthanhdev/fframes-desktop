@@ -15,18 +15,19 @@ use gpui::{
 };
 use studio_engine::agent::{OutcomeKind, Row, RowId, RowKind};
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
-use studio_ui::agent::composer::{AttachmentDraft, Composer, ModelChoice};
+use studio_ui::agent::composer::{AttachmentDraft, Composer, ModelChoice, SteerMode};
 use studio_ui::agent::history::{HistoryList, SessionEntry};
 use studio_ui::agent::markdown::{MarkdownRow, Voice};
 use studio_ui::agent::todo_panel::{TodoItem, TodoPanel, TodoStatus};
+use studio_ui::agent::ui::metrics::{activity, status, transcript as inset};
 use studio_ui::agent::ui::{
     ActionCard, ActivityCounts, ActivityHeader, ActivityRow, ActivityState, AssistantMessage,
     ChangeMark, ChangedFile, ChangesCard, JumpPill, PanelHeader, STATUS_MARK, StatusLine,
-    TrayHeader, TrayRow, UserMessage, WorkingTrailer, panel_empty, summary_parts, tray_frame,
+    TrayHeader, TrayRow, UserMessage, WorkingTrailer, panel_home, summary_parts, tray_frame,
 };
 use studio_ui::kit::{
-    Badge, Button, Card, Chip, Emphasis, Icon, IconButton, RadioCard, RadioCards, SegmentOption,
-    SegmentedControl, TextInput, TextInputState, Tone, icon,
+    Badge, Button, Card, Chip, Emphasis, Icon, IconButton, IconButtonSize, RadioCard, RadioCards,
+    SegmentOption, SegmentedControl, TextInput, TextInputState, Tone, icon,
 };
 
 use crate::Gallery;
@@ -36,6 +37,8 @@ use crate::capture::Page;
 const WIDTHS: [f32; 2] = [320., 520.];
 /// The panel's height in the fixtures: a sidebar on a 1080 p screen, less the title bar.
 const PANEL_H: f32 = 680.;
+/// The question's free-text field, as `question_card.rs` sizes it (Oleafly's `h-7`).
+const ANSWER_FIELD_H: f32 = 28.;
 
 /// The entities one panel fixture draws: the composer, the todo list, the history list and
 /// the question's text field.
@@ -103,10 +106,26 @@ impl Gallery {
 
 /// Puts the composer, todo list and history in what `state` shows.
 fn set_up(panel: &Panel, state: &str, theme: &Theme, cx: &mut Context<Gallery>) {
-    let running = matches!(state, "working" | "permission" | "question" | "todo-queue");
+    let running = matches!(
+        state,
+        "working"
+            | "permission"
+            | "permission-pending"
+            | "question"
+            | "todo-queue"
+            | "steer-boundary"
+            | "steer-native"
+    );
+    // Send shows beside Stop only when the agent takes a message mid-turn.
+    let steer = match state {
+        "steer-boundary" => SteerMode::AtBoundary,
+        "steer-native" => SteerMode::Native,
+        _ => SteerMode::None,
+    };
     panel.composer.update(cx, |composer, cx| {
         composer.set_theme(*theme, cx);
         composer.set_running(running, cx);
+        composer.set_steer_mode(steer, cx);
         composer.clear_attachments(cx);
         composer.set_text("", cx);
         composer.set_model(
@@ -119,6 +138,16 @@ fn set_up(panel: &Panel, state: &str, theme: &Theme, cx: &mut Context<Gallery>) 
         if state == "todo-queue" {
             composer.add_attachment(AttachmentDraft::file("scenes/outro.rs"), cx);
             composer.set_text("Also make the outro match", cx);
+        }
+        if matches!(state, "steer-boundary" | "steer-native") {
+            composer.set_text("Keep the title's colour as it is", cx);
+        }
+        if state == "idle-image" {
+            composer.add_attachment(
+                AttachmentDraft::image("reference.png", Arc::new(reference_image())),
+                cx,
+            );
+            composer.set_text("Make the title card look like this", cx);
         }
     });
     panel.todo.update(cx, |todo, cx| {
@@ -205,11 +234,13 @@ fn render_panel(theme: &Theme, state: &str, ix: usize, width: f32, panel: &Panel
     let header = PanelHeader::new(theme, tabs)
         .action(
             IconButton::new(theme, "agent-new-chat", Icon::Plus.path())
+                .size(IconButtonSize::Md)
                 .emphasis(Emphasis::Ghost)
                 .label("New chat"),
         )
         .action(
             IconButton::new(theme, "agent-open-setup", Icon::Settings.path())
+                .size(IconButtonSize::Md)
                 .emphasis(Emphasis::Ghost)
                 .label("Agent settings"),
         );
@@ -217,7 +248,8 @@ fn render_panel(theme: &Theme, state: &str, ix: usize, width: f32, panel: &Panel
         div()
             .flex_1()
             .min_h_0()
-            .p(px(METRICS.space_3))
+            .px(px(inset::INSET_X))
+            .py(px(inset::INSET_Y))
             .child(panel.history.clone())
             .into_any_element()
     } else {
@@ -249,10 +281,11 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
     let colors = theme.colors;
     let base = (ix as u64 + 1) * 100;
     let (tone, summary) = match state {
-        "empty" | "code" => (Tone::Success, "Claude Code · ready"),
+        "empty" | "code" | "idle-image" => (Tone::Success, "Claude Code · ready"),
         "not-set-up" => (Tone::Warning, "Agent not set up"),
         "failed" => (Tone::Danger, "Failed: Render the outro at 4K"),
-        "permission" => (
+        "changes" => (Tone::Info, "Ready for review: Make the intro bigger"),
+        "permission" | "permission-pending" => (
             Tone::Warning,
             "Waiting for permission: Make the intro bigger",
         ),
@@ -265,8 +298,8 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
         .flex()
         .flex_col()
         .gap(px(METRICS.space_2))
-        .px(px(METRICS.space_3))
-        .pt(px(METRICS.space_2))
+        .px(px(status::PAD_X))
+        .pt(px(status::PAD_Y))
         .child(status);
     if state == "not-set-up" {
         top = top.child(
@@ -286,7 +319,8 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
     }
 
     let mut rows: Vec<AnyElement> = Vec::new();
-    let user = |id: u64, text: &str| UserMessage::new(theme, base + id, text.to_owned());
+    let user =
+        |id: u64, text: &str| UserMessage::new(theme, base + id, text.to_owned()).meta("2:13 PM");
     let answer = |id: u64, text: &str| {
         AssistantMessage::new(
             theme,
@@ -297,8 +331,9 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
         .meta("2:14 PM")
     };
     match state {
-        "empty" => rows.push(new_chat(theme)),
-        "working" | "permission" | "todo-queue" => {
+        "empty" | "idle-image" => rows.push(new_chat(theme)),
+        "working" | "permission" | "permission-pending" | "todo-queue" | "steer-boundary"
+        | "steer-native" => {
             rows.push(
                 user(1, "Make the intro bigger and slow the fade a little.").into_any_element(),
             );
@@ -315,13 +350,41 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
             counts.add_tool(Some("edit"), false);
             counts.add_tool(Some("edit"), false);
             counts.add_tool(Some("execute"), false);
+            counts.thoughts += usize::from(open);
             rows.push(
                 ActivityHeader::new(theme, ("activity", base as usize), summary_parts(&counts))
                     .open(open)
-                    .running(true)
                     .into_any_element(),
             );
             if open {
+                // Reasoning opened by the reader: its row, then the text behind a rule, laid
+                // out like `ConversationPanel::thought_row`.
+                rows.push(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .child(
+                            ActivityRow::new(
+                                theme,
+                                ("thought", base as usize + 7),
+                                Icon::Brain,
+                                "Thought",
+                                "The title is static markup, so only the wrapper scales.",
+                            )
+                            .on_toggle(true, |_, _| {}),
+                        )
+                        .child(
+                            div()
+                                .pl(px(activity::NESTED_INSET + METRICS.space_2))
+                                .pr(px(METRICS.space_2))
+                                .pb(px(METRICS.space_1))
+                                .child(MarkdownRow::new(
+                                    &thought_row(base + 7, REASONING),
+                                    Voice::Reasoning,
+                                )),
+                        )
+                        .into_any_element(),
+                );
                 rows.push(tool(
                     theme,
                     base + 3,
@@ -354,24 +417,6 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
                     "cargo build --release -p intro-video",
                     ActivityState::Running,
                 ));
-                rows.push(
-                    ChangesCard::new(
-                        theme,
-                        2,
-                        vec![
-                            ChangedFile {
-                                mark: ChangeMark::Modified,
-                                path: "scenes/intro.rs".into(),
-                            },
-                            ChangedFile {
-                                mark: ChangeMark::Added,
-                                path: "src/theme.rs".into(),
-                            },
-                        ],
-                    )
-                    .action(Button::new(theme, ("review", ix)).label("Review"))
-                    .into_any_element(),
-                );
             }
             rows.push(
                 WorkingTrailer::new(theme, "Working")
@@ -430,6 +475,57 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
                     .into_any_element(),
             );
         }
+        "changes" => {
+            rows.push(
+                user(1, "Make the intro bigger and slow the fade a little.").into_any_element(),
+            );
+            let mut counts = ActivityCounts::default();
+            counts.add_tool(Some("read"), false);
+            counts.add_tool(Some("edit"), false);
+            counts.add_tool(Some("edit"), false);
+            counts.add_tool(Some("execute"), false);
+            rows.push(
+                ActivityHeader::new(theme, ("activity", base as usize), summary_parts(&counts))
+                    .into_any_element(),
+            );
+            rows.push(
+                answer(
+                    2,
+                    "Done: the title scales to **1.4×** and the fade takes `0.6 s`. The build passed.",
+                )
+                .into_any_element(),
+            );
+            rows.push(
+                ChangesCard::new(
+                    theme,
+                    7,
+                    vec![
+                        ChangedFile {
+                            mark: ChangeMark::Modified,
+                            path: "scenes/intro.rs".into(),
+                        },
+                        ChangedFile {
+                            mark: ChangeMark::Added,
+                            path: "src/theme.rs".into(),
+                        },
+                        ChangedFile {
+                            mark: ChangeMark::Modified,
+                            path: "src/scenes/mod.rs".into(),
+                        },
+                        ChangedFile {
+                            mark: ChangeMark::Deleted,
+                            path: "assets/old-title.svg".into(),
+                        },
+                        ChangedFile {
+                            mark: ChangeMark::Mode,
+                            path: "scripts/render.sh".into(),
+                        },
+                    ],
+                )
+                .action(Button::new(theme, ("review", ix)).label("Review"))
+                .into_any_element(),
+            );
+        }
         "question" => {
             rows.push(user(1, "Add a title card.").into_any_element());
             rows.push(
@@ -452,9 +548,9 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
         .overflow_y_scroll()
         .flex()
         .flex_col()
-        .gap(px(METRICS.space_2))
-        .px(px(METRICS.space_3))
-        .pt(px(METRICS.space_2))
+        .gap(px(inset::ROW_GAP))
+        .px(px(inset::INSET_X))
+        .py(px(inset::INSET_Y))
         .children(rows);
     if state == "code" {
         transcript = transcript.child(div().flex().justify_center().child(JumpPill::new(
@@ -466,21 +562,41 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
 
     let mut cards: Vec<AnyElement> = Vec::new();
     if state == "permission" {
+        // Refusals first, every allowing choice primary, as `ConversationPanel` orders them.
         cards.push(
             ActionCard::new(
                 theme,
                 ("perm", ix),
-                Tone::Warning,
+                Tone::Info,
                 "Run cargo build --release?",
             )
+            .permission()
             .body("The agent asks for permission to go on.")
             .action(Button::new(theme, ("deny", ix)).label("Deny"))
-            .action(Button::new(theme, ("always", ix)).label("Always allow"))
+            .action(
+                Button::new(theme, ("always", ix))
+                    .label("Always allow")
+                    .emphasis(Emphasis::Primary),
+            )
             .action(
                 Button::new(theme, ("allow", ix))
                     .label("Allow once")
                     .emphasis(Emphasis::Primary),
             )
+            .into_any_element(),
+        );
+    }
+    if state == "permission-pending" {
+        // Answered, waiting for the agent to take it: no buttons until it does.
+        cards.push(
+            ActionCard::new(
+                theme,
+                ("perm", ix),
+                Tone::Info,
+                "Run cargo build --release?",
+            )
+            .permission()
+            .body("Answer sent…")
             .into_any_element(),
         );
     }
@@ -503,14 +619,17 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
                 (k == 2).then_some(0),
             ));
         }
-        block = block.child(TextInput::new(theme, ("question-text", ix), &panel.answer));
+        block = block.child(
+            TextInput::new(theme, ("question-text", ix), &panel.answer).height(px(ANSWER_FIELD_H)),
+        );
         cards.push(
             ActionCard::new(
                 theme,
                 ("question", ix),
-                Tone::Warning,
+                Tone::Info,
                 "The agent has a question",
             )
+            .question()
             .child(block)
             .action(Button::new(theme, ("q-cancel", ix)).label("Cancel"))
             .action(
@@ -525,14 +644,15 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
         let queue = div()
             .border_t_1()
             .border_color(colors.line)
-            .child(TrayHeader::new(theme, ("agent-queue", ix), Icon::Layers, "Queued").count("2"))
+            .child(TrayHeader::new(theme, ("agent-queue", ix), Icon::Clock, "Queued").count("2"))
             .child(
                 TrayRow::new(
                     theme,
                     ("queue-item", ix * 10),
-                    "Then render a 10 s draft of the intro",
+                    "Then render a 10 s draft of the intro and compare it with the last render",
                 )
-                .mark(icon(Icon::ArrowUp, STATUS_MARK, colors.text_3))
+                .single_line()
+                .mark(icon(Icon::Clock, STATUS_MARK, colors.text_3))
                 .note("Intro", colors.text_3),
             )
             .child(
@@ -541,7 +661,8 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
                     ("queue-item", ix * 10 + 1),
                     "Retime the outro to the new music",
                 )
-                .mark(icon(Icon::ArrowUp, STATUS_MARK, colors.text_3))
+                .single_line()
+                .mark(icon(Icon::Clock, STATUS_MARK, colors.text_3))
                 .note("Outro · will be refused", colors.warning),
             );
         tray_frame(theme).child(panel.todo.clone()).child(queue)
@@ -575,37 +696,30 @@ fn chat(theme: &Theme, state: &str, ix: usize, panel: &Panel) -> AnyElement {
 
 /// The new-chat state: what to do, and suggestions to start from.
 fn new_chat(theme: &Theme) -> AnyElement {
-    div()
-        .flex_none()
-        .flex()
-        .flex_col()
-        .items_center()
-        .gap(px(METRICS.space_3))
-        .pt(px(METRICS.space_8))
-        .child(panel_empty(
-            theme,
-            TextStyle::Title,
-            "What should we change?",
-            "Describe an edit; the agent changes the project and you review it.",
-        ))
-        .child(
-            div()
-                .flex()
-                .flex_wrap()
-                .justify_center()
-                .gap(px(METRICS.space_2))
-                .children(
-                    [
-                        "Add a title card",
-                        "Slow the intro fade",
-                        "Match the outro to the music",
-                    ]
-                    .iter()
-                    .enumerate()
-                    .map(|(k, text)| Chip::new(theme, ("suggestion", k), *text)),
-                ),
-        )
-        .into_any_element()
+    panel_home(
+        theme,
+        "What should we change?",
+        "Describe an edit; the agent changes the project and you review it.",
+    )
+    .flex_none()
+    .child(
+        div()
+            .flex()
+            .flex_wrap()
+            .justify_center()
+            .gap(px(METRICS.space_2))
+            .children(
+                [
+                    "Add a title card",
+                    "Slow the intro fade",
+                    "Match the outro to the music",
+                ]
+                .iter()
+                .enumerate()
+                .map(|(k, text)| Chip::new(theme, ("suggestion", k), *text)),
+            ),
+    )
+    .into_any_element()
 }
 
 fn tool(
@@ -627,6 +741,24 @@ fn tool(
     .into_any_element()
 }
 
+/// A pasted reference frame for the image chip: a small PNG made here, so the gallery needs
+/// no image file.
+fn reference_image() -> gpui::Image {
+    let frame = image::RgbaImage::from_fn(160, 90, |x, y| {
+        let title = (40..120).contains(&x) && (36..54).contains(&y);
+        if title {
+            image::Rgba([250, 250, 250, 255])
+        } else {
+            image::Rgba([40 + (x / 2) as u8, 60 + y as u8, 140, 255])
+        }
+    });
+    let mut png = Vec::new();
+    frame
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .expect("a PNG encodes into memory");
+    gpui::Image::from_bytes(gpui::ImageFormat::Png, png)
+}
+
 fn agent_row(id: u64, text: &str) -> Arc<Row> {
     Arc::new(Row {
         id: RowId(id),
@@ -639,6 +771,23 @@ fn agent_row(id: u64, text: &str) -> Arc<Row> {
         },
     })
 }
+
+fn thought_row(id: u64, text: &str) -> Arc<Row> {
+    Arc::new(Row {
+        id: RowId(id),
+        task: None,
+        at_unix: 0,
+        kind: RowKind::Thought {
+            text: text.to_owned(),
+            turn: 1,
+            streaming: false,
+        },
+    })
+}
+
+const REASONING: &str = "The title is static markup, so only the wrapper scales.\n\
+Scale it to 1.4 with the spring the intro already uses, then stretch the fade to 0.6 s \
+so the two settle together.";
 
 const CODE_ANSWER: &str = r##"The title grows with a spring and the fade runs on its own timeline:
 

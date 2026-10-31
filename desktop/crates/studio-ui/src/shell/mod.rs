@@ -3,6 +3,7 @@ mod engine_events;
 mod export_panel;
 mod fixture;
 mod header;
+mod home;
 mod keymap;
 mod layout;
 mod left_column;
@@ -15,7 +16,7 @@ mod props_edits;
 mod review;
 mod sections;
 mod settings;
-mod settings_window;
+mod settings_dialog;
 mod status_strip;
 mod timeline_edits;
 mod transport;
@@ -108,6 +109,8 @@ pub struct StudioShell {
     /// What waits in the agent panel, for the Agent tab's dot.
     agent_attention: Attention,
     recents_open: bool,
+    /// The Project and Assets tabs' folder trees, per project, for this launch.
+    explorers: left_column::Explorers,
     status_open: bool,
     preview: Option<Arc<PreviewCoordinator>>,
     preview_session: Option<studio_engine::OpenSession>,
@@ -184,8 +187,10 @@ pub struct StudioShell {
     section_bounds: HashMap<&'static str, [f32; 4]>,
     /// The window's viewport, measured each render.
     viewport: [f32; 2],
-    /// The settings window, while it is open.
-    settings_window: Option<gpui::WindowHandle<settings_window::SettingsWindow>>,
+    /// Whether the settings dialog is open; the main window's render builds the dialog.
+    settings_open: bool,
+    /// The settings dialog over the main window, while it is open.
+    settings_dialog: Option<gpui::Entity<settings_dialog::SettingsDialog>>,
     settings_page: settings::SettingsPage,
     settings_writer: Arc<settings::SettingsWriter>,
     /// The first-run setup, while it shows in place of the workspace.
@@ -209,6 +214,8 @@ pub struct StudioShell {
     /// The Create panel is open with this template chosen.
     create_choice: Option<studio_project::ProjectTemplate>,
     overflow_open: bool,
+    /// Which menu `overflow_open` and `overflow_menu` belong to: the transport's or Export's.
+    overflow_kind: overflow::OverflowMenu,
     overflow_menu: MenuState,
     /// Where the overflow trigger was last painted; the menu opens against it.
     overflow_anchor: std::rc::Rc<std::cell::Cell<Option<gpui::Bounds<gpui::Pixels>>>>,
@@ -222,6 +229,8 @@ pub struct StudioShell {
     after_present: Option<present::AfterPresent>,
     /// The window's section views, created on the first render.
     sections: Option<sections::Sections>,
+    /// The start screen's search field and layout.
+    home: home::Home,
     /// Set while the accepted source is ahead of what the preview shows: a handoff that
     /// failed (or has not finished) keeps the old preview playing under this label.
     awaiting_preview: Option<String>,
@@ -495,6 +504,7 @@ impl StudioShell {
             sidebar_tab: SidebarTab::Agent,
             agent_attention: Attention::default(),
             recents_open: true,
+            explorers: left_column::Explorers::default(),
             status_open: false,
             preview: None,
             preview_session: None,
@@ -569,7 +579,8 @@ impl StudioShell {
             agent_grip_bounds: None,
             section_bounds: HashMap::new(),
             viewport: [0., 0.],
-            settings_window: None,
+            settings_open: false,
+            settings_dialog: None,
             settings_page: settings::SettingsPage::default(),
             settings_writer: Arc::default(),
             onboarding: None,
@@ -583,6 +594,7 @@ impl StudioShell {
             canvas_toast: Default::default(),
             create_choice: None,
             overflow_open: false,
+            overflow_kind: overflow::OverflowMenu::Transport,
             overflow_menu: MenuState::new(gpui::Point::default(), &[]),
             overflow_anchor: Default::default(),
             overflow_focus: cx.focus_handle(),
@@ -591,6 +603,7 @@ impl StudioShell {
             fullscreen: present::Fullscreen::default(),
             after_present: None,
             sections: None,
+            home: home::Home::new(window, cx),
         };
         shell.dispatch(Command::Initialize, cx);
         shell.audio.set_wake(move || {

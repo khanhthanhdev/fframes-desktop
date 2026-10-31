@@ -1,6 +1,7 @@
 //! The props, presets and shell capture pages (`--page props|presets|shell`): the Props tab's
 //! `PropsPanel` and the Style tab's `PresetPanel` fed fixture snapshots, and the window's
-//! chrome (header, notices, sidebar tab rail, transport, status bar) drawn by `StudioShell`.
+//! chrome (header, notices, sidebar tab rail, transport, status bar) followed by the Project,
+//! Assets and Style tabs at the sidebar's narrowest and widest, drawn by `StudioShell`.
 
 use std::collections::BTreeMap;
 
@@ -8,7 +9,8 @@ use fframes_studio_protocol::{
     EditorObjectIdentity, PropField, PropKind, PropsDocument, PropsInfo, PropsSchema,
 };
 use gpui::{
-    AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement, Styled, Window, px,
+    AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement, Styled, Window, div,
+    px,
 };
 use serde_json::json;
 use studio_engine::PresetAction;
@@ -25,13 +27,16 @@ use studio_ui::props_panel::PropsPanel;
 use crate::Gallery;
 use crate::capture::Page;
 
-/// The width of the sidebar the panels are drawn in.
+/// The width the presets panel is drawn in.
 const PANEL_W: f32 = 340.;
+
+/// The height the props panels scroll inside, as the sidebar gives them.
+const PROPS_H: f32 = 600.;
 
 /// The panels, made on first use, and the page, state and theme they were last set up for.
 #[derive(Default)]
 pub struct PanelFixtures {
-    props: Option<Entity<PropsPanel>>,
+    props: Option<[Entity<PropsPanel>; 2]>,
     presets: Option<Entity<PresetPanel>>,
     shown: Option<(Page, &'static str, Theme)>,
 }
@@ -44,52 +49,79 @@ impl Gallery {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
-        let page = self
-            .page
-            .filter(|page| matches!(page, Page::Props | Page::Presets | Page::Shell))?;
+        let page = self.page.filter(|page| {
+            matches!(page, Page::Props | Page::Presets | Page::Shell | Page::Home)
+        })?;
         let state = self.phase7.state;
         let index = page.states().iter().position(|known| *known == state)?;
+        if page == Page::Home {
+            let shell = self.fixture_shell(window, cx);
+            let theme = *theme;
+            return Some(shell.update(cx, |shell, cx| shell.render_home_fixture(index, theme, cx)));
+        }
         if page == Page::Shell {
             let shell = self.fixture_shell(window, cx);
             let theme = *theme;
+            // The chrome, then the Project, Assets and Style tabs (which have no page of their
+            // own) in the same project state.
+            let (chrome, drawer) = shell.update(cx, |shell, cx| {
+                let chrome = shell.render_shell_fixture(index, theme, cx);
+                (chrome, shell.render_drawer_fixture(theme, cx))
+            });
             return Some(
-                shell.update(cx, |shell, cx| shell.render_shell_fixture(index, theme, cx)),
+                div()
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .child(chrome)
+                    .child(drawer)
+                    .into_any_element(),
             );
         }
         let fixtures = &mut self.panels;
         let changed = fixtures.shown != Some((page, state, *theme));
         fixtures.shown = Some((page, state, *theme));
-        let panel = if page == Page::Props {
-            let panel = fixtures
+        if page == Page::Props {
+            // The Props tab at the sidebar's narrowest and widest, one panel each.
+            let panels = fixtures
                 .props
-                .get_or_insert_with(|| cx.new(|cx| PropsPanel::new(window, cx)))
+                .get_or_insert_with(|| [(); 2].map(|_| cx.new(|cx| PropsPanel::new(window, cx))))
                 .clone();
-            if changed {
-                set_up_props(&panel, state, cx);
+            let mut row = div().flex().items_start().gap(px(METRICS.space_4));
+            for (panel, width) in panels
+                .into_iter()
+                .zip([METRICS.layout.sidebar_min_w, METRICS.layout.sidebar_max_w])
+            {
+                if changed {
+                    set_up_props(&panel, state, cx);
+                }
+                row = row.child(
+                    Card::panel(theme)
+                        .bg(theme.colors.sidebar)
+                        .w(px(width))
+                        .h(px(PROPS_H))
+                        .flex()
+                        .flex_col()
+                        .p(px(METRICS.space_4))
+                        .child(panel),
+                );
             }
-            panel.into_any_element()
-        } else {
-            let panel = fixtures
-                .presets
-                .get_or_insert_with(|| cx.new(|cx| PresetPanel::new(window, cx)))
-                .clone();
-            if changed {
-                set_up_presets(&panel, state, cx);
-            }
-            panel.into_any_element()
-        };
+            return Some(row.into_any_element());
+        }
+        let panel = fixtures
+            .presets
+            .get_or_insert_with(|| cx.new(|cx| PresetPanel::new(window, cx)))
+            .clone();
+        if changed {
+            set_up_presets(&panel, state, cx);
+        }
+        // The presets panel is as tall as its content.
         let card = Card::raised(theme)
             .w(px(PANEL_W))
             .flex()
             .flex_col()
+            .flex_none()
             .p(px(METRICS.space_4));
-        // The props panel scrolls inside the height it is given; the presets panel is as tall as
-        // its content.
-        let card = if page == Page::Props {
-            card.h(px(600.))
-        } else {
-            card.flex_none()
-        };
         Some(card.child(panel).into_any_element())
     }
 }

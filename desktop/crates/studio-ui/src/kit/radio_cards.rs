@@ -18,6 +18,7 @@ use gpui::{
 
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
+use super::badge::{Tone, tone_surface};
 use super::interact::{States, bounds_probe, dim_disabled, focusable};
 
 #[derive(Debug, Clone)]
@@ -58,13 +59,14 @@ pub struct RadioCards {
     on_option_bounds: Option<OptionBoundsHandler>,
 }
 
-/// The radio dot and the check inside it.
+/// The radio dot and the check inside it: Oleafly's selected badge, a 16 px circle around a
+/// 10 px check.
 const DOT: f32 = 16.;
-const CHECK: f32 = 12.;
+const CHECK: f32 = 10.;
 
 impl RadioCards {
     /// Cards behind a `line` hairline; the selected one is outlined in `accent` on
-    /// `ctl_active`, its dot filled with the accent.
+    /// the info wash, its dot filled with the accent.
     pub fn new(
         theme: &Theme,
         id: impl Into<ElementId>,
@@ -142,7 +144,7 @@ impl RenderOnce for RadioCards {
                 .rounded(px(METRICS.radius.segment))
                 .border_1()
                 .border_color(if checked { colors.accent } else { colors.line })
-                .when(checked, |this| this.bg(colors.info_bg))
+                .when(checked, |this| this.bg(tone_surface(&theme, Tone::Info)))
                 .when(!checked && !item.disabled, |this| {
                     this.cursor_pointer()
                         .hover(move |style| style.bg(states.hover))

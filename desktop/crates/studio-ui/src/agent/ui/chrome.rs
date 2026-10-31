@@ -8,6 +8,7 @@ use gpui::{
 use studio_theme::{METRICS, Shadow, TextStyle, Theme, shadow_for, text_style};
 
 use super::ROW_H;
+use super::metrics::{header, home, status};
 use crate::kit::{Handler, Spinner, StatusDot, Tone, focusable, on_activate, selectable};
 
 /// A centred empty state: `title` in its style and `text_1`, one `Small` line in `text_2`,
@@ -37,8 +38,44 @@ pub fn panel_empty(
         )
 }
 
-/// The header row: the tabs on the left, the panel's icon buttons on the right, a `line`
-/// under it.
+/// The empty transcript's home: a centred column with a `Display` heading and one `Small` line
+/// in `text_2` under it; a caller adds suggestions or an action as further children, 20 px apart.
+pub fn panel_home(
+    theme: &Theme,
+    title: impl Into<SharedString>,
+    body: impl Into<SharedString>,
+) -> Div {
+    let colors = theme.colors;
+    div()
+        .w_full()
+        .flex()
+        .flex_col()
+        .items_center()
+        .gap(px(home::GAP))
+        .py(px(home::PAD_Y))
+        .child(
+            div()
+                .w_full()
+                .max_w(px(home::MAX_W))
+                .flex()
+                .flex_col()
+                .gap(px(home::TITLE_GAP))
+                .text_center()
+                .child(
+                    text_style(div(), TextStyle::Display)
+                        .text_color(colors.text_1)
+                        .child(selectable(title.into())),
+                )
+                .child(
+                    text_style(div(), TextStyle::Small)
+                        .text_color(colors.text_2)
+                        .child(selectable(body.into())),
+                ),
+        )
+}
+
+/// The 36 px header row: the tabs on the left, the panel's 28 px icon buttons on the right,
+/// a `line` under it.
 #[derive(IntoElement)]
 pub struct PanelHeader {
     theme: Theme,
@@ -64,21 +101,22 @@ impl PanelHeader {
 impl RenderOnce for PanelHeader {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         div()
-            .h(px(METRICS.layout.toolbar_h))
+            .h(px(header::H))
             .flex_none()
             .flex()
             .items_center()
             .justify_between()
-            .gap(px(METRICS.space_1))
-            .px(px(METRICS.space_3))
+            .gap(px(header::GAP))
+            .px(px(header::PAD_X))
             .border_b_1()
             .border_color(self.theme.colors.line)
-            .child(self.tabs)
+            .child(div().min_w_0().child(self.tabs))
             .child(
                 div()
+                    .flex_none()
                     .flex()
                     .items_center()
-                    .gap(px(METRICS.space_1))
+                    .gap(px(header::ACTION_GAP))
                     .children(self.actions),
             )
     }
@@ -117,7 +155,7 @@ impl RenderOnce for StatusLine {
             .min_h(px(ROW_H))
             .flex()
             .items_center()
-            .gap(px(METRICS.space_2))
+            .gap(px(status::GAP))
             .child(StatusDot::new(self.tone))
             .child(
                 text_style(div().flex_1().min_w_0().truncate(), TextStyle::Small)

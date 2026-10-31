@@ -16,9 +16,9 @@ use studio_engine::presets::{
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use crate::kit::{
-    Badge, Button, CollapsibleSection, Emphasis, EmptyState, FormField, Icon, IconButton,
-    IconButtonSize, List, ListRow, Notice, PanelSection, TextInput, TextInputEvent, TextInputState,
-    Tone, selectable,
+    Badge, Button, ButtonSize, CollapsibleSection, Emphasis, EmptyState, FormField, Icon,
+    IconButton, IconButtonSize, List, ListRow, Notice, PanelSection, TextInput, TextInputEvent,
+    TextInputState, Tone, selectable,
 };
 
 // ---- GPUI panel ------------------------------------------------------------------------
@@ -201,9 +201,12 @@ impl PresetPanel {
     fn preset_row(&self, entry: &EntryView, selected: bool, cx: &mut Context<Self>) -> ListRow {
         let entity = cx.entity();
         let key = entry.key.clone();
+        let origin = if entry.bundled { "Bundled" } else { "Imported" };
         let mut row = ListRow::new(&self.theme, SharedString::from(format!("preset-{key}")))
+            .icon(Icon::Palette)
             .title(format!("{} {}", entry.name, entry.version))
-            .meta(if entry.bundled { "bundled" } else { "imported" })
+            .meta(format!("{origin} · {}", entry.description))
+            .tooltip(format!("{} — {}", entry.id, entry.description))
             .selected(selected)
             .on_click(move |_, cx| {
                 entity.update(cx, |panel, cx| {
@@ -282,11 +285,14 @@ impl PresetPanel {
         let mut section = PanelSection::new(&theme, "Style presets")
             .description("Presets style the video only; Studio's own interface never changes.");
         if let PresetMutation::Disabled(reason) = &view.mutation {
-            section = section.child(Notice::new(
-                "preset-disabled",
-                Tone::Warning,
-                format!("Preset changes are disabled: {reason}"),
-            ));
+            section = section.child(
+                Notice::new(
+                    "preset-disabled",
+                    Tone::Warning,
+                    "Preset changes are disabled",
+                )
+                .body(reason.clone()),
+            );
         }
         let applied = match &view.applied {
             Some(applied) => FormField::row(
@@ -317,74 +323,76 @@ impl PresetPanel {
         section = section.child(List::new().children(rows).empty(
             EmptyState::new(&theme, "No presets").body("Import a preset folder to add one."),
         ));
-        for (index, skipped) in view.skipped.iter().enumerate() {
-            section = section.child(Notice::new(
-                ElementId::from(("preset-skipped", index)),
-                Tone::Warning,
-                format!("Skipped: {skipped}"),
-            ));
-        }
+        // The skipped folders follow the actions, which belong to the list's selection.
+        let skipped = view
+            .skipped
+            .iter()
+            .enumerate()
+            .map(|(index, skipped)| {
+                Notice::new(
+                    ElementId::from(("preset-skipped", index)),
+                    Tone::Warning,
+                    format!("Skipped: {skipped}"),
+                )
+            })
+            .collect::<Vec<_>>();
         let selected = self
             .selected
             .as_ref()
             .and_then(|key| view.entries.iter().find(|e| &e.key == key))
             .cloned();
-        if let Some(entry) = &selected {
-            section = section.child(Self::small(
-                format!("{} — {}", entry.id, entry.description),
-                palette.text_2,
-            ));
-        }
         let key = selected.as_ref().map(|e| e.key.clone());
         let can_select = enabled && key.is_some();
         let reapply = enabled && selected.as_ref().is_some_and(|e| e.same_id_applied);
         let reset = enabled && view.applied.is_some() && key.is_some();
         let (apply_key, reapply_key, reset_key) = (key.clone(), key.clone(), key);
-        section.child(
-            Self::button_row()
-                .child(self.action_button(
-                    "preset-apply",
-                    "Apply",
-                    can_select,
-                    Emphasis::Primary,
-                    Some(Icon::Check),
-                    cx,
-                    move |this, cx| {
-                        if let Some(key) = apply_key.clone() {
-                            this.run(PresetCommand::Apply { key }, cx);
-                        }
-                    },
-                ))
-                .child(
-                    self.action_button(
-                        "preset-reapply",
-                        "Reapply",
-                        reapply,
-                        Emphasis::Neutral,
-                        Some(Icon::RefreshCw),
+        section
+            .child(
+                Self::button_row()
+                    .child(self.action_button(
+                        "preset-apply",
+                        "Apply",
+                        can_select,
+                        Emphasis::Primary,
+                        Some(Icon::Check),
                         cx,
                         move |this, cx| {
-                            if let Some(key) = reapply_key.clone() {
-                                this.run(PresetCommand::Reapply { key }, cx);
+                            if let Some(key) = apply_key.clone() {
+                                this.run(PresetCommand::Apply { key }, cx);
                             }
                         },
+                    ))
+                    .child(
+                        self.action_button(
+                            "preset-reapply",
+                            "Reapply",
+                            reapply,
+                            Emphasis::Neutral,
+                            Some(Icon::RefreshCw),
+                            cx,
+                            move |this, cx| {
+                                if let Some(key) = reapply_key.clone() {
+                                    this.run(PresetCommand::Reapply { key }, cx);
+                                }
+                            },
+                        )
+                        .tooltip("Reapply, keeping the project overrides"),
                     )
-                    .tooltip("Reapply, keeping the project overrides"),
-                )
-                .child(self.action_button(
-                    "preset-reset",
-                    "Reset overrides",
-                    reset,
-                    Emphasis::Neutral,
-                    Some(Icon::History),
-                    cx,
-                    move |this, cx| {
-                        if let Some(key) = reset_key.clone() {
-                            this.run(PresetCommand::Reset { key }, cx);
-                        }
-                    },
-                )),
-        )
+                    .child(self.action_button(
+                        "preset-reset",
+                        "Reset overrides",
+                        reset,
+                        Emphasis::Neutral,
+                        Some(Icon::History),
+                        cx,
+                        move |this, cx| {
+                            if let Some(key) = reset_key.clone() {
+                                this.run(PresetCommand::Reset { key }, cx);
+                            }
+                        },
+                    )),
+            )
+            .children(skipped)
     }
 
     /// Project overrides: the user's layer, kept across Reapply and reopen.
@@ -411,6 +419,7 @@ impl PresetPanel {
                 ListRow::new(&theme, SharedString::from(format!("override-{token}")))
                     .title(token.clone())
                     .meta(format!("{layer} · {value}"))
+                    .tooltip(format!("{token} = {value} ({layer})"))
                     .trailing(
                         IconButton::new(&theme, format!("clear-{token}"), Icon::X.path())
                             .size(IconButtonSize::Sm)
@@ -444,9 +453,10 @@ impl PresetPanel {
         }
         let token = self.field("override-token", self.token.clone(), cx);
         let value = self.field("override-value", self.value.clone(), cx);
+        // Stacked, so the fields keep the whole width of a narrow sidebar.
         section
-            .child(FormField::row(&theme, "Token", token))
-            .child(FormField::row(&theme, "Value", value))
+            .child(FormField::stacked(&theme, "Token", token))
+            .child(FormField::stacked(&theme, "Value", value))
             .child(Self::button_row().child(self.action_button(
                 "override-set",
                 "Set override",
@@ -534,37 +544,46 @@ impl Render for PresetPanel {
         let can_export = export_key.is_some();
         let files = PanelSection::new(&theme, "Import and export").child(
             Self::button_row()
-                .child(self.action_button(
-                    "preset-import",
-                    "Import preset folder…",
-                    true,
-                    Emphasis::Neutral,
-                    Some(Icon::Upload),
-                    cx,
-                    |_, cx| cx.emit(PresetEvent::Pick(PresetPick::ImportFolder)),
-                ))
-                .child(self.action_button(
-                    "preset-export",
-                    "Export selected…",
-                    can_export,
-                    Emphasis::Neutral,
-                    Some(Icon::Download),
-                    cx,
-                    move |_, cx| {
-                        if let Some(key) = export_key.clone() {
-                            cx.emit(PresetEvent::Pick(PresetPick::Export { key }));
-                        }
-                    },
-                ))
-                .child(self.action_button(
-                    "preset-css",
-                    "CSS import report…",
-                    true,
-                    Emphasis::Neutral,
-                    Some(Icon::File),
-                    cx,
-                    |_, cx| cx.emit(PresetEvent::Pick(PresetPick::ImportCss)),
-                )),
+                .child(
+                    self.action_button(
+                        "preset-import",
+                        "Import preset folder…",
+                        true,
+                        Emphasis::Neutral,
+                        Some(Icon::Upload),
+                        cx,
+                        |_, cx| cx.emit(PresetEvent::Pick(PresetPick::ImportFolder)),
+                    )
+                    .size(ButtonSize::Sm),
+                )
+                .child(
+                    self.action_button(
+                        "preset-export",
+                        "Export selected…",
+                        can_export,
+                        Emphasis::Neutral,
+                        Some(Icon::Download),
+                        cx,
+                        move |_, cx| {
+                            if let Some(key) = export_key.clone() {
+                                cx.emit(PresetEvent::Pick(PresetPick::Export { key }));
+                            }
+                        },
+                    )
+                    .size(ButtonSize::Sm),
+                )
+                .child(
+                    self.action_button(
+                        "preset-css",
+                        "CSS import report…",
+                        true,
+                        Emphasis::Neutral,
+                        Some(Icon::File),
+                        cx,
+                        |_, cx| cx.emit(PresetEvent::Pick(PresetPick::ImportCss)),
+                    )
+                    .size(ButtonSize::Sm),
+                ),
         );
         let mut root = root
             .child(self.presets_section(&view, enabled, cx))

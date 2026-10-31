@@ -28,13 +28,8 @@ pub fn shadow_for(appearance: Appearance, kind: Shadow) -> SmallVec<[BoxShadow; 
     let dark = appearance == Appearance::Dark;
     let pick = |light: f32, dark_value: f32| if dark { dark_value } else { light };
     match kind {
-        Shadow::Card => smallvec![black(pick(0.04, 0.30), 1., 2., 0.)],
-        Shadow::Pop => smallvec![black(
-            pick(0.25, 0.60),
-            pick(12., 16.),
-            pick(32., 40.),
-            -12.
-        )],
+        Shadow::Card => SmallVec::new(),
+        Shadow::Pop => smallvec![black(pick(0.15, 0.30), 4., 12., -2.)],
         Shadow::Preview => smallvec![black(0.35, 12., 32., -8.)],
         // The dark pill is a wash on the trough (`segment_selected`), with no lift.
         Shadow::RaisedPill if dark => SmallVec::new(),
@@ -53,20 +48,18 @@ mod tests {
     fn shadows_follow_the_spec_table() {
         let px = |value: Pixels| f32::from(value);
         let card = shadow_for(Appearance::Dark, Shadow::Card);
-        assert_eq!(card.len(), 1);
-        assert_eq!(card[0].color.a, 0.30);
-        assert_eq!(px(card[0].blur_radius), 2.);
+        assert!(card.is_empty());
         let pop_light = shadow_for(Appearance::Light, Shadow::Pop);
         let pop_dark = shadow_for(Appearance::Dark, Shadow::Pop);
         assert_eq!(
             (px(pop_light[0].offset.y), px(pop_light[0].blur_radius)),
-            (12., 32.)
+            (4., 12.)
         );
         assert_eq!(
             (px(pop_dark[0].offset.y), px(pop_dark[0].blur_radius)),
-            (16., 40.)
+            (4., 12.)
         );
-        assert_eq!(px(pop_dark[0].spread_radius), -12.);
+        assert_eq!(px(pop_dark[0].spread_radius), -2.);
         assert_eq!(shadow_for(Appearance::Light, Shadow::RaisedPill).len(), 2);
         assert!(shadow_for(Appearance::Dark, Shadow::RaisedPill).is_empty());
     }

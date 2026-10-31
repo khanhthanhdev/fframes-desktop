@@ -1,6 +1,7 @@
 //! `Chip`: a compact token for context, attached files and suggestions (the agent composer).
 //!
-//! `chip_h` (28) high with `item` corners on a `ctl` fill: an optional 14 px icon, a `Label`
+//! `chip_h` (28) high with `control` (8 px) corners on a `ctl` fill, like Oleafly's attachment
+//! chips: an optional 14 px icon, a `Label`
 //! that truncates at the chip's maximum width, and with [`Chip::removable`] a 16 px remove
 //! button at the end. The button's space is always reserved; it shows while the chip is hovered
 //! or the button has keyboard focus. [`Chip::tone`] colours the icon only.
@@ -125,7 +126,7 @@ impl RenderOnce for Chip {
             .h(px(METRICS.size.chip_h))
             .max_w(px(CHIP_MAX_W))
             .px(px(METRICS.space_2))
-            .rounded(px(METRICS.radius.item))
+            .rounded(px(METRICS.radius.control))
             .bg(colors.ctl)
             .children(
                 glyph.map(|glyph| icon(glyph, METRICS.size.icon_sm, chip_icon_color(&theme, tone))),

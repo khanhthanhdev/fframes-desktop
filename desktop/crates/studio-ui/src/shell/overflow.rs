@@ -1,14 +1,27 @@
-//! The transport bar's overflow menu: the project and agent actions that do not fit on the bar.
+//! The shell's action menus: the transport bar's overflow menu (the project and agent
+//! actions that do not fit on the bar) and the header's Export menu (the export choices
+//! behind the Export split button's chevron). One is open at a time; they share the open
+//! flag, the menu state and the focus handle.
 
-use gpui::{Context, IntoElement, Window};
+use gpui::{Bounds, Context, IntoElement, Pixels, Window};
 use studio_engine::engine::backend::Command;
 
+use super::settings::SettingsPage;
 use super::{Picker, StudioShell};
+use crate::export::settings::ExportTarget;
 use crate::kit::{Icon, IconButton, IconButtonSize, Menu, MenuItem, MenuState};
 
+/// Which menu is open.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum OverflowMenu {
+    /// The transport bar's overflow menu.
+    Transport,
+    /// The header's Export menu.
+    Export,
+}
+
 impl StudioShell {
-    /// The overflow menu's rows: the action ids identify them, unavailable ones are
-    /// disabled.
+    /// The open menu's rows: the action ids identify them, unavailable ones are disabled.
     fn overflow_items(&self) -> Vec<MenuItem> {
         let actions = self.current_overflow_actions();
         actions
@@ -22,14 +35,24 @@ impl StudioShell {
             .collect()
     }
 
-    /// Actions behind the overflow button, in menu order.
+    /// Actions in the open menu, in menu order.
     fn current_overflow_actions(&self) -> Vec<(OverflowAction, bool)> {
         let project = self.presentation.project.as_ref();
-        overflow_actions(
-            !self.busy,
-            project.is_some(),
-            project.is_some_and(|p| p.draft.is_some()),
-        )
+        match self.overflow_kind {
+            OverflowMenu::Transport => overflow_actions(
+                !self.busy,
+                project.is_some(),
+                project.is_some_and(|p| p.draft.is_some()),
+            ),
+            // The rules of the export panel's `can_export`, plus an idle shell like the
+            // header's Export button.
+            OverflowMenu::Export => export_actions(
+                !self.busy
+                    && project.is_some()
+                    && self.presentation.session.is_some()
+                    && self.presentation.agent_sdk.is_some(),
+            ),
+        }
     }
 
     pub(super) fn overflow_trigger(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
@@ -46,16 +69,43 @@ impl StudioShell {
                     if shell.overflow_open {
                         shell.close_overflow(window, cx);
                     } else {
-                        shell.open_overflow(window, cx);
+                        let anchor = shell.overflow_anchor.get();
+                        shell.open_menu(OverflowMenu::Transport, anchor, window, cx);
                     }
                 });
             })
             .into_any_element()
     }
 
-    fn open_overflow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    /// Opens or closes the Export menu against `trigger`, the Export split button.
+    pub(super) fn toggle_export_menu(
+        &mut self,
+        trigger: Bounds<Pixels>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.overflow_open {
+            self.close_overflow(window, cx);
+        } else {
+            self.open_menu(OverflowMenu::Export, Some(trigger), window, cx);
+        }
+    }
+
+    /// Whether the Export menu is open, for its trigger's pressed look.
+    pub(super) fn export_menu_open(&self) -> bool {
+        self.overflow_open && self.overflow_kind == OverflowMenu::Export
+    }
+
+    fn open_menu(
+        &mut self,
+        kind: OverflowMenu,
+        trigger: Option<Bounds<Pixels>>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.overflow_kind = kind;
         let items = self.overflow_items();
-        self.overflow_menu = match self.overflow_anchor.get() {
+        self.overflow_menu = match trigger {
             Some(trigger) => MenuState::anchored(trigger, &items),
             None => MenuState::new(gpui::Point::default(), &items),
         };
@@ -99,37 +149,60 @@ impl StudioShell {
                     cx.reveal_path(&project.checkpoint);
                 }
             }
+            OverflowAction::ExportVideo | OverflowAction::ExportDeck => {
+                // The panel's own rule: the target stays while an export runs.
+                if self.export_cancelled.is_none() {
+                    self.export_panel.target = if action == OverflowAction::ExportDeck {
+                        ExportTarget::Deck
+                    } else {
+                        ExportTarget::Video
+                    };
+                }
+                self.open_export(cx);
+            }
+            OverflowAction::ExportSettings => self.open_settings_page(SettingsPage::Export, cx),
         }
     }
 
+    /// The transport bar's overflow menu while it is open; the player section hosts it.
     pub(super) fn render_overflow_menu(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
-        if !self.overflow_open {
+        self.render_menu(OverflowMenu::Transport, "overflow-menu", cx)
+    }
+
+    /// The Export menu while it is open; the header hosts it, so it shows over the export
+    /// and create panels too.
+    pub(super) fn render_export_menu(&self, cx: &mut Context<Self>) -> Option<gpui::AnyElement> {
+        self.render_menu(OverflowMenu::Export, "export-menu", cx)
+    }
+
+    fn render_menu(
+        &self,
+        kind: OverflowMenu,
+        id: &'static str,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.overflow_open || self.overflow_kind != kind {
             return None;
         }
         let select = cx.entity();
         let highlight = cx.entity();
         let dismiss = cx.entity();
         Some(
-            Menu::new(
-                &self.theme,
-                "overflow-menu",
-                self.overflow_items(),
-                &self.overflow_menu,
-            )
-            .focus(&self.overflow_focus)
-            .on_highlight(move |index, _, cx| {
-                highlight.update(cx, |shell, cx| {
-                    shell.overflow_menu.set_highlighted(*index);
-                    cx.notify();
-                });
-            })
-            .on_select(move |index, window, cx| {
-                select.update(cx, |shell, cx| shell.run_overflow(*index, window, cx));
-            })
-            .on_dismiss(move |window, cx| {
-                dismiss.update(cx, |shell, cx| shell.close_overflow(window, cx));
-            })
-            .into_any_element(),
+            Menu::new(&self.theme, id, self.overflow_items(), &self.overflow_menu)
+                .focus(&self.overflow_focus)
+                .on_highlight(move |index, _, cx| {
+                    highlight.update(cx, |shell, cx| {
+                        shell.overflow_menu.set_highlighted(*index);
+                        cx.notify();
+                    });
+                })
+                .on_select(move |index, window, cx| {
+                    select.update(cx, |shell, cx| shell.run_overflow(*index, window, cx));
+                })
+                .on_dismiss(move |window, cx| {
+                    dismiss.update(cx, |shell, cx| shell.close_overflow(window, cx));
+                })
+                .into_any_element(),
         )
     }
 }
@@ -141,10 +214,17 @@ enum OverflowAction {
     Restore,
     RevealDraft,
     RevealCheckpoint,
+    /// The export panel with a video file chosen.
+    ExportVideo,
+    /// The export panel with a slide deck chosen.
+    ExportDeck,
+    /// Settings → Export, the defaults every export starts from.
+    ExportSettings,
 }
 
 impl OverflowAction {
-    /// The id the action's button had before it moved into the menu.
+    /// The row's id: for the transport's rows, the id the action's button had before it
+    /// moved into the menu.
     fn id(self) -> &'static str {
         match self {
             Self::Refresh => "refresh",
@@ -152,6 +232,9 @@ impl OverflowAction {
             Self::Restore => "restore",
             Self::RevealDraft => "draft",
             Self::RevealCheckpoint => "reveal-checkpoint",
+            Self::ExportVideo => "export-menu-video",
+            Self::ExportDeck => "export-menu-deck",
+            Self::ExportSettings => "export-menu-settings",
         }
     }
 
@@ -162,8 +245,22 @@ impl OverflowAction {
             Self::Restore => "Restore as copy…",
             Self::RevealDraft => "Reveal retained draft",
             Self::RevealCheckpoint => "Reveal checkpoint",
+            Self::ExportVideo => "Export video…",
+            Self::ExportDeck => "Export slide deck (HTML)…",
+            Self::ExportSettings => "Export settings…",
         }
     }
+}
+
+/// The Export menu's rows: a video or a slide deck when an export is possible (a project, a
+/// session and an installed SDK, and an idle shell); the export defaults always, as in
+/// Settings.
+fn export_actions(can_export: bool) -> Vec<(OverflowAction, bool)> {
+    vec![
+        (OverflowAction::ExportVideo, can_export),
+        (OverflowAction::ExportDeck, can_export),
+        (OverflowAction::ExportSettings, true),
+    ]
 }
 
 /// Every overflow entry with whether it is available now, under the enable rules the

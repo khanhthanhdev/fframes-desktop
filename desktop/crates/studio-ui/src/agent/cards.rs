@@ -1,7 +1,10 @@
 //! Transcript rows: the two voices, runs of activity, permissions, errors, validation,
 //! changes and outcomes, built from the chat components in [`super::ui`].
 
+use studio_harness::driver::PermissionChoice;
+
 use super::markdown::{MarkdownRow, Voice};
+use super::ui::metrics::{activity as activity_metrics, transcript as transcript_metrics};
 use super::ui::{
     ActionCard, ActivityCounts, ActivityHeader, ActivityRow, ActivityState, AssistantMessage,
     ChangeMark, ChangedFile, ChangesCard, ROW_H, UserMessage, outcome_style, summary_parts,
@@ -28,7 +31,7 @@ fn is_activity(kind: &RowKind) -> bool {
     )
 }
 
-/// Whether a step of a run is still going: then the run opens and its summary spins.
+/// Whether a step of a run is still going: then the run opens.
 fn is_live(kind: &RowKind) -> bool {
     match kind {
         RowKind::Tool(card) => matches!(
@@ -208,7 +211,6 @@ impl ConversationPanel {
         let mut element = div().w_full().flex().flex_col();
         if first {
             let mut counts = ActivityCounts::default();
-            let mut running = false;
             for member in &self.view_rows[span.start..span.end] {
                 match &member.kind {
                     RowKind::Tool(card) => counts.add_tool(
@@ -219,14 +221,14 @@ impl ConversationPanel {
                     RowKind::Permission(_) => counts.permissions += 1,
                     _ => (),
                 }
-                running |= is_live(&member.kind);
             }
             let entity = cx.entity();
             let (key, open) = (span.key, span.open);
+            // No spinner on the summary: the working trailer under the last row is the
+            // turn's one progress cue, and a streaming thought shows its "Thinking…" badge.
             element = element.child(
                 ActivityHeader::new(&theme, ("agent-activity", key), summary_parts(&counts))
                     .open(open)
-                    .running(running)
                     .on_toggle(move |_, cx| {
                         entity.update(cx, |this, cx| this.toggle_activity(key, !open, cx));
                     }),
@@ -236,7 +238,7 @@ impl ConversationPanel {
             element = element.child(self.activity_row(row, cx));
         }
         if last || (first && !span.open) {
-            element = element.pb(px(METRICS.space_2));
+            element = element.pb(px(transcript_metrics::ROW_GAP));
         }
         element.into_any_element()
     }
@@ -271,33 +273,32 @@ impl ConversationPanel {
             .find(|line| !line.is_empty())
             .unwrap_or("")
             .to_owned();
+        let mut step = ActivityRow::new(
+            &self.theme,
+            ("agent-thought", id),
+            Icon::Brain,
+            "Thought",
+            first_line,
+        );
+        if streaming {
+            // The "Thinking…" badge on the fixed-height row, not a spinner beside the
+            // working trailer's.
+            step = step.trailing(Badge::new("Thinking…"));
+        }
         div()
             .w_full()
             .flex()
             .flex_col()
-            .child(
-                ActivityRow::new(
-                    &self.theme,
-                    ("agent-thought", id),
-                    Icon::Bot,
-                    "Thought",
-                    first_line,
-                )
-                .state(if streaming {
-                    ActivityState::Running
-                } else {
-                    ActivityState::Done
-                })
-                .on_toggle(open, move |_, cx| {
-                    entity.update(cx, |this, cx| {
-                        this.toggle_thought(id, !open);
-                        cx.notify();
-                    });
-                }),
-            )
+            .child(step.on_toggle(open, move |_, cx| {
+                entity.update(cx, |this, cx| {
+                    this.toggle_thought(id, !open);
+                    cx.notify();
+                });
+            }))
             .children(open.then(|| {
+                // The rule runs under the step's icon: the step's inset plus its own padding.
                 div()
-                    .pl(px(METRICS.space_4 + METRICS.space_2))
+                    .pl(px(activity_metrics::NESTED_INSET + METRICS.space_2))
                     .pr(px(METRICS.space_2))
                     .pb(px(METRICS.space_1))
                     .child(
@@ -432,50 +433,31 @@ impl ConversationPanel {
         let mut notice = ActionCard::new(
             &self.theme,
             SharedString::from(format!("perm-request-{key}")),
-            UiTone::Warning,
+            UiTone::Info,
             card.title.clone(),
         )
+        .permission()
         .body(if pending {
             "Answer sent…"
         } else {
             "The agent asks for permission to go on."
         });
         if !pending {
-            // Refusals first, the allowing choice last (the primary action sits rightmost).
-            let mut options: Vec<_> = card.options.iter().collect();
-            options.sort_by_key(|option| option.kind.starts_with("allow"));
-            if !card.options.iter().any(|o| o.kind.starts_with("reject")) {
+            for choice in request_choices(&card.options) {
                 let reference = card.reference.clone();
+                let answer = choice.answer;
                 notice = notice.action(self.action_button(
-                    format!("perm-{key}-decline"),
-                    "Decline",
+                    format!("perm-{key}-{}", choice.id),
+                    choice.label,
                     true,
-                    Emphasis::Neutral,
-                    cx,
-                    move |this, _, cx| {
-                        this.answer_permission(reference.clone(), PermissionAnswer::Cancel, cx)
-                    },
-                ));
-            }
-            for option in options {
-                let reference = card.reference.clone();
-                let id = option.option_id.clone();
-                notice = notice.action(self.action_button(
-                    format!("perm-{key}-{}", option.option_id),
-                    option.name.clone(),
-                    true,
-                    if option.kind.starts_with("allow") {
+                    if choice.primary {
                         Emphasis::Primary
                     } else {
                         Emphasis::Neutral
                     },
                     cx,
                     move |this, _, cx| {
-                        this.answer_permission(
-                            reference.clone(),
-                            PermissionAnswer::Select(id.clone()),
-                            cx,
-                        )
+                        this.answer_permission(reference.clone(), answer.clone(), cx)
                     },
                 ));
             }
@@ -734,6 +716,43 @@ impl ConversationPanel {
     }
 }
 
+/// One button of an open permission request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RequestChoice {
+    /// The end of the button id `perm-{key}-{id}`: the agent's option id, or `decline`.
+    id: String,
+    /// The agent's own label for its option.
+    label: String,
+    /// Allowing options are the primary actions, every one of them.
+    primary: bool,
+    answer: PermissionAnswer,
+}
+
+/// The buttons of an open permission request, left to right: refusals first and the allowing
+/// choices last (the primary action sits rightmost). Decline (closes the request and ends the
+/// turn) leads only when the agent gives no way to refuse; otherwise it would sit next to the
+/// agent's own Reject.
+fn request_choices(options: &[PermissionChoice]) -> Vec<RequestChoice> {
+    let mut choices = Vec::with_capacity(options.len() + 1);
+    if !options.iter().any(|o| o.kind.starts_with("reject")) {
+        choices.push(RequestChoice {
+            id: "decline".to_owned(),
+            label: "Decline".to_owned(),
+            primary: false,
+            answer: PermissionAnswer::Cancel,
+        });
+    }
+    let mut options: Vec<_> = options.iter().collect();
+    options.sort_by_key(|option| option.kind.starts_with("allow"));
+    choices.extend(options.into_iter().map(|option| RequestChoice {
+        id: option.option_id.clone(),
+        label: option.name.clone(),
+        primary: option.kind.starts_with("allow"),
+        answer: PermissionAnswer::Select(option.option_id.clone()),
+    }));
+    choices
+}
+
 /// How a tool call's status reads as a step.
 fn tool_state(status: Option<ToolStatus>) -> ActivityState {
     match status {
@@ -816,6 +835,72 @@ mod tests {
             .map(|span| span.open)
             .collect();
         assert_eq!(open, [true, false]);
+    }
+
+    fn option(id: &str, name: &str, kind: &str) -> PermissionChoice {
+        PermissionChoice {
+            option_id: id.into(),
+            name: name.into(),
+            kind: kind.into(),
+        }
+    }
+
+    /// `(id, label, primary)` of each button, left to right.
+    fn buttons(options: &[PermissionChoice]) -> Vec<(String, String, bool)> {
+        request_choices(options)
+            .into_iter()
+            .map(|choice| (choice.id, choice.label, choice.primary))
+            .collect()
+    }
+
+    #[test]
+    fn refusals_come_before_every_allow_and_each_allow_is_primary() {
+        // The agent's order and labels are its own: allows first, unusual names.
+        let options = [
+            option("a1", "Yes, this once", "allow_once"),
+            option("a2", "Always for this folder", "allow_always"),
+            option("r1", "No, and tell it why", "reject_once"),
+            option("r2", "Never", "reject_always"),
+        ];
+        assert_eq!(
+            buttons(&options),
+            [
+                ("r1".into(), "No, and tell it why".into(), false),
+                ("r2".into(), "Never".into(), false),
+                ("a1".into(), "Yes, this once".into(), true),
+                ("a2".into(), "Always for this folder".into(), true),
+            ]
+        );
+        let answers: Vec<_> = request_choices(&options)
+            .into_iter()
+            .map(|choice| choice.answer)
+            .collect();
+        assert_eq!(
+            answers,
+            ["r1", "r2", "a1", "a2"].map(|id| PermissionAnswer::Select(id.into()))
+        );
+    }
+
+    #[test]
+    fn decline_leads_only_when_the_agent_offers_no_refusal() {
+        let options = [option("go", "Allow", "allow_once")];
+        let choices = request_choices(&options);
+        assert_eq!(
+            buttons(&options),
+            [
+                ("decline".into(), "Decline".into(), false),
+                ("go".into(), "Allow".into(), true),
+            ]
+        );
+        assert_eq!(choices[0].answer, PermissionAnswer::Cancel);
+        // With a refusal of its own the agent's Reject stands alone.
+        let options = [
+            option("go", "Allow", "allow_once"),
+            option("no", "Reject", "reject_once"),
+        ];
+        assert!(buttons(&options).iter().all(|(id, ..)| id != "decline"));
+        // No options at all still leaves a way out.
+        assert_eq!(buttons(&[]), [("decline".into(), "Decline".into(), false)]);
     }
 
     #[test]

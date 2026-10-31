@@ -58,7 +58,7 @@ impl StudioShell {
         // Cap's clock: the time in `text-1`, the length after it in `text-3`.
         let clock = with_tooltip(
             text_style(div().id("time-readout"), TextStyle::Body)
-                .font_family("monospace")
+                .font_family(studio_theme::MONO_FAMILY)
                 .flex()
                 .flex_none()
                 .text_color(palette.text_1)
@@ -230,8 +230,9 @@ impl StudioShell {
             .child(build)
             .child(cancel)
             .child(self.overflow_trigger(cx));
-        // Two equal sides keep the playback group in the middle; the tools side does not
-        // shrink below its buttons, so in a tight bar the group moves left instead.
+        // Two equal sides keep the playback group in the middle. Neither side shrinks below
+        // its content, the clock or the buttons, so in a tight bar the group moves aside
+        // instead of the clock being cut.
         div()
             .flex()
             .flex_none()
@@ -239,15 +240,13 @@ impl StudioShell {
             .gap(px(METRICS.space_3))
             .h(px(METRICS.transport_h))
             .px(px(METRICS.space_3))
-            .border_t_1()
+            .border_t(px(METRICS.size.divider))
             .border_color(palette.line)
             .child(
                 div()
                     .flex()
                     .flex_1()
                     .flex_basis(Pixels::ZERO)
-                    .min_w_0()
-                    .overflow_hidden()
                     .items_center()
                     .child(clock),
             )
@@ -286,14 +285,18 @@ impl StudioShell {
     }
 }
 
-// The breakpoints are `METRICS.layout`'s. The bar keeps playback centred while each side
-// fits half of it: the tools measure 566 px with the slider and the Split and Build labels,
-// 333 px without them and 214 px without the zoom group, beside about 100 px of playback,
-// 24 px of padding and two 12 px gaps. Below `transport_compact_below` the slider and the
-// labels go; below `transport_narrow_below` the zoom buttons and Fit go too (a 1280x800
-// window gives the player about 824 px, so the zoom stays there); below
-// `transport_total_hidden_below` the clock drops the total. The tools' gap,
-// `transport_tools_gap`, is tighter than the bar's so they fit in a 1280 px window.
+// The breakpoints are `METRICS.layout`'s, measured from the rendered bounds on Windows with
+// Geist, 32 px labelled buttons and 28 px icon buttons. The bar keeps playback centred while
+// each side fits half of it: the tools measure 555 px with the slider and the Split and
+// Build labels, 336 px without them and 215 px without the zoom group, beside 100 px of
+// playback, 24 px of padding and two 12 px gaps (1259, 820 and 579 px of bar). Below
+// `transport_compact_below` the slider and the labels go; below `transport_narrow_below`
+// the zoom buttons and Fit go too (a 1280x800 window gives the flat player about 848 px,
+// so the zoom stays there). The Geist Mono clock measures 145 px with the total and 60 px
+// without; below `transport_total_hidden_below` (508 px of clock, playback and narrow
+// tools) it drops the total. Each breakpoint keeps about 10 px for other systems' fonts.
+// The tools' gap, `transport_tools_gap`, is tighter than the bar's so they fit in a
+// 1280 px window.
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TransportMode {
@@ -335,12 +338,30 @@ mod tests {
     #[test]
     fn transport_mode_drops_the_slider_then_the_zoom_buttons() {
         assert_eq!(transport_mode(1500.), TransportMode::Full);
-        assert_eq!(transport_mode(1290.), TransportMode::Full);
-        assert_eq!(transport_mode(1289.9), TransportMode::Compact);
-        assert_eq!(transport_mode(820.), TransportMode::Compact);
-        assert_eq!(transport_mode(819.9), TransportMode::Narrow);
-        assert!(show_total_time(620.));
-        assert!(!show_total_time(619.));
+        assert_eq!(transport_mode(1270.), TransportMode::Full);
+        assert_eq!(transport_mode(1269.9), TransportMode::Compact);
+        assert_eq!(transport_mode(830.), TransportMode::Compact);
+        assert_eq!(transport_mode(829.9), TransportMode::Narrow);
+        assert!(show_total_time(520.));
+        assert!(!show_total_time(519.));
+    }
+
+    /// The measured widths of the tools in each mode (`Full` 555, `Compact` 336, `Narrow`
+    /// 215), the 145 px clock with its total, 100 px of playback and 48 px of padding and
+    /// gaps: each mode starts where its tools fit half the bar beside centred playback, and
+    /// the total shows only while the clock fits beside the narrow tools.
+    #[test]
+    fn each_mode_fits_its_measured_tools() {
+        let around = 100. + 2. * METRICS.space_3 + 2. * METRICS.space_3;
+        let layout = METRICS.layout;
+        assert!(layout.transport_compact_below >= 2. * 555.4 + around);
+        assert!(layout.transport_narrow_below >= 2. * 336. + around);
+        assert!(layout.transport_total_hidden_below >= 144.7 + 215.4 + around);
+        // A 1280x800 window's player (client width less the default sidebar) keeps the zoom.
+        assert_eq!(
+            transport_mode(1264. - METRICS.sidebar_w),
+            TransportMode::Compact
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! The window's root layout, after Cap's editor window: header and notices, then the
-//! workspace (a row of the player card and the tabbed sidebar with its width grip, above
-//! the full-width timeline card and its height grip), then the status bar.
+//! workspace (a row of the player and the tabbed sidebar with its width grip, above the
+//! full-width timeline and its height grip), then the status bar. After Oleafly the panes
+//! are flat and square and meet at hairlines, with no gutters or shadows between them.
 
 use gpui::{
     Axis, Context, InteractiveElement, IntoElement, ParentElement, Render, StyleRefinement, Styled,
@@ -12,7 +13,7 @@ use super::StudioShell;
 use super::keymap::WORKSPACE;
 use super::sections::{Sections, box_probe};
 use crate::frame_image::create_render_image;
-use crate::kit::{Card, ResizeGrip, windows_caption_controls};
+use crate::kit::{ResizeGrip, windows_caption_controls};
 
 impl Render for StudioShell {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -184,7 +185,6 @@ impl Render for StudioShell {
         }
         self.activate_audio(cx);
         let theme = self.theme;
-        let gutter = px(METRICS.gutter);
         let project_open = self.presentation.project.is_some();
         // A drag ends when its grip goes away: only the grip's tracker hears the release.
         let workspace_shown =
@@ -220,6 +220,10 @@ impl Render for StudioShell {
             .flex_none()
             .w_full()
             .h(px(METRICS.header_h))
+            // The hairline is the row's border: a half-pixel strip of its own would be painted
+            // over by the pane below at 100 %.
+            .border_b(px(METRICS.size.divider))
+            .border_color(theme.colors.line)
             .when(windows, |row| {
                 row.window_control_area(WindowControlArea::Drag)
             })
@@ -288,7 +292,6 @@ impl Render for StudioShell {
             .min_h_0()
             .flex()
             .flex_col()
-            .gap(gutter)
             .child(measure);
         if project_open {
             let split = self.split();
@@ -307,7 +310,6 @@ impl Render for StudioShell {
                         .flex_1()
                         .min_h(px(split.player_min_height))
                         .flex()
-                        .gap(gutter)
                         .child(div().flex_1().min_w_0().flex().child(player))
                         .child(sidebar),
                 )
@@ -318,9 +320,12 @@ impl Render for StudioShell {
                         .w_full()
                         .h(px(split.timeline_height))
                         .child(
-                            Card::raised(&self.theme)
+                            div()
                                 .size_full()
                                 .overflow_hidden()
+                                .border_t(px(METRICS.size.divider))
+                                .border_color(theme.colors.line)
+                                .bg(theme.colors.window)
                                 .child(
                                     self.timeline
                                         .clone()
@@ -332,18 +337,29 @@ impl Render for StudioShell {
                         .child(self.render_resize_grip(split.timeline_height, cx)),
                 );
         } else {
-            // No timeline without a project: the empty state takes the player's place.
+            // No project: the start screen takes the whole workspace. The sidebar's tabs
+            // all need a project (the agent refuses without one), so it is not shown.
             workspace = workspace.child(
                 div()
                     .flex_1()
                     .min_h_0()
                     .flex()
-                    .gap(gutter)
-                    .child(self.render_empty_state(cx))
-                    .child(sidebar),
+                    .child(self.render_empty_state(cx)),
             );
         }
+        // Settings is Oleafly's dialog over the window: built here, where its search field can
+        // take the window, and drawn last so it paints over everything.
+        if self.settings_open && self.settings_dialog.is_none() {
+            self.settings_dialog = Some(super::settings_dialog::SettingsDialog::open(
+                cx.entity(),
+                &self.panel,
+                window,
+                cx,
+            ));
+        }
+        let settings_dialog = self.settings_dialog.clone();
         Self::on_actions(div(), cx)
+            .relative()
             .size_full()
             .key_context(WORKSPACE)
             .track_focus(&self.focus)
@@ -361,6 +377,7 @@ impl Render for StudioShell {
             .child(self.render_edit_tracking())
             .bg(theme.colors.window)
             .text_color(theme.colors.text_1)
+            .font_family(studio_theme::UI_FONT)
             .flex()
             .flex_col()
             .child(header)
@@ -370,23 +387,35 @@ impl Render for StudioShell {
                     .min_h_0()
                     .flex()
                     .flex_col()
-                    .px(gutter)
-                    .pb(gutter)
-                    .gap(gutter)
-                    .children(notices)
+                    // The notices are a band of their own above the panes.
+                    .when(!notices.is_empty(), |main| {
+                        main.child(
+                            div()
+                                .flex_none()
+                                .flex()
+                                .flex_col()
+                                .gap(px(METRICS.space_2))
+                                .p(px(METRICS.space_2))
+                                .border_b(px(METRICS.size.divider))
+                                .border_color(theme.colors.line)
+                                .children(notices),
+                        )
+                    })
                     // The setup and export replace the whole row: the setup's Agent step
-                    // draws the same panel entity, which renders once per frame.
+                    // draws the same panel entity, which renders once per frame. They keep
+                    // an inset; the workspace's panes run to the window's edges.
                     .child(if let Some(template) = self.create_choice {
-                        self.render_create(template, cx)
+                        inset(self.render_create(template, cx))
                     } else if self.onboarding.is_some() {
-                        self.render_onboarding(cx)
+                        inset(self.render_onboarding(cx))
                     } else if self.export_panel.open {
-                        self.render_export(cx)
+                        inset(self.render_export(cx))
                     } else {
                         workspace.into_any_element()
                     }),
             )
             .children(status_bar)
+            .children(settings_dialog)
             .into_any_element()
     }
 }
@@ -473,7 +502,7 @@ impl StudioShell {
             })
     }
 
-    /// The handle on the sidebar's left edge that drags its width, centred in the gutter.
+    /// The handle on the sidebar's left edge that drags its width, centred on the seam.
     fn render_agent_grip(&self, width: f32, cx: &mut Context<Self>) -> gpui::AnyElement {
         let dragging = matches!(self.resize, Some(Resize::Sidebar { .. }));
         div()
@@ -525,8 +554,22 @@ impl StudioShell {
 }
 
 /// Where a grip's hit area starts relative to the edge it drags: centred in the gutter
-/// before that edge.
+/// before that edge, which is none, so on the hairline between the panes.
 const GRIP_OFFSET: f32 = -(METRICS.layout.gutter + METRICS.size.grip_hit) / 2.;
+
+/// The setup, create and export flows in the workspace's place, kept off the window's sides
+/// and foot.
+fn inset(content: gpui::AnyElement) -> gpui::AnyElement {
+    div()
+        .flex_1()
+        .min_h_0()
+        .flex()
+        .flex_col()
+        .px(px(METRICS.space_2))
+        .pb(px(METRICS.space_2))
+        .child(content)
+        .into_any_element()
+}
 
 /// Records where a grip was painted, `[left, top, width, height]`, for the telemetry.
 fn grip_probe(
@@ -559,10 +602,10 @@ pub(super) enum Resize {
     Sidebar { start_x: f32, start_width: f32 },
 }
 
-/// The sidebar's width in a workspace row `available` wide. The gap beside the player is
-/// fixed; the sidebar takes `preferred`, at most `sidebar_max_w` and at least
-/// `sidebar_min_w`, and leaves the player `editor_min_w`. When both minimums do not fit,
-/// they shrink in proportion, as the vertical split does.
+/// The sidebar's width in a workspace row `available` wide. The gap beside the player (none,
+/// the panes meet at a hairline) is fixed; the sidebar takes `preferred`, at most
+/// `sidebar_max_w` and at least `sidebar_min_w`, and leaves the player `editor_min_w`. When
+/// both minimums do not fit, they shrink in proportion, as the vertical split does.
 pub(super) fn sidebar_width(available: f32, preferred: f32) -> f32 {
     let space = (available - METRICS.gutter).max(0.);
     let scale = (space / (METRICS.sidebar_min_w + METRICS.editor_min_w)).min(1.);
@@ -621,7 +664,7 @@ mod tests {
         assert_eq!(split.timeline_height, 120.);
     }
 
-    /// The workspace row of a window `width` wide, inside the side gutters.
+    /// The workspace row of a window `width` wide, inside the side gutters (none).
     fn row(width: f32) -> f32 {
         width - 2. * METRICS.gutter
     }
@@ -637,18 +680,19 @@ mod tests {
     fn the_sidebar_is_clamped_to_its_range_and_the_player_minimum() {
         assert_eq!(sidebar_width(row(1920.), 100.), 320.);
         assert_eq!(sidebar_width(row(1920.), 900.), 520.);
-        // 1264 - 8 leaves 1256: the player keeps 480 of it, so 520 fits.
+        // The player keeps 480 of 1280, so 520 fits.
         assert_eq!(sidebar_width(row(1280.), 900.), 520.);
-        // 1008 - 8 leaves 1000: the player keeps 480.
+        // The player keeps 480 of 1024.
         assert_eq!(sidebar_width(row(1024.), 900.), 520.);
-        assert_eq!(sidebar_width(row(960.), 900.), 456.);
+        assert_eq!(sidebar_width(row(960.), 900.), 480.);
+        assert_eq!(sidebar_width(row(900.), 900.), 420.);
     }
 
     #[test]
     fn narrow_windows_shrink_the_sidebar_and_player_minimums_together() {
-        // 784 - 8 = 776 of 800: both minimums at 97 %.
-        let width = sidebar_width(row(800.), METRICS.sidebar_w);
-        assert!((width - 310.4).abs() < 0.01, "{width}");
+        // 780 of 800: both minimums at 97.5 %.
+        let width = sidebar_width(row(780.), METRICS.sidebar_w);
+        assert!((width - 312.).abs() < 0.01, "{width}");
         assert_eq!(sidebar_width(0., METRICS.sidebar_w), 0.);
     }
 

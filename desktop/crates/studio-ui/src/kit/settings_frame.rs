@@ -1,29 +1,41 @@
-//! The settings frame, after Cap's settings window (`settings_window.rs`): a 227 px nav
-//! column on `window` beside a scrolling page on `card` that holds the page's sections.
+//! The settings frame, Oleafly's `SettingsModal`: a 208 px navigation column (`w-52 p-3`)
+//! headed by its title, beside the page, whose 48 px header (`h-12 px-5`) holds the selected
+//! page's title (`BodyStrong`) over a hairline. Both sit on the same muted fill (Studio's
+//! `sidebar`), apart by a hairline, so the setting rows' cards stand out on it.
 //!
-//! The nav rows look like [`ListRow`](super::ListRow)s: `list_row_h` high with a 16 px
-//! `text_2` icon and a `Label` title, `ctl_hover` under the pointer and `ctl_active` when
-//! selected. Cap's nav rows answer the mouse only. Here every row is a tab stop with the
+//! Nav rows are Oleafly's `NavItem`: a 16 px icon and a `Body` title in `text_2`; the
+//! selected row on the document fill behind a hairline, in `text_1` at the medium weight.
+//! Every row is a tab stop with the
 //! focus ring, and Enter or Space opens it, like every other control. The frame can start
 //! with a Back row, for a frame shown in place of another view rather than in its own window.
+//!
+//! As in Oleafly's settings, a search field can sit above the rows ([`SettingsFrame::search`]),
+//! the rows scroll on their own, and a footer of small icon links
+//! ([`SettingsFooterLink`]) stays pinned to the bottom of the column.
 
 use std::rc::Rc;
 
 use gpui::{
-    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, Role,
-    SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder, px,
+    AnyElement, App, ElementId, InteractiveElement, IntoElement, ParentElement, RenderOnce, Rgba,
+    Role, SharedString, StatefulInteractiveElement, Styled, Window, div, prelude::FluentBuilder,
+    px,
 };
 
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::interact::{BoundsHandler, Handler, bounds_probe, focusable};
-use super::list_row::row_look;
-use super::{Icon, icon};
+use super::{Emphasis, Icon, IconButton, IconButtonSize, icon};
 
-/// Cap's `SIDEBAR_WIDTH`.
-pub const SETTINGS_NAV_W: f32 = 227.;
-/// The nav column's padding; a window's title strip above it is the header less this.
-pub const SETTINGS_NAV_PAD: f32 = METRICS.space_2;
+/// Oleafly's settings nav, `w-52`.
+pub const SETTINGS_NAV_W: f32 = 208.;
+/// The nav column's padding (`p-3`); a window's title strip above it is the header less this.
+pub const SETTINGS_NAV_PAD: f32 = METRICS.space_3;
+/// A nav row: `py-2` around the 20 px `Body` line, inside a 1 px hairline.
+const NAV_ROW_H: f32 = 38.;
+/// The nav title's line, so its centre meets the page header's (12 px padding + 24 / 2).
+const NAV_TITLE_H: f32 = 24.;
+/// The page's padding (`p-5`) and the header's side padding (`px-5`).
+const PAGE_PAD: f32 = METRICS.space_4 + METRICS.space_1;
 /// The space between nav rows, as in a `List`.
 const NAV_ROW_GAP: f32 = METRICS.space_1 / 2.;
 
@@ -52,6 +64,30 @@ impl SettingsNavItem {
     }
 }
 
+/// A small icon link in the footer pinned under the nav rows (Oleafly's `SettingsFooter`).
+pub struct SettingsFooterLink {
+    pub id: SharedString,
+    pub label: SharedString,
+    pub icon: Icon,
+    pub open: Handler,
+}
+
+impl SettingsFooterLink {
+    pub fn new(
+        id: impl Into<SharedString>,
+        label: impl Into<SharedString>,
+        icon: Icon,
+        open: impl Fn(&mut Window, &mut App) + 'static,
+    ) -> Self {
+        Self {
+            id: id.into(),
+            label: label.into(),
+            icon,
+            open: Rc::new(open),
+        }
+    }
+}
+
 type SelectHandler = Rc<dyn Fn(&usize, &mut Window, &mut App)>;
 /// Receives a nav row's index and its bounds on every prepaint.
 type ItemBoundsHandler = Rc<dyn Fn(usize, gpui::Bounds<gpui::Pixels>, &mut App)>;
@@ -66,6 +102,13 @@ pub struct SettingsFrame {
     back_bounds: Option<BoundsHandler>,
     item_bounds: Option<ItemBoundsHandler>,
     nav_header: Option<AnyElement>,
+    search: Option<AnyElement>,
+    empty: Option<SharedString>,
+    footer: Vec<SettingsFooterLink>,
+    title: Option<SharedString>,
+    heading: Option<SharedString>,
+    header_end: Option<AnyElement>,
+    radius: f32,
     content: Vec<AnyElement>,
 }
 
@@ -80,8 +123,58 @@ impl SettingsFrame {
             back_bounds: None,
             item_bounds: None,
             nav_header: None,
+            search: None,
+            empty: None,
+            footer: Vec::new(),
+            title: None,
+            heading: None,
+            header_end: None,
+            radius: 0.,
             content: Vec::new(),
         }
+    }
+
+    /// The content header's title, when it is not the selected row's (no row is shown).
+    pub fn title(mut self, title: impl Into<SharedString>) -> Self {
+        self.title = Some(title.into());
+        self
+    }
+
+    /// The nav column's own title ("Settings"), level with the page's title.
+    pub fn heading(mut self, heading: impl Into<SharedString>) -> Self {
+        self.heading = Some(heading.into());
+        self
+    }
+
+    /// An element at the end of the page's header, such as a window's caption buttons.
+    pub fn header_end(mut self, element: Option<AnyElement>) -> Self {
+        self.header_end = element;
+        self
+    }
+
+    /// Rounds the frame's outer corners to `radius`, for a frame inside a rounded card: gpui
+    /// clips to rectangles, so each column rounds its own fill.
+    pub fn radius(mut self, radius: f32) -> Self {
+        self.radius = radius;
+        self
+    }
+
+    /// The search field at the top of the nav column, above the rows.
+    pub fn search(mut self, field: impl IntoElement) -> Self {
+        self.search = Some(field.into_any_element());
+        self
+    }
+
+    /// The line shown in place of the rows when there are none (a search matched nothing).
+    pub fn empty(mut self, text: impl Into<SharedString>) -> Self {
+        self.empty = Some(text.into());
+        self
+    }
+
+    /// Icon links pinned to the bottom of the nav column, apart by hairlines.
+    pub fn footer(mut self, links: Vec<SettingsFooterLink>) -> Self {
+        self.footer = links;
+        self
     }
 
     /// An element above the nav rows, such as the strip a window's title bar buttons sit in.
@@ -126,8 +219,15 @@ impl SettingsFrame {
     }
 }
 
-/// A nav row in the look of a `ListRow`: `list_row_h` high, a 16 px `text_2` icon and a
-/// `Label` title; `ctl_active` when selected, `ctl_hover` under the pointer otherwise.
+/// The content header's height (Oleafly's settings `h-12`).
+const CONTENT_HEADER_H: f32 = 48.;
+/// The document fill's alpha under the pointer (`hover:bg-background/60`).
+const NAV_HOVER_ALPHA: f32 = 0.6;
+
+/// A navigation row, Oleafly's `NavItem`: selected, the document fill behind a `line`
+/// hairline with `text_1` at the medium weight; otherwise a transparent hairline (so
+/// selecting does not shift the row) and `text_2`, turning `text_1` on a translucent document
+/// fill under the pointer.
 fn nav_row(
     theme: &Theme,
     id: SharedString,
@@ -135,7 +235,22 @@ fn nav_row(
     row_icon: Icon,
     selected: bool,
 ) -> gpui::Stateful<gpui::Div> {
-    let look = row_look(theme, selected, false, false);
+    let colors = theme.colors;
+    let (text, border) = if selected {
+        (colors.text_1, colors.line)
+    } else {
+        (
+            colors.text_2,
+            Rgba {
+                a: 0.,
+                ..colors.line
+            },
+        )
+    };
+    let hover = Rgba {
+        a: NAV_HOVER_ALPHA,
+        ..colors.window
+    };
     let row = focusable(div().id(id), theme, false)
         .role(Role::Tab)
         .aria_selected(selected)
@@ -145,20 +260,32 @@ fn nav_row(
         .flex_row()
         .flex_none()
         .items_center()
-        .h(px(METRICS.size.list_row_h))
-        .px(px(METRICS.space_2))
-        .gap(px(METRICS.space_2))
-        .rounded(px(METRICS.radius.item))
-        .text_color(look.title)
+        .h(px(NAV_ROW_H))
+        .px(px(METRICS.space_2 + METRICS.space_1 / 2.))
+        .gap(px(METRICS.space_2 + METRICS.space_1 / 2.))
+        .rounded(px(METRICS.radius.control))
+        .border(px(METRICS.size.divider))
+        .border_color(border)
+        .text_color(text)
         .cursor_pointer();
-    text_style(row, TextStyle::Label)
-        .when_some(look.fill, |row, fill| row.bg(fill))
-        .when_some(look.hover, |row, hover| {
-            row.hover(move |style| style.bg(hover))
+    // The icon is an `svg`, which does not inherit the text colour, so it keeps the row's
+    // resting colour under the pointer.
+    let style = if selected {
+        TextStyle::BodyMedium
+    } else {
+        TextStyle::Body
+    };
+    text_style(row, style)
+        .when(selected, |row| row.bg(colors.window))
+        .when(!selected, |row| {
+            row.hover(move |style| style.bg(hover).text_color(colors.text_1))
         })
-        .child(icon(row_icon, METRICS.size.icon_md, theme.colors.text_2).flex_shrink_0())
+        .child(icon(row_icon, METRICS.size.icon_md, text).flex_shrink_0())
         .child(div().flex_1().min_w_0().truncate().child(label))
 }
+/// The footer's link buttons and the hairline between two of them (`h-4 w-px`).
+const FOOTER_RULE_H: f32 = METRICS.size.icon_md;
+
 impl RenderOnce for SettingsFrame {
     fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
         let SettingsFrame {
@@ -170,9 +297,35 @@ impl RenderOnce for SettingsFrame {
             back_bounds,
             item_bounds,
             nav_header,
+            search,
+            empty,
+            footer,
+            title,
+            heading,
+            header_end,
+            radius,
             content,
         } = self;
+        let heading = heading.map(|heading| {
+            text_style(div(), TextStyle::BodyStrong)
+                .flex()
+                .flex_none()
+                .items_center()
+                .h(px(NAV_TITLE_H))
+                .px(px(METRICS.space_2))
+                .mb(px(METRICS.space_2))
+                .text_color(theme.colors.text_1)
+                .child(heading)
+        });
+        let colors = theme.colors;
 
+        // The page's title is the selected row's, unless the caller names it.
+        let title = title.or_else(|| {
+            items
+                .iter()
+                .find(|item| item.selected)
+                .map(|item| item.label.clone())
+        });
         let back = back.map(|handler| {
             nav_row(
                 &theme,
@@ -185,6 +338,7 @@ impl RenderOnce for SettingsFrame {
             .children(back_bounds.map(bounds_probe))
             .on_click(move |_, window, cx| handler(window, cx))
         });
+        let no_rows = items.is_empty();
         let rows = items.into_iter().enumerate().map(|(index, item)| {
             let handler = on_select.clone();
             let report = item_bounds.clone();
@@ -198,6 +352,51 @@ impl RenderOnce for SettingsFrame {
                     row.on_click(move |_, window, cx| handler(&index, window, cx))
                 })
         });
+        let empty = empty.filter(|_| no_rows).map(|text| {
+            text_style(div(), TextStyle::Small)
+                .flex()
+                .flex_col()
+                .items_center()
+                .gap(px(METRICS.space_2))
+                .px(px(METRICS.space_2))
+                .py(px(METRICS.space_8))
+                .text_color(colors.text_2)
+                .child(icon(Icon::Search, METRICS.size.icon_lg, colors.text_3))
+                .child(text)
+        });
+        let link_count = footer.len();
+        let footer = (link_count > 0).then(|| {
+            div()
+                .id("settings-footer")
+                .flex()
+                .flex_none()
+                .items_center()
+                .justify_between()
+                .mt(px(METRICS.space_2))
+                .pt(px(METRICS.space_3))
+                .border_t(px(METRICS.size.divider))
+                .border_color(colors.line)
+                .children(footer.into_iter().enumerate().flat_map(|(index, link)| {
+                    let rule = (index > 0).then(|| {
+                        div()
+                            // A border, which gpui draws at least one device pixel wide.
+                            .flex_none()
+                            .h(px(FOOTER_RULE_H))
+                            .border_l(px(METRICS.size.divider))
+                            .border_color(colors.line)
+                            .into_any_element()
+                    });
+                    let open = link.open;
+                    let button = IconButton::new(&theme, link.id, link.icon.path())
+                        .emphasis(Emphasis::Ghost)
+                        .size(IconButtonSize::Md)
+                        .label(link.label.clone())
+                        .tooltip(link.label)
+                        .on_click(move |_, window, cx| open(window, cx))
+                        .into_any_element();
+                    rule.into_iter().chain([button])
+                }))
+        });
 
         div()
             .id(id)
@@ -205,7 +404,7 @@ impl RenderOnce for SettingsFrame {
             .flex()
             .flex_row()
             .overflow_hidden()
-            .text_color(theme.colors.text_1)
+            .text_color(colors.text_1)
             .child(
                 div()
                     .id("settings-nav")
@@ -216,12 +415,28 @@ impl RenderOnce for SettingsFrame {
                     .h_full()
                     .w(px(SETTINGS_NAV_W))
                     .p(px(SETTINGS_NAV_PAD))
-                    .gap(px(NAV_ROW_GAP))
-                    .overflow_y_scroll()
-                    .bg(theme.colors.window)
+                    .rounded_tl(px(radius))
+                    .rounded_bl(px(radius))
+                    .bg(colors.sidebar)
                     .children(nav_header)
-                    .children(back)
-                    .children(rows),
+                    .children(heading)
+                    .children(
+                        search.map(|field| div().flex_none().mb(px(METRICS.space_2)).child(field)),
+                    )
+                    .child(
+                        div()
+                            .id("settings-nav-rows")
+                            .flex()
+                            .flex_col()
+                            .flex_1()
+                            .min_h_0()
+                            .gap(px(NAV_ROW_GAP))
+                            .overflow_y_scroll()
+                            .children(back)
+                            .children(rows)
+                            .children(empty),
+                    )
+                    .children(footer),
             )
             .child(
                 div()
@@ -231,9 +446,50 @@ impl RenderOnce for SettingsFrame {
                     .min_w_0()
                     .h_full()
                     .overflow_hidden()
-                    .bg(theme.colors.card)
-                    .border_l_1()
-                    .border_color(theme.colors.line)
+                    // Oleafly's page sits on the nav's muted fill; its setting cards stand
+                    // out on it.
+                    .rounded_tr(px(radius))
+                    .rounded_br(px(radius))
+                    .bg(colors.sidebar)
+                    .border_l(px(METRICS.size.divider))
+                    .border_color(colors.line)
+                    .when(title.is_some() || header_end.is_some(), |page| {
+                        let has_end = header_end.is_some();
+                        page.child(
+                            div()
+                                .flex()
+                                .flex_none()
+                                .items_center()
+                                .h(px(CONTENT_HEADER_H))
+                                .pl(px(PAGE_PAD))
+                                .when(!has_end, |header| header.pr(px(PAGE_PAD)))
+                                .border_b(px(METRICS.size.divider))
+                                .border_color(colors.line)
+                                .child(
+                                    text_style(div(), TextStyle::BodyStrong)
+                                        .flex()
+                                        .items_center()
+                                        .flex_1()
+                                        .min_w_0()
+                                        .h_full()
+                                        .text_color(colors.text_1)
+                                        .children(
+                                            title.map(|title| {
+                                                div().min_w_0().truncate().child(title)
+                                            }),
+                                        ),
+                                )
+                                .children(header_end.map(|end| {
+                                    div()
+                                        .flex()
+                                        .flex_none()
+                                        .items_center()
+                                        .h_full()
+                                        .pr(px(PAGE_PAD / 2.))
+                                        .child(end)
+                                })),
+                        )
+                    })
                     .child(
                         div()
                             .id("settings-page")
@@ -242,10 +498,8 @@ impl RenderOnce for SettingsFrame {
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .pt(px(METRICS.space_6))
-                            .px(px(METRICS.space_6))
-                            .pb(px(METRICS.space_8))
-                            .gap(px(METRICS.space_8))
+                            .p(px(PAGE_PAD))
+                            .gap(px(PAGE_PAD))
                             .children(content),
                     ),
             )

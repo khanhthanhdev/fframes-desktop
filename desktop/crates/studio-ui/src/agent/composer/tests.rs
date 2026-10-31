@@ -416,3 +416,173 @@ fn bindings_bind_enter_shift_enter_and_the_chord_per_platform() {
         );
     }
 }
+
+/// The composer at a fixed width, with the bounds of its named parts.
+mod geometry {
+    use std::collections::HashMap;
+
+    use gpui::{Context, IntoElement, Render, Window};
+
+    use super::*;
+    use crate::agent::composer::metrics::{
+        CONTROLS_GAP_TOP, INPUT_INSET_Y, INPUT_MAX_HEIGHT, INPUT_REST_HEIGHT, SHELL_PAD_X,
+    };
+
+    type Bounds = Rc<RefCell<HashMap<String, [f32; 4]>>>;
+
+    struct Host {
+        composer: Entity<Composer>,
+        width: f32,
+    }
+
+    impl Render for Host {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div().w(px(self.width)).child(self.composer.clone())
+        }
+    }
+
+    /// The card is the controls row plus its padding and its 1 px border on each side.
+    fn card_width(controls: f32) -> f32 {
+        controls + 2.0 * SHELL_PAD_X + 2.0
+    }
+
+    fn mount(
+        width: f32,
+        cx: &mut TestAppContext,
+    ) -> (Entity<Composer>, &mut VisualTestContext, Bounds) {
+        cx.update(keymap::init);
+        let bounds = Bounds::default();
+        let sink = bounds.clone();
+        let (host, cx) = cx.add_window_view(|window, cx| {
+            let composer = cx.new(|cx| {
+                let mut composer = Composer::new("Message", Theme::dark(), cx);
+                composer.set_bounds_sink(Rc::new(move |name, rect, _| {
+                    sink.borrow_mut().insert(name.to_owned(), rect);
+                }));
+                composer
+            });
+            let focus = composer.focus_handle(cx);
+            window.focus(&focus, cx);
+            Host { composer, width }
+        });
+        let composer = host.read_with(cx, |host, _| host.composer.clone());
+        redraw(&composer, cx, &bounds);
+        (composer, cx, bounds)
+    }
+
+    /// Draws twice from a clean record: the narrow sizes follow the measured row from the
+    /// next frame.
+    fn redraw(composer: &Entity<Composer>, cx: &mut VisualTestContext, bounds: &Bounds) {
+        for _ in 0..2 {
+            bounds.borrow_mut().clear();
+            composer.update(cx, |_, cx| cx.notify());
+            cx.run_until_parked();
+        }
+    }
+
+    fn get(bounds: &Bounds, name: &str) -> Option<[f32; 4]> {
+        bounds.borrow().get(name).copied()
+    }
+
+    fn side(bounds: &Bounds, name: &str) -> f32 {
+        get(bounds, name).unwrap_or_else(|| panic!("{name} is not drawn"))[2]
+    }
+
+    #[gpui::test]
+    fn the_input_rests_at_56_px_and_grows_to_the_160_px_cap(cx: &mut TestAppContext) {
+        let (composer, cx, bounds) = mount(card_width(480.), cx);
+        assert_eq!(
+            get(&bounds, "composer-input").unwrap()[3],
+            INPUT_REST_HEIGHT
+        );
+        cx.simulate_input("one line");
+        redraw(&composer, cx, &bounds);
+        assert_eq!(
+            get(&bounds, "composer-input").unwrap()[3],
+            INPUT_REST_HEIGHT
+        );
+        for _ in 0..3 {
+            cx.simulate_keystrokes("shift-enter");
+            cx.simulate_input("more");
+        }
+        redraw(&composer, cx, &bounds);
+        let four_lines = get(&bounds, "composer-input").unwrap()[3];
+        assert!(four_lines > INPUT_REST_HEIGHT, "{four_lines}");
+        for _ in 0..20 {
+            cx.simulate_keystrokes("shift-enter");
+            cx.simulate_input("more");
+        }
+        redraw(&composer, cx, &bounds);
+        let capped = get(&bounds, "composer-input").unwrap()[3];
+        // The text area stops at the cap; its insets come on top.
+        assert_eq!(capped, INPUT_MAX_HEIGHT + 2.0 * INPUT_INSET_Y);
+        // The controls sit under the input, the caret's row still above them.
+        let send = get(&bounds, "composer-send").unwrap();
+        let input = get(&bounds, "composer-input").unwrap();
+        assert!(send[1] >= input[1] + input[3] + CONTROLS_GAP_TOP - 0.5);
+    }
+
+    #[gpui::test]
+    fn send_is_32_px_and_shrinks_to_28_in_a_narrow_composer(cx: &mut TestAppContext) {
+        for (controls, narrow) in [
+            (296., true),
+            (384., true),
+            (385., false),
+            (416., false),
+            (496., false),
+        ] {
+            let (_composer, _cx, bounds) = mount(card_width(controls), cx);
+            let (send, attach) = if narrow { (28., 24.) } else { (32., 28.) };
+            assert_eq!(side(&bounds, "composer-send"), send, "row {controls}");
+            assert_eq!(
+                side(&bounds, "composer-attach-file"),
+                attach,
+                "row {controls}"
+            );
+            assert_eq!(
+                side(&bounds, "composer-attach-image"),
+                attach,
+                "row {controls}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn every_running_mode_keeps_stop_and_send_where_supported_in_reach(cx: &mut TestAppContext) {
+        let width = card_width(296.);
+        for (mode, has_send) in [
+            (SteerMode::AtBoundary, true),
+            (SteerMode::Native, true),
+            (SteerMode::None, false),
+        ] {
+            let (composer, cx, bounds) = mount(width, cx);
+            composer.update(cx, |composer, cx| {
+                composer.set_steer_mode(mode, cx);
+                composer.set_running(true, cx);
+                composer.set_model(
+                    Some(ModelChoice {
+                        label: "A very long model name that cannot possibly fit".into(),
+                        on_open: Rc::new(|_, _, _| {}),
+                    }),
+                    cx,
+                );
+            });
+            redraw(&composer, cx, &bounds);
+            let stop = get(&bounds, "composer-stop").expect("Stop shows while running");
+            assert_eq!(stop[2], 28., "{mode:?}");
+            assert!(
+                stop[0] + stop[2] <= width - SHELL_PAD_X + 0.5,
+                "{mode:?}: {stop:?}"
+            );
+            match get(&bounds, "composer-send") {
+                Some(send) => {
+                    assert!(has_send, "{mode:?} has no send");
+                    assert!(send[0] + send[2] <= stop[0], "Send precedes Stop");
+                }
+                None => assert!(!has_send, "{mode:?} lost its send"),
+            }
+            // The attachment targets stay on screen beside the truncated model.
+            assert!(get(&bounds, "composer-attach-file").unwrap()[0] >= 0.);
+        }
+    }
+}

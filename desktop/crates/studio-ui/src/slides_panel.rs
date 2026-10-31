@@ -262,12 +262,8 @@ impl SlidesPanel {
         let theme = self.theme;
         let running = scan.running;
         let mut section = PanelSection::new(&theme, "Suggested")
-            .child(
-                text_style(div(), TextStyle::Small)
-                    .text_color(theme.colors.text_3)
-                    .child("Suggestions never change slides.json until you accept them."),
-            )
-            .child(self.button(
+            .description("Suggestions never change slides.json until you accept them.")
+            .child(natural(self.button(
                 "slides-scan",
                 if scan.running {
                     "Cancel scan"
@@ -284,19 +280,23 @@ impl SlidesPanel {
                         SlidesEvent::ScanStops
                     })
                 },
-            ));
+            )));
         if scan.total > 0 {
             section = section
                 .child(Progress::linear(
                     &theme,
                     scan.completed as f32 / scan.total as f32,
                 ))
-                .child(text_style(div(), TextStyle::Small).child(format!(
-                    "{} / {} frames sampled{}",
-                    scan.completed,
-                    scan.total,
-                    if scan.running { " · scanning" } else { "" }
-                )));
+                .child(
+                    text_style(div(), TextStyle::Small)
+                        .text_color(theme.colors.text_2)
+                        .child(format!(
+                            "{} / {} frames sampled{}",
+                            scan.completed,
+                            scan.total,
+                            if scan.running { " · scanning" } else { "" }
+                        )),
+                );
         }
         if scan.sample_limit {
             section = section.child(Notice::new(
@@ -345,32 +345,32 @@ impl SlidesPanel {
                     .map(|proposal| proposal.stop.clone())
                     .collect(),
             );
-            section = section.child(self.button(
+            section = section.child(natural(self.button(
                 "slides-accept-all",
                 "Accept all",
                 None,
                 self.editable() && refusal.is_none(),
                 cx,
                 move |panel, cx| panel.run(all.clone(), cx),
-            ));
+            )));
         } else if scan.total > 0 && scan.completed == scan.total {
-            section =
-                section.child(text_style(div(), TextStyle::Small).child(
-                    "No new stops found. Accepted, trimmed and duplicate stops are omitted.",
-                ));
+            section = section.child(
+                EmptyState::new(&theme, "No new stops found")
+                    .body("Accepted, trimmed and duplicate stops are omitted."),
+            );
         }
         for (index, proposal) in proposals.iter().enumerate() {
             let accept = command(vec![proposal.stop.clone()]);
             let entity = cx.entity();
             let refusal = suggest::accepting(doc, std::slice::from_ref(proposal)).err();
+            let title = proposal
+                .stop
+                .title
+                .clone()
+                .unwrap_or_else(|| "Untitled".into());
             let row = ListRow::new(&theme, SharedString::from(format!("suggestion-{index}")))
-                .title(
-                    proposal
-                        .stop
-                        .title
-                        .clone()
-                        .unwrap_or_else(|| "Untitled".into()),
-                )
+                .tooltip(title.clone())
+                .title(title)
                 .meta(format!(
                     "{} · {:.2}s · frame {}",
                     proposal.stop.scene,
@@ -389,16 +389,26 @@ impl SlidesPanel {
                 );
             section = section.child(row);
             if let Some(notes) = &proposal.stop.notes {
-                section = section.child(FormField::stacked(
-                    &theme,
-                    "Proposed speaker notes",
-                    text_style(div(), TextStyle::Small)
-                        .w_full()
-                        .min_w_0()
-                        .whitespace_normal()
-                        .text_color(theme.colors.text_2)
-                        .child(notes.clone()),
-                ));
+                // Under its row, aligned with the row's text: a quiet label and the notes.
+                section = section.child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .px(px(METRICS.space_2))
+                        .child(
+                            text_style(div(), TextStyle::Label)
+                                .text_color(theme.colors.text_3)
+                                .child("Proposed speaker notes"),
+                        )
+                        .child(
+                            text_style(div(), TextStyle::Small)
+                                .w_full()
+                                .min_w_0()
+                                .whitespace_normal()
+                                .text_color(theme.colors.text_2)
+                                .child(notes.clone()),
+                        ),
+                );
             }
             if let Some(reason) = refusal {
                 section = section.child(Notice::new(
@@ -464,6 +474,7 @@ impl SlidesPanel {
                     .child(number.to_string()),
             )
             .label(format!("Slide {number}: {title}, {detail}"))
+            .tooltip(title.clone())
             .title(title)
             .meta(detail)
             .selected(self.selected == Some(selected))
@@ -596,11 +607,14 @@ impl Render for SlidesPanel {
             Some(Selected::Default(frame)) => Some(frame),
             None => None,
         };
+        // A compact toolbar (small buttons) that fits the narrowest sidebar on one line and
+        // wraps rather than clipping when a translation is longer.
         section = section.child(
             div()
                 .flex()
+                .flex_wrap()
                 .items_center()
-                .gap(px(METRICS.space_2))
+                .gap(px(METRICS.space_1))
                 .child(
                     self.button(
                         "slides-add",
@@ -610,6 +624,7 @@ impl Render for SlidesPanel {
                         cx,
                         |_, cx| cx.emit(SlidesEvent::AddAtPlayhead),
                     )
+                    .size(ButtonSize::Sm)
                     .tooltip("Add a stop at the playhead"),
                 )
                 .child(
@@ -626,7 +641,9 @@ impl Render for SlidesPanel {
                             }
                         },
                     )
-                    .emphasis(Emphasis::Ghost),
+                    .size(ButtonSize::Sm)
+                    .emphasis(Emphasis::Ghost)
+                    .tooltip("Remove the selected stop"),
                 )
                 .child(div().flex_1())
                 .child(
@@ -642,16 +659,16 @@ impl Render for SlidesPanel {
                             }
                         },
                     )
+                    .size(ButtonSize::Sm)
                     .emphasis(Emphasis::Ghost)
                     .tooltip("Present from here"),
                 ),
         );
         if let SlidesEditing::Disabled(reason) = &snapshot.editing {
-            section = section.child(Notice::new(
-                "slides-disabled",
-                Tone::Warning,
-                format!("Slide edits are disabled: {reason}"),
-            ));
+            section = section.child(
+                Notice::new("slides-disabled", Tone::Warning, "Slide edits are disabled")
+                    .body(reason.clone()),
+            );
         }
         if let Some(notice) = &snapshot.notice {
             section = section.child(Notice::new("slides-notice", Tone::Info, notice.clone()));
@@ -727,6 +744,11 @@ impl Render for SlidesPanel {
         }
         scroll(section)
     }
+}
+
+/// A button at its natural width: a section's column would otherwise stretch it.
+fn natural(button: Button) -> gpui::Div {
+    div().flex().child(button)
 }
 
 /// How a problem names a stop: by its title, else by its scene, never by its position

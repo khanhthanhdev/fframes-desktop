@@ -22,8 +22,6 @@ struct Derived {
     on_accent: Rgba,
     focus: Rgba,
     selection: Rgba,
-    tooltip_bg: Rgba,
-    tooltip_text: Rgba,
     success: Rgba,
     success_bg: Rgba,
     warning: Rgba,
@@ -41,16 +39,13 @@ struct Derived {
     track_audio: Rgba,
 }
 
-fn derived(r: &Radix, accent: Rgba, ctl: Rgba) -> Derived {
+fn derived(r: &Radix, accent: Rgba) -> Derived {
     Derived {
         present_bg: hex(0x000000),
         on_accent: hex(0xffffff),
         focus: accent,
         // The accent at 25 %.
         selection: rgba_alpha(accent, 0x40 as f32 / 255.),
-        // The inverse of the window, in both appearances.
-        tooltip_bg: r.gray_12,
-        tooltip_text: r.gray_1,
         success: r.green_11,
         success_bg: r.green_3,
         warning: r.amber_11,
@@ -60,7 +55,8 @@ fn derived(r: &Radix, accent: Rgba, ctl: Rgba) -> Derived {
         danger_hover: mix(r.red_3, r.red_11, 0.12),
         danger_active: mix(r.red_3, r.red_11, 0.22),
         info: accent,
-        info_bg: ctl,
+        // Oleafly's `bg-primary/10`: Info badges, notices and selected radio cards.
+        info_bg: rgba_alpha(accent, 0.10),
         scope: r.amber_11,
         scrim: Rgba {
             r: 0.,
@@ -76,39 +72,43 @@ fn derived(r: &Radix, accent: Rgba, ctl: Rgba) -> Derived {
 
 impl Colors {
     pub fn light() -> Self {
-        let (accent, ctl) = (rgb(0x0066e0), rgba(0x0000000b));
-        let d = derived(&radix::LIGHT, accent, ctl);
+        // Control fills are translucent so they show on every surface, `card_2` included.
+        let (accent, ctl) = (rgb(0x2563eb), rgba(0x0000000f));
+        let d = derived(&radix::LIGHT, accent);
         Self {
-            window: rgb(0xf1f1f3),
-            card: rgb(0xffffff),
-            card_2: rgb(0xf6f6f7),
-            stage: rgb(0xe9e9ec),
-            line: rgba(0x00000013),
-            line_strong: rgba(0x0000001f),
-            text_1: rgb(0x1c1c1e),
-            text_2: rgb(0x66666d),
-            text_3: rgb(0x7a7a82),
+            window: rgb(0xffffff),
+            card: rgb(0xfafafa),
+            card_2: rgb(0xf1f1f1),
+            sidebar: rgb(0xf7f7f7),
+            popover: rgb(0xfafafa),
+            stage: rgb(0xf7f7f7),
+            line: rgb(0xdedede),
+            line_strong: rgb(0xa1a1a1),
+            text_1: rgb(0x0a0a0a),
+            // A little stronger than Oleafly's #737373 to retain 4.5:1 on nested cards.
+            text_2: rgb(0x6b6b6b),
+            text_3: rgb(0x737373),
             ctl,
-            ctl_hover: rgba(0x00000013),
-            ctl_active: rgba(0x0000001c),
+            ctl_hover: rgba(0x0000001a),
+            ctl_active: rgba(0x00000024),
             accent,
-            accent_2: rgb(0x0b6fe6),
+            accent_2: rgb(0x1d4ed8),
             playhead: rgb(0xff3b30),
             thumb: rgb(0xffffff),
             seg_tint: 0.13,
             seg_line: 0.34,
             seg_label_base: rgb(0x000000),
             seg_label_mix: 0.58,
-            card_shadow_alpha: 0.04,
-            pop_shadow_alpha: 0.25,
-            pop_shadow_offset: 12.,
-            pop_shadow_blur: 32.,
+            card_shadow_alpha: 0.,
+            pop_shadow_alpha: 0.15,
+            pop_shadow_offset: 4.,
+            pop_shadow_blur: 12.,
             present_bg: d.present_bg,
             on_accent: d.on_accent,
             focus: d.focus,
             selection: d.selection,
-            tooltip_bg: d.tooltip_bg,
-            tooltip_text: d.tooltip_text,
+            tooltip_bg: rgb(0xfafafa),
+            tooltip_text: rgb(0x0a0a0a),
             success: d.success,
             success_bg: d.success_bg,
             warning: d.warning,
@@ -134,39 +134,41 @@ impl Colors {
     }
 
     pub fn dark() -> Self {
-        let (accent, ctl) = (rgb(0x0866d8), rgba(0xffffff0f));
-        let d = derived(&radix::DARK, accent, ctl);
+        let (accent, ctl) = (rgb(0x2563eb), rgba(0xffffff14));
+        let d = derived(&radix::DARK, accent);
         Self {
-            window: rgb(0x131315),
-            card: rgb(0x1b1b1e),
-            card_2: rgb(0x202024),
-            stage: rgb(0x121214),
-            line: rgba(0xffffff14),
-            line_strong: rgba(0xffffff21),
-            text_1: rgb(0xf4f4f5),
-            text_2: rgb(0x9a9aa3),
-            text_3: rgb(0x7c7c86),
+            window: rgb(0x0a0a0a),
+            card: rgb(0x171717),
+            card_2: rgb(0x262626),
+            sidebar: rgb(0x171717),
+            popover: rgb(0x121212),
+            stage: rgb(0x171717),
+            line: rgba(0xffffff1a),
+            line_strong: rgba(0xffffff26),
+            text_1: rgb(0xfafafa),
+            text_2: rgb(0xa1a1a1),
+            text_3: rgb(0x8b8b8b),
             ctl,
-            ctl_hover: rgba(0xffffff17),
-            ctl_active: rgba(0xffffff21),
+            ctl_hover: rgba(0xffffff1f),
+            ctl_active: rgba(0xffffff29),
             accent,
-            accent_2: rgb(0x1272e4),
+            accent_2: rgb(0x1d4ed8),
             playhead: rgb(0xff453a),
             thumb: rgb(0xe8e8ea),
             seg_tint: 0.20,
             seg_line: 0.42,
             seg_label_base: rgb(0xffffff),
             seg_label_mix: 0.55,
-            card_shadow_alpha: 0.30,
-            pop_shadow_alpha: 0.60,
-            pop_shadow_offset: 16.,
-            pop_shadow_blur: 40.,
+            card_shadow_alpha: 0.,
+            pop_shadow_alpha: 0.30,
+            pop_shadow_offset: 4.,
+            pop_shadow_blur: 12.,
             present_bg: d.present_bg,
             on_accent: d.on_accent,
             focus: d.focus,
             selection: d.selection,
-            tooltip_bg: d.tooltip_bg,
-            tooltip_text: d.tooltip_text,
+            tooltip_bg: rgb(0x121212),
+            tooltip_text: rgb(0xfafafa),
             success: d.success,
             success_bg: d.success_bg,
             warning: d.warning,
@@ -182,7 +184,7 @@ impl Colors {
             track_clip: d.track_clip,
             track_overlay: d.track_overlay,
             track_audio: d.track_audio,
-            segment_selected: rgba(0xffffff1f),
+            segment_selected: rgb(0x383838),
             caption_glyph: rgb(0xffffff),
             caption_hover: rgba(0xffffff0d),
             caption_pressed: rgba(0xe9e9e908),
@@ -357,19 +359,19 @@ mod tests {
         // Clip blue 3b82f6 mixed into card; expected bytes computed from the rule
         // (fill 13 %/20 %, +10 points selected, border 34 %/42 %, label 58 %/55 %).
         let light = segment_colors_for(Appearance::Light, TrackKind::Clip, false);
-        assert_close(light.fill, 0xe6effe, "light fill");
-        assert_close(light.border, 0xbcd4fc, "light border");
+        assert_close(light.fill, 0xe1eaf9, "light fill");
+        assert_close(light.border, 0xb9d1f9, "light border");
         assert_close(light.label, 0x193767, "light label");
         let light_selected = segment_colors_for(Appearance::Light, TrackKind::Clip, true);
-        assert_close(light_selected.fill, 0xd2e2fd, "light selected fill");
+        assert_close(light_selected.fill, 0xcedef9, "light selected fill");
         assert_eq!(light_selected.border, light.border);
 
         let dark = segment_colors_for(Appearance::Dark, TrackKind::Audio, false);
-        assert_close(dark.fill, 0x1c3d2b, "dark fill");
-        assert_close(dark.border, 0x1e6239, "dark border");
+        assert_close(dark.fill, 0x193a25, "dark fill");
+        assert_close(dark.border, 0x1c6035, "dark border");
         assert_close(dark.label, 0x9ce5b7, "dark label");
         let dark_selected = segment_colors_for(Appearance::Dark, TrackKind::Audio, true);
-        assert_close(dark_selected.fill, 0x1d4e31, "dark selected fill");
+        assert_close(dark_selected.fill, 0x1a4b2c, "dark selected fill");
         for color in [light.fill, light.border, light.label, dark.fill] {
             assert_eq!(color.a, 1.);
         }

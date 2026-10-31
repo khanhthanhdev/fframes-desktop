@@ -3,7 +3,7 @@
 
 use std::path::PathBuf;
 
-use gpui::{Context, IntoElement, ParentElement, Styled, div, px};
+use gpui::{Context, InteractiveElement, IntoElement, ParentElement, Styled, div, px};
 use studio_engine::project_presentation::ProjectPresentation;
 use studio_engine::services::export_service::ExportProgress;
 use studio_project::{ProjectId, SourceRevision};
@@ -11,7 +11,6 @@ use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
 use super::StudioShell;
 use super::left_column::{SidebarTab, tab_rail};
-use crate::kit::Card;
 
 /// The window the pieces are laid out in: the gallery's content width.
 const WIDTH: f32 = 1200.;
@@ -59,7 +58,21 @@ impl StudioShell {
         let main = std::mem::replace(&mut self.theme, theme);
         let header = self.render_header(cx);
         let notices = self.render_notices(cx);
-        let transport = self.render_transport(cx);
+        // The transport at the narrowest width of each of its modes: Full, Compact and Narrow.
+        let player_width = self.player_width;
+        let layout = METRICS.layout;
+        let transports: Vec<_> = [
+            ("Full", layout.transport_compact_below),
+            ("Compact", layout.transport_narrow_below),
+            ("Narrow", layout.transport_total_hidden_below),
+        ]
+        .into_iter()
+        .map(|(mode, width)| {
+            self.player_width = width;
+            (mode, width, self.render_transport(cx))
+        })
+        .collect();
+        self.player_width = player_width;
         let status = self.render_status_strip(cx);
         let empty = (state == 0).then(|| self.render_empty_state(cx));
         self.theme = main;
@@ -89,19 +102,28 @@ impl StudioShell {
             )
             .child(caption("Sidebar tab rail (Props selected)"))
             .child(
-                div().w(px(METRICS.layout.sidebar_w)).child(
-                    Card::raised(&theme)
-                        .flex()
-                        .flex_col()
-                        .overflow_hidden()
-                        .child(rail),
-                ),
+                div()
+                    .w(px(METRICS.layout.sidebar_w))
+                    .flex()
+                    .flex_col()
+                    .bg(theme.colors.sidebar)
+                    .child(rail),
             )
             .children(
                 empty.map(|empty| div().h(px(METRICS.layout.player_min_h)).flex().child(empty)),
             )
-            .child(caption("Transport"))
-            .child(div().w(px(WIDTH * 0.6)).child(transport))
+            .children(transports.into_iter().flat_map(|(mode, width, transport)| {
+                [
+                    caption(&format!("Transport, {mode} ({width} px player)")).into_any_element(),
+                    // Its own id, so the three bars' controls do not share element ids.
+                    div()
+                        .id(mode)
+                        .flex_none()
+                        .w(px(width))
+                        .child(transport)
+                        .into_any_element(),
+                ]
+            }))
             .child(caption("Status bar"))
             .children(status)
             .into_any_element()

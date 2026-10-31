@@ -9,7 +9,7 @@ license = "MIT"
 [dependencies]
 fframes = { path = "../../../fframes", version = "1.3.0", features = ["compile-time-svgtree"] }
 # The release the managed SDK vendors (its `kit_version`).
-fframes-kit = "=0.3.0"
+fframes-kit = "=0.2.0"
 fframes-studio-kit = { path = "../../../fframes-studio-kit" }
 fframes-studio-protocol = { path = "../../../fframes-studio-protocol", version = "0.2.0" }
 fframes-studio-runtime = { path = "../../../fframes-studio-runtime", version = "0.2.0" }

@@ -17,13 +17,16 @@ const TRAY_HEADER_H: f32 = 32.;
 pub const TRAY_MAX_H: f32 = 220.;
 /// A long item wraps up to this many lines, then ends in an ellipsis.
 const ITEM_MAX_LINES: usize = 3;
+/// How far the sheet is inset from the composer's sides: where it meets the composer's
+/// 22 px corner, so the sheet's sides run into the card's curve rather than past it.
+const TRAY_INSET_X: f32 = METRICS.space_3;
 
-/// The sheet the trays sit on: `card_2` behind a `line` border, round at the top only, inset
-/// from the composer's sides and running under its top edge.
+/// The sheet the trays sit on: `card_2` behind a `line` border, round (10 px, Oleafly's queue
+/// rows) at the top only, inset from the composer's sides and running under its top edge.
 pub fn tray_frame(theme: &Theme) -> Div {
     let colors = theme.colors;
     div()
-        .mx(px(METRICS.space_2))
+        .mx(px(TRAY_INSET_X))
         .mb(px(-METRICS.space_2))
         .pb(px(METRICS.space_2))
         .flex()
@@ -206,6 +209,7 @@ pub struct TrayRow {
     note: Option<(SharedString, gpui::Rgba)>,
     action: Option<AnyElement>,
     selector: Option<String>,
+    single_line: bool,
 }
 
 impl TrayRow {
@@ -219,6 +223,7 @@ impl TrayRow {
             note: None,
             action: None,
             selector: None,
+            single_line: false,
         }
     }
 
@@ -249,6 +254,12 @@ impl TrayRow {
         self.selector = Some(selector);
         self
     }
+
+    /// One line ending in an ellipsis, as a queued message shows its first line.
+    pub fn single_line(mut self) -> Self {
+        self.single_line = true;
+        self
+    }
 }
 
 impl RenderOnce for TrayRow {
@@ -262,6 +273,7 @@ impl RenderOnce for TrayRow {
             note,
             action,
             selector,
+            single_line,
         } = self;
         let colors = theme.colors;
         let group = SharedString::from(format!("tray-row-{id}"));
@@ -270,8 +282,12 @@ impl RenderOnce for TrayRow {
             TrayRowState::Current => colors.text_1,
             TrayRowState::Pending => colors.text_2,
         };
-        let mut body =
-            text_style(div().line_clamp(ITEM_MAX_LINES), TextStyle::Label).text_color(color);
+        let body = if single_line {
+            div().min_w_0().truncate()
+        } else {
+            div().line_clamp(ITEM_MAX_LINES)
+        };
+        let mut body = text_style(body, TextStyle::Label).text_color(color);
         if state == TrayRowState::Done {
             body = body.line_through();
         }

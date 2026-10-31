@@ -4,8 +4,7 @@
 //! gpui already owns the hover/dismiss half of the contract: `.tooltip(..)` on
 //! any interactive element shows a view after `tooltip_show_delay` and hides it
 //! on mouse-leave. What it does not own is the *look*, or the kbd chips, which
-//! is what this is. `openDelay={200}` is the Solid default and the default
-//! here.
+//! is what this is. Studio uses Oleafly's 300 ms hover delay.
 //!
 //! Not reproduced: the forced-open override the Solid `Slider` uses to pin a
 //! value tooltip to the thumb mid-drag, and `getAnchorRect`. gpui's tooltip is
@@ -24,15 +23,17 @@ use studio_theme::{METRICS, MOTION, Shadow, TextStyle, Theme, shadow_for, text_s
 
 use crate::kit::kbd::{KbdChip, kbd_symbol};
 
-/// `openDelay={200}`.
+/// The shared 300 ms hover delay.
 pub const TOOLTIP_SHOW_DELAY: Duration = MOTION.tooltip_delay;
 
-/// The bubble's paddings and least width.
-const PAD_X: f32 = 6.;
+/// The bubble's paddings, least width and greatest width (Oleafly's ordinary 260 px), past
+/// which a long label wraps.
+const PAD_X: f32 = METRICS.space_2;
 const PAD_Y: f32 = 4.;
 const MIN_W: f32 = 24.;
+const MAX_W: f32 = 260.;
 
-/// A tooltip body: `tooltip_text` on `tooltip_bg`, the inverse of the window, with
+/// A tooltip body: `tooltip_text` on the floating `tooltip_bg` surface, with
 /// optional key chips. Build it with [`Tooltip::view`] and hand that to `.tooltip(..)`.
 pub struct Tooltip {
     label: SharedString,
@@ -74,19 +75,24 @@ impl Render for Tooltip {
         let colors = theme.colors;
         let keys = self.keys.clone();
 
-        text_style(div(), TextStyle::Label)
+        // A tooltip is a root of its own and does not inherit the window's family.
+        // Oleafly's `text-xs`: 12 px at the regular weight.
+        text_style(div().font_family(studio_theme::UI_FONT), TextStyle::Small)
             .flex()
             .flex_row()
             .items_center()
             .gap(px(PAD_X))
             .min_w(px(MIN_W))
+            .max_w(px(MAX_W))
             .px(px(PAD_X))
             .py(px(PAD_Y))
-            .rounded(px(METRICS.radius.item))
+            .rounded(px(METRICS.radius.control))
+            .border(px(METRICS.size.divider))
+            .border_color(colors.line)
             .bg(colors.tooltip_bg)
             .text_color(colors.tooltip_text)
             .shadow(shadow_for(theme.appearance, Shadow::Pop).into_vec())
-            .child(self.label.clone())
+            .child(div().min_w_0().child(self.label.clone()))
             .children(
                 keys.into_iter()
                     .map(|key| KbdChip::new(&theme, key.as_ref()).in_tooltip()),

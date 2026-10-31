@@ -111,9 +111,9 @@ impl Paint {
 /// A text button's height.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ButtonSize {
-    /// 24 px, `Label` text: compact rows and inline actions.
+    /// 24 px, `Label` text: compact rows and inline actions (Oleafly's `xs`).
     Sm,
-    /// 28 px, `Body` text: the default.
+    /// 32 px, `Label` text: the default (Oleafly's `sm`, its most used size).
     #[default]
     Md,
 }
@@ -127,10 +127,7 @@ impl ButtonSize {
     }
 
     fn text(self) -> TextStyle {
-        match self {
-            Self::Sm => TextStyle::Label,
-            Self::Md => TextStyle::Body,
-        }
+        TextStyle::Label
     }
 
     fn icon(self) -> f32 {
@@ -141,12 +138,10 @@ impl ButtonSize {
     }
 }
 
-/// A text button's horizontal padding: Cap's `px-[7px]`.
-const BUTTON_PAD_X: f32 = 7.;
 /// The trailing chevron of a menu trigger.
-const CHEVRON: f32 = 10.;
+const CHEVRON: f32 = 16.;
 /// Space between a button's icons and its label.
-const BUTTON_GAP: f32 = 6.;
+const BUTTON_GAP: f32 = METRICS.space_2;
 
 #[derive(IntoElement)]
 pub struct Button {
@@ -326,6 +321,14 @@ impl RenderOnce for Button {
         let icon_hover = (!disabled && !pressed).then_some(paint.hover_text);
         let name = label.clone().or_else(|| tooltip.clone());
         let height = px(size.height());
+        let padding = if label.is_none() {
+            0.
+        } else {
+            match size {
+                ButtonSize::Sm => METRICS.space_2,
+                ButtonSize::Md => METRICS.space_3,
+            }
+        };
 
         let element = focusable(div().id(id), &theme, disabled)
             .role(Role::Button)
@@ -336,7 +339,7 @@ impl RenderOnce for Button {
             .flex_row()
             .items_center()
             .justify_center()
-            .px(px(BUTTON_PAD_X))
+            .px(px(padding))
             .gap(px(BUTTON_GAP))
             .h(height)
             .min_w(height)
@@ -680,7 +683,7 @@ mod tests {
         let bounds = seen.get().expect("painted");
         assert_eq!(
             (f32::from(bounds.size.width), f32::from(bounds.size.height)),
-            (80., 28.)
+            (80., 32.)
         );
     }
 
@@ -738,7 +741,7 @@ mod tests {
     #[test]
     fn sizes_follow_the_metrics() {
         assert_eq!(ButtonSize::Sm.height(), 24.);
-        assert_eq!(ButtonSize::Md.height(), 28.);
+        assert_eq!(ButtonSize::Md.height(), 32.);
         assert_eq!(IconButtonSize::Sm.box_and_glyph(), (24., 14.));
         assert_eq!(IconButtonSize::Md.box_and_glyph(), (28., 16.));
         assert_eq!(IconButtonSize::Lg.box_and_glyph(), (32., 16.));

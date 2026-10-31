@@ -1,22 +1,23 @@
-//! The tabbed sidebar right of the player (Agent, Project, Assets, Style, Props and Slides),
-//! and the empty state with recent projects.
+//! The tabbed sidebar right of the player (Agent, Project, Assets, Style, Props and Slides).
+//! The start screen and the recent-projects list are in `home.rs`.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use gpui::{
     Context, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
     div, prelude::FluentBuilder, px,
 };
-use studio_engine::engine::backend::Command;
+use studio_engine::engine::backend::{Command, Recent};
 use studio_theme::{METRICS, TextStyle, text_style};
 
 use super::sections::{Section, box_probe, section_probe};
 use super::settings::SettingsPage;
 use super::{Picker, StudioShell};
 use crate::kit::{
-    Badge, Button, ButtonSize, Card, CollapsibleSection, Divider, Emphasis, EmptyState, FormField,
-    Icon, IconButton, IconButtonSize, List, ListRow, PanelSection, StatusDot, TabRail, TabRailItem,
-    Tone, selectable,
+    ButtonSize, Card, CollapsibleSection, Emphasis, EmptyState, ExplorerSection, FileKind,
+    FileTree, FormField, Icon, IconButton, IconButtonSize, List, ListRow, PanelSection, StatusDot,
+    TabRail, TabRailItem, Tone, TreeExpansion, build_tree, selectable, visible_rows,
 };
 
 impl StudioShell {
@@ -41,7 +42,12 @@ impl StudioShell {
             SidebarTab::Agent => sections.agent.clone(),
             _ => sections.drawer.clone(),
         };
-        Card::raised(&theme)
+        // Only the left edge is a seam: the header's hairline is above the sidebar and the
+        // timeline's below it.
+        div()
+            .bg(theme.colors.sidebar)
+            .border_l(px(METRICS.size.divider))
+            .border_color(theme.colors.line)
             .relative()
             .size_full()
             .flex()
@@ -70,6 +76,12 @@ impl StudioShell {
             // The Agent tab draws the agent section instead; this one is not in the tree.
             SidebarTab::Project | SidebarTab::Agent => self.render_project_tab(cx),
         };
+        // The Project and Assets explorers run edge to edge, as Oleafly's do, and pad
+        // themselves.
+        let padded = !matches!(
+            self.sidebar_tab,
+            SidebarTab::Project | SidebarTab::Assets | SidebarTab::Agent
+        );
         div()
             .id("drawer")
             .relative()
@@ -77,87 +89,195 @@ impl StudioShell {
             .min_h_0()
             .flex()
             .flex_col()
-            .p(px(METRICS.space_4))
+            .when(padded, |drawer| drawer.p(px(METRICS.space_4)))
             .child(content)
             .child(section_probe(Section::Drawer, cx))
             .into_any_element()
     }
 
-    /// A project file's row: icon and name; a click reveals the file. The full name is the
-    /// tooltip.
-    fn file_row(&self, root: &Path, file: &str, glyph: Icon) -> ListRow {
+    /// A style file's row: a 16 px icon for its kind and its project-relative path,
+    /// truncated; a click reveals the file. The full path on disk is the tooltip.
+    fn file_row(&self, root: &Path, file: &str) -> ListRow {
         let path = root.join(file);
+        let shown = studio_bootstrap::external_path(&path).display().to_string();
+        let kind = FileKind::of(file);
         ListRow::new(&self.theme, format!("file-{file}"))
-            .icon(glyph)
+            .leading(crate::kit::icon(
+                kind.icon(),
+                METRICS.size.icon_md,
+                kind.color(&self.theme),
+            ))
             .title(file.to_owned())
-            .tooltip(file.to_owned())
+            .tooltip(shown)
+            .label(file.to_owned())
             .on_click(move |_, cx| cx.reveal_path(&path))
     }
 
-    /// The file list of a project tab, or the hint shown while no project is open.
-    fn file_list(
+    /// A project tab's Explorer, after Oleafly's: a folder tree of the project's files (or
+    /// assets) under a collapsible header with the count and Collapse all, or the no-project
+    /// state while none is open. A file row reveals the file and becomes the selected row;
+    /// a folder row opens or closes. The full path on disk is each row's tooltip.
+    fn explorer(
         &self,
-        files: Option<&[String]>,
-        root: Option<&Path>,
-        glyph: Icon,
-        empty: &'static str,
-    ) -> gpui::Stateful<gpui::Div> {
+        tree: ExplorerTree,
+        empty: EmptyState,
+        without_project: &str,
+        cx: &mut Context<Self>,
+    ) -> ExplorerSection {
         let theme = self.theme;
-        let list = match (files, root) {
-            (Some(files), Some(root)) => List::new()
-                .children(files.iter().map(|file| self.file_row(root, file, glyph)))
-                .empty(EmptyState::new(&theme, empty)),
-            _ => List::new().empty(EmptyState::new(
-                &theme,
-                "Create or open a project to browse its files.",
-            )),
+        let project = self.presentation.project.as_ref();
+        let root = project.map(|p| p.root.clone());
+        let state = root
+            .as_deref()
+            .map(|root| self.explorers.get(root, tree))
+            .unwrap_or_default();
+        let (id, glyph, title) = match tree {
+            ExplorerTree::Files => ("explorer", Icon::Folder, "Explorer"),
+            ExplorerTree::Assets => ("assets-explorer", Icon::Image, "Assets"),
         };
-        div()
-            .id("inventory")
-            .flex_1()
-            .min_h_0()
-            .overflow_y_scroll()
-            .child(list)
+        let mut section = ExplorerSection::new(&theme, id, glyph, title, !state.closed);
+        let Some((project, root)) = project.zip(root) else {
+            return section.child(
+                div()
+                    .px(px(METRICS.space_4))
+                    .py(px(METRICS.space_2))
+                    .child(no_project(&theme, without_project)),
+            );
+        };
+        let files = match tree {
+            ExplorerTree::Files => &project.files,
+            ExplorerTree::Assets => &project.assets,
+        };
+        section = section.count(match tree {
+            ExplorerTree::Files => project.file_count,
+            ExplorerTree::Assets => project.assets.len(),
+        });
+
+        let entity = cx.entity();
+        let at = root.clone();
+        section = section.on_toggle(move |open, _, cx| {
+            entity.update(cx, |shell, cx| {
+                shell
+                    .explorers
+                    .update(&at, tree, |state| state.closed = !open);
+                cx.notify();
+            });
+        });
+        let entity = cx.entity();
+        let at = root.clone();
+        section = section.action(
+            IconButton::new(
+                &theme,
+                format!("{id}-collapse-all"),
+                Icon::ChevronsDownUp.path(),
+            )
+            .size(IconButtonSize::Sm)
+            .emphasis(Emphasis::Ghost)
+            .label("Collapse all")
+            .tooltip("Collapse all")
+            .disabled(files.is_empty())
+            .on_click(move |_, _, cx| {
+                entity.update(cx, |shell, cx| {
+                    shell
+                        .explorers
+                        .update(&at, tree, |state| state.expansion.collapse_all());
+                    cx.notify();
+                });
+            }),
+        );
+
+        let rows = visible_rows(&build_tree(files), &state.expansion);
+        let body = if rows.is_empty() {
+            div()
+                .px(px(METRICS.space_4))
+                .py(px(METRICS.space_2))
+                .child(empty)
+                .into_any_element()
+        } else {
+            let toggle = {
+                let entity = cx.entity();
+                let at = root.clone();
+                move |row: &crate::kit::TreeRow, _: &mut gpui::Window, cx: &mut gpui::App| {
+                    entity.update(cx, |shell, cx| {
+                        shell.explorers.update(&at, tree, |state| {
+                            state.expansion.set_open(&row.path, !row.open)
+                        });
+                        cx.notify();
+                    });
+                }
+            };
+            let open = {
+                let entity = cx.entity();
+                let at = root.clone();
+                move |row: &crate::kit::TreeRow, _: &mut gpui::Window, cx: &mut gpui::App| {
+                    entity.update(cx, |shell, cx| {
+                        shell
+                            .explorers
+                            .update(&at, tree, |state| state.selected = Some(row.path.clone()));
+                        cx.notify();
+                    });
+                    cx.reveal_path(&at.join(&row.path));
+                }
+            };
+            let at = root.clone();
+            FileTree::new(&theme, "file", rows)
+                .selected(state.selected.clone())
+                .tooltip(move |row| {
+                    Some(
+                        studio_bootstrap::external_path(&at.join(&row.path))
+                            .display()
+                            .to_string()
+                            .into(),
+                    )
+                })
+                .on_toggle(toggle)
+                .on_open(open)
+                .into_any_element()
+        };
+        section = section.child(
+            div()
+                .id("inventory")
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .child(body),
+        );
+        if tree == ExplorerTree::Files && project.file_count > project.files.len() {
+            section = section.child(
+                text_style(div(), TextStyle::Small)
+                    .flex_none()
+                    .px(px(METRICS.space_3))
+                    .py(px(METRICS.space_2))
+                    .text_color(theme.colors.text_3)
+                    .child(selectable(format!(
+                        "Showing {} of {} files",
+                        project.files.len(),
+                        project.file_count
+                    ))),
+            );
+        }
+        section
     }
 
     fn render_project_tab(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
         let project = self.presentation.project.clone();
-        let files = self.file_list(
-            project.as_ref().map(|p| p.files.as_slice()),
-            project.as_ref().map(|p| p.root.as_path()),
-            Icon::File,
-            "No files to show",
+        let explorer = self.explorer(
+            ExplorerTree::Files,
+            EmptyState::new(&theme, "No files to show"),
+            "browse its files",
+            cx,
         );
-        let mut section = PanelSection::new(&theme, "Files")
-            .grow()
-            .when_some(project.as_ref(), |section, p| {
-                section.trailing(Badge::new(p.file_count.to_string()))
-            })
-            .child(files);
-        if let Some(p) = &project
-            && p.file_count > p.files.len()
-        {
-            section = section.child(
-                text_style(div(), TextStyle::Small)
-                    .flex_none()
-                    .text_color(theme.colors.text_3)
-                    .child(selectable(format!(
-                        "Showing {} of {} files",
-                        p.files.len(),
-                        p.file_count
-                    ))),
-            );
-        }
         // The files and the library start at their content's height and share what is
         // missing, so neither collapses in a short window.
-        let mut tab = div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .gap(px(METRICS.space_3))
-            .child(div().flex_auto().min_h_0().flex().flex_col().child(section));
+        let mut tab = div().flex_1().min_h_0().flex().flex_col().child(
+            div()
+                .flex_auto()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(explorer),
+        );
 
         if project.is_some() {
             let entity = cx.entity();
@@ -168,8 +288,9 @@ impl StudioShell {
                 .overflow_y_scroll()
                 .flex()
                 .flex_col()
-                .gap(px(METRICS.space_3))
-                .child(Divider::horizontal(&theme))
+                .p(px(METRICS.space_4))
+                .border_t(px(METRICS.size.divider))
+                .border_color(theme.colors.line)
                 .child(
                     CollapsibleSection::new("recents-section", self.recents_open)
                         .header(
@@ -191,30 +312,12 @@ impl StudioShell {
     }
 
     fn render_assets_tab(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme;
         let project = self.presentation.project.clone();
-        let files = self.file_list(
-            project.as_ref().map(|p| p.assets.as_slice()),
-            project.as_ref().map(|p| p.root.as_path()),
-            Icon::Image,
-            "No assets imported",
-        );
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .items_start()
-            .gap(px(METRICS.space_3))
-            .child(
-                div()
-                    .flex_1()
-                    .min_h_0()
-                    .w_full()
-                    .flex()
-                    .flex_col()
-                    .child(PanelSection::new(&self.theme, "Assets").grow().child(files)),
-            )
-            .child(self.action_button(
+        // The section's one action sits at the end of its header, as a small button that
+        // always shows.
+        let copy = self
+            .action_button(
                 "asset",
                 "Copy asset…",
                 !self.busy && project.is_some(),
@@ -222,33 +325,40 @@ impl StudioShell {
                 Some(Icon::Plus),
                 cx,
                 |s, cx| s.pick(Picker::Asset, cx),
-            ))
-            .into_any_element()
-    }
-
-    fn render_style_tab(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let theme = self.theme;
-        let styles = self.presentation.project.as_ref().map(|p| {
-            PanelSection::new(&theme, "Style").child(
-                List::new()
-                    .children(
-                        p.styles
-                            .iter()
-                            .map(|file| self.file_row(&p.root, file, Icon::File)),
-                    )
-                    .empty(EmptyState::new(&theme, "No style preset configured")),
             )
-        });
+            .size(ButtonSize::Sm);
+        let explorer = self
+            .explorer(
+                ExplorerTree::Assets,
+                EmptyState::new(&theme, "No assets imported")
+                    .body("Copy an image, video or audio file into the project to use it."),
+                "copy assets into it",
+                cx,
+            )
+            .trailing(copy);
         div()
             .flex_1()
             .min_h_0()
             .flex()
             .flex_col()
-            .items_start()
-            .gap(px(METRICS.space_3))
-            .children(styles.map(|styles| div().w_full().child(styles)))
-            // The presets themselves are chosen in Settings → Presets.
-            .child(self.action_button(
+            .child(explorer)
+            .into_any_element()
+    }
+
+    fn render_style_tab(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+        let theme = self.theme;
+        let styles = match &self.presentation.project {
+            Some(p) => List::new()
+                .children(p.styles.iter().map(|file| self.file_row(&p.root, file)))
+                .empty(
+                    EmptyState::new(&theme, "No style preset configured")
+                        .body("Choose one in Style presets; it styles the video, not Studio."),
+                ),
+            None => List::new().empty(no_project(&theme, "see its style files")),
+        };
+        // The presets themselves are chosen in Settings → Presets.
+        let presets = self
+            .action_button(
                 "open-presets",
                 "Style presets…",
                 true,
@@ -256,80 +366,21 @@ impl StudioShell {
                 Some(Icon::Palette),
                 cx,
                 |s, cx| s.open_settings_page(SettingsPage::Presets, cx),
-            ))
+            )
+            .size(ButtonSize::Sm);
+        div()
+            .id("style-tab")
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .overflow_y_scroll()
+            .child(
+                PanelSection::new(&theme, "Style files")
+                    .trailing(presets)
+                    .child(styles),
+            )
             .into_any_element()
-    }
-
-    /// The recent-projects list. Rendered once: in the left column while a project is
-    /// open, in the empty state otherwise, so its element ids stay unique.
-    fn render_recents(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
-        let theme = self.theme;
-        let enabled = !self.busy;
-        let rows = self.presentation.recents.clone().into_iter().map(|recent| {
-            let id = String::from(recent.id.clone());
-            let shown_path = studio_bootstrap::external_path(&recent.path)
-                .display()
-                .to_string();
-
-            // Shown on pointer hover and while keyboard focus is inside them.
-            let mut actions = div()
-                .id(format!("recent-actions-{id}"))
-                .flex()
-                .items_center()
-                .gap(px(METRICS.space_1));
-            for action in recent_row_actions(recent.missing) {
-                let entity = cx.entity();
-                let target = recent.id.clone();
-                actions = actions.child(match action {
-                    "locate" => Button::new(&theme, format!("locate-{id}"))
-                        .label("Locate…")
-                        .size(ButtonSize::Sm)
-                        .emphasis(Emphasis::Neutral)
-                        .disabled(!enabled)
-                        .on_click(move |_, _, cx| {
-                            entity.update(cx, |shell, cx| {
-                                shell.pick(Picker::Locate(target.clone()), cx)
-                            });
-                        })
-                        .into_any_element(),
-                    _ => IconButton::new(&theme, format!("remove-{id}"), Icon::X.path())
-                        .size(IconButtonSize::Sm)
-                        .label("Remove recent")
-                        .tooltip("Remove recent")
-                        .disabled(!enabled)
-                        .on_click(move |_, _, cx| {
-                            entity.update(cx, |shell, cx| {
-                                shell.dispatch(Command::RemoveRecent(target.clone()), cx)
-                            });
-                        })
-                        .into_any_element(),
-                });
-            }
-
-            let row = ListRow::new(&theme, format!("recent-{id}"))
-                .title(recent.name.clone())
-                .meta(shown_path.clone())
-                .tooltip(shown_path)
-                .action(actions);
-            if recent.missing {
-                // It cannot open; its actions still locate or remove it.
-                row.muted(true)
-                    .trailing(Badge::new("Missing").tone(Tone::Warning))
-            } else {
-                let entity = cx.entity();
-                let path = recent.path.clone();
-                row.disabled(!enabled).on_click(move |_, cx| {
-                    entity.update(cx, |shell, cx| {
-                        shell.dispatch(Command::Open(path.clone()), cx)
-                    });
-                })
-            }
-        });
-        div().id("recents").child(
-            List::new()
-                .children(rows.collect::<Vec<_>>())
-                .empty(EmptyState::new(&theme, "No recent projects")),
-        )
     }
 
     /// The managed SDK's status and its Install, Import and Select actions (Settings → SDK
@@ -415,7 +466,13 @@ impl StudioShell {
     }
 
     /// Create, Open and Import Rust (the empty state and the onboarding's Project step).
-    pub(super) fn project_actions(&self, cx: &mut Context<Self>) -> gpui::Div {
+    /// Create… is the view's primary action when `create_primary`; the onboarding's Project
+    /// step has its own (Continue), so Create… is neutral there.
+    pub(super) fn project_actions(
+        &self,
+        create_primary: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
         let enabled = !self.busy;
         div()
             .flex()
@@ -425,7 +482,7 @@ impl StudioShell {
                 "create",
                 "Create…",
                 enabled,
-                true,
+                create_primary,
                 Some(Icon::Plus),
                 cx,
                 |s, cx| s.open_create(cx),
@@ -450,59 +507,137 @@ impl StudioShell {
             ))
     }
 
-    /// The start screen: the app's name, the project actions and the recent projects.
-    pub(super) fn render_empty_state(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
-        let theme = self.theme;
-        let actions = self.project_actions(cx);
+    /// The Project, Assets and Style tabs at the sidebar's narrowest and widest, for the UI
+    /// gallery's `shell` page: with fixture files, assets and recent projects (long names
+    /// and a missing project among them) when `render_shell_fixture` opened a project, or
+    /// their no-project state otherwise. The recents and their fold are put back afterwards.
+    pub fn render_drawer_fixture(
+        &mut self,
+        theme: studio_theme::Theme,
+        cx: &mut Context<Self>,
+    ) -> gpui::AnyElement {
+        if let Some(project) = &mut self.presentation.project {
+            project.files = [
+                "Cargo.toml",
+                "README.md",
+                "src/lib.rs",
+                "src/main.rs",
+                "src/scenes/intro.rs",
+                "src/scenes/a-very-long-scene-name-for-the-closing-credits-sequence.rs",
+                "src/shaders/glow.wgsl",
+                "media/logo.svg",
+                "media/voice-over.mp3",
+                "style/preset.json",
+            ]
+            .map(String::from)
+            .to_vec();
+            project.assets = [
+                "media/logo.svg",
+                "media/background-photo-from-the-product-launch-event-2026.jpg",
+                "media/voice-over.mp3",
+            ]
+            .map(String::from)
+            .to_vec();
+            project.styles = vec!["style/preset.json".into()];
+            project.file_count = 214;
+        }
+        let recent = |id: &str, name: &str, path: &str, missing: bool| Recent {
+            id: studio_project::ProjectId::try_from(id.to_owned()).expect("a valid id"),
+            name: name.into(),
+            path: path.into(),
+            missing,
+        };
+        let recents = std::mem::replace(
+            &mut self.presentation.recents,
+            vec![
+                recent(
+                    "launch-video",
+                    "Launch video",
+                    "C:/Videos/launch-video",
+                    false,
+                ),
+                recent(
+                    "quarterly-review",
+                    "Quarterly review for the product and engineering all-hands",
+                    "C:/Users/Trần Minh/Documents/fframes/quarterly-review-for-the-all-hands",
+                    false,
+                ),
+                recent("old-demo", "Old demo", "D:/Archive/old-demo", true),
+            ],
+        );
+        let open = std::mem::replace(&mut self.recents_open, true);
+        // The Project tab with a second-level folder open and a file selected; the Assets
+        // tab as it opens.
+        let mut explorers = Explorers::default();
+        if let Some(project) = &self.presentation.project {
+            explorers.update(&project.root, ExplorerTree::Files, |state| {
+                state.expansion.set_open("src/scenes", true);
+                state.selected = Some("src/scenes/intro.rs".into());
+            });
+        }
+        let explorers = std::mem::replace(&mut self.explorers, explorers);
+        let main = std::mem::replace(&mut self.theme, theme);
+        let tabs = [
+            ("Project", self.render_project_tab(cx)),
+            ("Assets", self.render_assets_tab(cx)),
+            ("Style", self.render_style_tab(cx)),
+        ];
+        // Each tab is drawn twice; the second copy is the same tree rendered again.
+        let tabs_again = [
+            self.render_project_tab(cx),
+            self.render_assets_tab(cx),
+            self.render_style_tab(cx),
+        ];
+        self.theme = main;
+        self.explorers = explorers;
+        self.recents_open = open;
+        self.presentation.recents = recents;
+
+        // As in `render_drawer`, the explorers pad themselves and the Style tab is padded.
+        let drawer = |width: f32, padded: bool, body: gpui::AnyElement| {
+            Card::panel(&theme)
+                .bg(theme.colors.sidebar)
+                .w(px(width))
+                .h(px(DRAWER_FIXTURE_H))
+                .flex_none()
+                .flex()
+                .flex_col()
+                .when(padded, |drawer| drawer.p(px(METRICS.space_4)))
+                .child(body)
+        };
+        let caption = |text: String| {
+            text_style(div(), TextStyle::Small)
+                .text_color(theme.colors.text_3)
+                .child(text)
+        };
         div()
-            .id("empty-state")
-            .flex_1()
-            .min_w_0()
-            .min_h_0()
             .flex()
-            .items_center()
-            .justify_center()
-            .child(
-                Card::raised(&theme)
-                    .w_full()
-                    .max_w(px(METRICS.layout.start_max_w))
-                    .max_h_full()
-                    .flex()
-                    .flex_col()
-                    .gap(px(METRICS.space_6))
-                    .p(px(METRICS.space_6))
-                    .child(
+            .flex_col()
+            .gap(px(METRICS.space_4))
+            .p(px(METRICS.space_4))
+            .bg(theme.colors.window)
+            .children(
+                tabs.into_iter()
+                    .zip(tabs_again)
+                    .map(|((name, narrow), wide)| {
+                        let padded = name == "Style";
                         div()
                             .flex()
                             .flex_col()
-                            .gap(px(METRICS.space_4))
+                            .gap(px(METRICS.space_2))
+                            .child(caption(format!(
+                                "{name} tab at {} and {} px",
+                                METRICS.layout.sidebar_min_w, METRICS.layout.sidebar_max_w
+                            )))
                             .child(
                                 div()
                                     .flex()
-                                    .flex_col()
-                                    .gap(px(METRICS.space_1))
-                                    .child(
-                                        text_style(div(), TextStyle::Display)
-                                            .text_color(theme.colors.text_1)
-                                            .child(selectable("fframes Studio")),
-                                    )
-                                    .child(
-                                        text_style(div(), TextStyle::Body)
-                                            .text_color(theme.colors.text_2)
-                                            .child(selectable(
-                                                "A native workspace for your video projects",
-                                            )),
-                                    ),
+                                    .items_start()
+                                    .gap(px(METRICS.space_4))
+                                    .child(drawer(METRICS.layout.sidebar_min_w, padded, narrow))
+                                    .child(drawer(METRICS.layout.sidebar_max_w, padded, wide)),
                             )
-                            .child(actions),
-                    )
-                    .child(
-                        PanelSection::new(&theme, "Recent projects").child(
-                            self.render_recents(cx)
-                                .max_h(px(METRICS.layout.start_recents_max_h))
-                                .overflow_y_scroll(),
-                        ),
-                    ),
+                    }),
             )
             .into_any_element()
     }
@@ -534,13 +669,50 @@ pub(super) enum SidebarTab {
     Slides,
 }
 
-/// The actions of a recent-project row, as the id prefix of each button: a missing
-/// project can be located, every project can be removed.
-fn recent_row_actions(missing: bool) -> Vec<&'static str> {
-    if missing {
-        vec!["locate", "remove"]
-    } else {
-        vec!["remove"]
+/// The height of a drawer in [`StudioShell::render_drawer_fixture`]: short enough that the
+/// Project tab's files and recents share it, as in a small window.
+const DRAWER_FIXTURE_H: f32 = 560.;
+
+/// What a project tab shows while no project is open: the same title in every tab.
+fn no_project(theme: &studio_theme::Theme, to: &str) -> EmptyState {
+    EmptyState::new(theme, "No project open").body(format!("Create or open a project to {to}."))
+}
+
+/// Which list of a project an explorer shows: the Project tab's files or the Assets tab's
+/// assets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum ExplorerTree {
+    Files,
+    Assets,
+}
+
+/// One explorer's state: whether its section is folded, its open folders and its
+/// selected file.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct ExplorerState {
+    closed: bool,
+    expansion: TreeExpansion,
+    selected: Option<String>,
+}
+
+/// The explorers' state per project root, kept while Studio runs: reopening a project
+/// shows its folders as they were left.
+#[derive(Debug, Default)]
+pub(super) struct Explorers {
+    projects: HashMap<PathBuf, [ExplorerState; 2]>,
+}
+
+impl Explorers {
+    fn get(&self, root: &Path, tree: ExplorerTree) -> ExplorerState {
+        self.projects
+            .get(root)
+            .map(|states| states[tree as usize].clone())
+            .unwrap_or_default()
+    }
+
+    fn update(&mut self, root: &Path, tree: ExplorerTree, change: impl FnOnce(&mut ExplorerState)) {
+        let states = self.projects.entry(root.to_path_buf()).or_default();
+        change(&mut states[tree as usize]);
     }
 }
 
@@ -618,9 +790,29 @@ mod tests {
     use super::*;
 
     #[test]
-    fn recent_rows_offer_locate_only_when_missing() {
-        assert_eq!(recent_row_actions(true), ["locate", "remove"]);
-        assert_eq!(recent_row_actions(false), ["remove"]);
+    fn explorer_state_is_kept_per_project_and_per_tree() {
+        let mut explorers = Explorers::default();
+        let (a, b) = (Path::new("C:/videos/a"), Path::new("C:/videos/b"));
+        explorers.update(a, ExplorerTree::Files, |state| {
+            state.expansion.set_open("src", false);
+            state.selected = Some("src/lib.rs".into());
+        });
+        explorers.update(b, ExplorerTree::Assets, |state| state.closed = true);
+
+        let files = explorers.get(a, ExplorerTree::Files);
+        assert!(!files.expansion.is_open("src", 0));
+        assert_eq!(files.selected.as_deref(), Some("src/lib.rs"));
+        assert_eq!(
+            explorers.get(a, ExplorerTree::Assets),
+            ExplorerState::default()
+        );
+        assert!(explorers.get(b, ExplorerTree::Assets).closed);
+        assert!(
+            explorers
+                .get(b, ExplorerTree::Files)
+                .expansion
+                .is_open("src", 0)
+        );
     }
 
     #[test]

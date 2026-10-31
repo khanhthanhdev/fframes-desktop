@@ -58,6 +58,10 @@ impl Render for ComposerInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_scroll_wheel(cx.listener(Self::on_scroll_wheel))
             .w_full()
+            // The resting height: an empty or short draft still offers a 56 px target with
+            // the composer's insets. The text element inside keeps its own content height,
+            // so scrolling, the caret and the input method see only the text.
+            .min_h(px(INPUT_REST_TEXT_HEIGHT))
             .line_height(px(INPUT_LINE_HEIGHT))
             .text_color(self.theme.colors.text_1)
             .child(ComposerTextElement {

@@ -54,10 +54,12 @@ pub enum Page {
     Presets,
     /// The window chrome: header, notices, sidebar tab rail, transport and status bar.
     Shell,
+    /// The start screen's project shelf: grid, list, a search and no recent projects.
+    Home,
 }
 
 impl Page {
-    pub const ALL: [Page; 11] = [
+    pub const ALL: [Page; 12] = [
         Page::Kit,
         Page::Slides,
         Page::Create,
@@ -69,6 +71,7 @@ impl Page {
         Page::Props,
         Page::Presets,
         Page::Shell,
+        Page::Home,
     ];
 
     pub fn name(self) -> &'static str {
@@ -84,6 +87,7 @@ impl Page {
             Page::Props => "props",
             Page::Presets => "presets",
             Page::Shell => "shell",
+            Page::Home => "home",
         }
     }
 
@@ -91,10 +95,16 @@ impl Page {
         Page::ALL.into_iter().find(|page| page.name() == name)
     }
 
-    /// The window's content size. It fits a 1920 × 1200 screen at 150 %; a taller page is
-    /// captured in scrolled pieces.
+    /// The window's content size. It fits a 1920 × 1200 screen at 150 %, except the Shell
+    /// page: 1320 wide so the 1270 px Full transport fixture is not clipped, it fits at up to
+    /// 145 %. A taller page is captured in scrolled pieces.
     fn size(self) -> Size<Pixels> {
-        size(px(1240.), px(720.))
+        match self {
+            Page::Shell => size(px(1320.), px(720.)),
+            // The 1180 × 720 start screen under the gallery's title.
+            Page::Home => size(px(1240.), px(840.)),
+            _ => size(px(1240.), px(720.)),
+        }
     }
 
     /// The fixture states, each saved as its own PNG. `""` is the page as it opens.
@@ -103,15 +113,33 @@ impl Page {
             Page::Kit | Page::Slides | Page::Additions => &[""],
             Page::Create => &["", "slide-deck"],
             Page::Export => &["settings", "running", "done", "failed"],
-            Page::Settings => &["general", "agent", "sdk", "presets", "export"],
+            // In nav order, then the Agent page's Adapter tab and a search; the index is
+            // `render_settings_fixture`'s state.
+            Page::Settings => &[
+                "general",
+                "appearance",
+                "agent",
+                "sdk",
+                "presets",
+                "export",
+                "shortcuts",
+                "about",
+                "agent-adapter",
+                "search",
+            ],
             Page::Agent => &[
                 "empty",
                 "not-set-up",
                 "working",
                 "failed",
                 "permission",
+                "permission-pending",
                 "question",
                 "todo-queue",
+                "steer-boundary",
+                "steer-native",
+                "changes",
+                "idle-image",
                 "code",
                 "history",
             ],
@@ -132,6 +160,7 @@ impl Page {
                 "no-project",
             ],
             Page::Shell => &["no-project", "export", "error"],
+            Page::Home => &["grid", "list", "search", "empty"],
             Page::Onboarding => &[
                 "welcome",
                 "appearance",

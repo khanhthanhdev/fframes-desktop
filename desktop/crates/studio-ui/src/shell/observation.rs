@@ -267,7 +267,7 @@ impl StudioShell {
         // The selected sidebar tab.
         value["drawer"] = self.sidebar_tab.name().into();
         value["viewport"] = serde_json::json!(self.viewport);
-        value["settings_open"] = self.settings_window.is_some().into();
+        value["settings_open"] = self.settings_open.into();
         value["settings_page"] = format!("{:?}", self.settings_page).into();
         if let Some(review) = self.review_telemetry(cx) {
             value["review"] = review;

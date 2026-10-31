@@ -6,8 +6,8 @@
 //!
 //! - `screens_style_through_the_kit`: every `.rs` under `src/` except `kit/`, checked against
 //!   `tests/style_guard_allowlist.txt`.
-//! - `kit_paints_with_theme_roles`: `kit/` may not add colour literals or Radix steps, checked
-//!   against `tests/style_guard_kit_allowlist.txt`.
+//! - `kit_paints_with_theme_roles`: `kit/` may not add colour literals, Radix steps or a font
+//!   family named by a string literal, checked against `tests/style_guard_kit_allowlist.txt`.
 //!
 //! Comments and the contents of string literals are ignored, and so are `#[cfg(test)]` modules
 //! (inline or in their own file) and inline `mod tests { .. }` blocks.
@@ -33,6 +33,10 @@ enum Matcher {
     MethodCall(&'static str),
     /// The text, then optional spaces and `-`, then a digit (`px(12.)`, `opacity(0.5)`).
     BeforeDigit(&'static str),
+    /// The text, then optional spaces, then a string literal on the same line
+    /// (`font_family("Inter")`, `font_family(r"Inter")`). The literal's contents are blanked by
+    /// then, but its quote and a raw string's `r#` prefix are kept.
+    BeforeString(&'static str),
 }
 
 struct Pattern {
@@ -70,6 +74,13 @@ const COLOUR_PATTERNS: &[Pattern] = &[
     },
     word("SETTINGS_ACCENT"),
 ];
+
+/// A font family named by a string literal; forbidden in screens and in the kit, which use
+/// `studio_theme::UI_FONT`, `MONO_FAMILY` or a `TextStyle`.
+const FONT_PATTERNS: &[Pattern] = &[Pattern {
+    name: "font_family(<string>",
+    matcher: Matcher::BeforeString("font_family("),
+}];
 
 /// Surface helpers, type and size literals; forbidden in screens.
 const SCREEN_PATTERNS: &[Pattern] = &[
@@ -113,7 +124,8 @@ const SCREEN_HEADER: &str = "\
 #
 # Patterns: colours gray( .gray_ .blue_ .red_ .amber_ .green_ rgb( rgba( hsla( gpui::black()
 # gpui::white() SETTINGS_ACCENT; surfaces .settings_ .body_ (method calls) header_bg header_border;
-# type text_size( text_xs( text_sm( font_weight(; sizes px(<digit> rounded(px( opacity(<literal>.
+# type text_size( text_xs( text_sm( font_weight( font_family(<string>; sizes px(<digit> rounded(px(
+# opacity(<literal>.
 # Comments, string contents, #[cfg(test)] modules and `mod tests` blocks are not counted.
 #
 # Exceptions by design:
@@ -130,8 +142,8 @@ const KIT_HEADER: &str = "\
 # (refuses to raise a count unless STYLE_GUARD_ALLOW_INCREASE=1 is set too).
 #
 # Patterns: colour literals and Radix steps: gray( .gray_ .blue_ .red_ .amber_ .green_ rgb( rgba(
-# hsla( gpui::black() gpui::white() SETTINGS_ACCENT. Comments, string contents and #[cfg(test)]
-# modules are not counted.
+# hsla( gpui::black() gpui::white() SETTINGS_ACCENT; a literal family font_family(<string>.
+# Comments, string contents and #[cfg(test)] modules are not counted.
 #
 # Exceptions by design: theme plumbing (tone_color, tone_surface and the surface palettes) maps
 # roles to steps until phase 1 makes the steps private; those entries go when it lands.
@@ -312,6 +324,11 @@ fn count_matches(line: &str, matcher: Matcher) -> usize {
         Matcher::BeforeDigit(text) => (text, |rest| {
             let rest = rest.trim_start().trim_start_matches('-').trim_start();
             rest.starts_with(|c: char| c.is_ascii_digit())
+        }),
+        Matcher::BeforeString(text) => (text, |rest| {
+            let rest = rest.trim_start();
+            let rest = rest.strip_prefix('r').unwrap_or(rest);
+            rest.trim_start_matches('#').starts_with('"')
         }),
     };
     let first_is_ident = needle.starts_with(is_ident);
@@ -591,14 +608,17 @@ fn check(allowlist_name: &str, default_header: &str, actual: Counts) {
 fn screens_style_through_the_kit() {
     let actual = measure(
         |path| !path.starts_with("kit/"),
-        &[COLOUR_PATTERNS, SCREEN_PATTERNS],
+        &[COLOUR_PATTERNS, FONT_PATTERNS, SCREEN_PATTERNS],
     );
     check("style_guard_allowlist.txt", SCREEN_HEADER, actual);
 }
 
 #[test]
 fn kit_paints_with_theme_roles() {
-    let actual = measure(|path| path.starts_with("kit/"), &[COLOUR_PATTERNS]);
+    let actual = measure(
+        |path| path.starts_with("kit/"),
+        &[COLOUR_PATTERNS, FONT_PATTERNS],
+    );
     check("style_guard_kit_allowlist.txt", KIT_HEADER, actual);
 }
 
@@ -626,4 +646,24 @@ fn matcher_ignores_comments_strings_and_fields() {
         2
     );
     assert_eq!(count_matches("bgray(1) gray(2)", Matcher::Word("gray(")), 1);
+}
+
+#[test]
+fn matcher_sees_a_literal_font_family_through_the_blanked_string() {
+    let family = Matcher::BeforeString("font_family(");
+    let code = strip_comments_and_strings(
+        "a.font_family(\"Inter\"); b.font_family( r#\"Geist\"#);\n\
+         c.font_family(UI_FONT); d.font_family(studio_theme::MONO_FAMILY); // font_family(\"x\")\n",
+    );
+    let lines: Vec<&str> = code.lines().collect();
+    assert_eq!(count_matches(lines[0], family), 2);
+    assert_eq!(count_matches(lines[1], family), 0);
+    assert_eq!(
+        count_matches(
+            &strip_comments_and_strings("let s = \"x.font_family(\\\"y\\\")\";"),
+            family
+        ),
+        0,
+        "a string that mentions the call is not one"
+    );
 }

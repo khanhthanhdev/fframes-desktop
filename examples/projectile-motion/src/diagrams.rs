@@ -6,7 +6,7 @@ use fframes::{
     animation::{Easing, KeyFramesAnimation},
     svgr,
 };
-use fframes_kit::{props::SuggestedStop, ui::Ui};
+use fframes_kit::ui::Ui;
 
 use crate::{flight_time, position};
 
@@ -89,10 +89,6 @@ pub fn launch<'a>(ui: &mut Ui<'a, '_, '_>) -> Svgr<'a> {
     let origin = (220.0, 820.0);
     let scale = 35.0;
     let (x, y) = position(flight_time(angle) * p, angle);
-    ui.suggest_stops(|| vec![SuggestedStop {
-        seconds: 4.8, label: Some("A throw traces a parabola".into()),
-        notes: Some("Ask why the ball curves even though it keeps moving forward. Ignore drag and use a level landing surface.".into()),
-    }]);
     svgr!(<g>
         {text(ui, (144.0, 116.0), 28, c.accent, "PHYSICS × MATH × RUST      /      01")}
         {text(ui, (144.0, 265.0), 112, c.title, "The shape of a throw")}
@@ -119,10 +115,6 @@ pub fn components<'a>(ui: &mut Ui<'a, '_, '_>) -> Svgr<'a> {
     let origin = (220.0, 830.0);
     let scale = 21.0;
     let (sx, sy) = (origin.0 + x * scale, origin.1 - y * scale);
-    ui.suggest_stops(|| vec![
-        SuggestedStop { seconds: 3.4, label: Some("At the apex: vertical velocity is zero".into()), notes: Some("Only vy is zero. Horizontal velocity and the downward acceleration remain nonzero.".into()) },
-        SuggestedStop { seconds: 5.8, label: Some("Same clock, two equations".into()), notes: Some("The ball returns to ground level after about 2.88 seconds and travels about 40.8 metres.".into()) },
-    ]);
     svgr!(<g>
         {heading(ui, "03", "One throw. Two equations.")}
         {axes(ui, origin, scale)}
@@ -153,10 +145,6 @@ pub fn range<'a>(ui: &mut Ui<'a, '_, '_>) -> Svgr<'a> {
             svgr!(<path d={arc(degrees.to_radians(), p, origin, scale)} fill="none" stroke={color}
             stroke-width={if degrees == 45.0 { 6 } else { 3 }} stroke-linecap="round" />)
         });
-    ui.suggest_stops(|| vec![SuggestedStop {
-        seconds: 4.0, label: Some("45° gives the longest ideal range".into()),
-        notes: Some("30 and 60 degrees land together in distance, not in time. Equal launch and landing heights and no drag are essential to the 45-degree optimum.".into()),
-    }]);
     svgr!(<g>
         {heading(ui, "04", "Why does 45° go farthest?")}
         {axes(ui, origin, scale)}

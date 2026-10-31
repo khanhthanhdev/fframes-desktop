@@ -178,7 +178,7 @@ impl StudioShell {
             .gap(px(METRICS.space_1))
             .px(px(METRICS.space_4))
             .py(px(METRICS.space_2))
-            .border_t_1()
+            .border_t(px(METRICS.size.divider))
             .border_color(theme.colors.line)
             .child(line(format!("Source {}", p.source.as_str()).into()))
             .child(line(format!("Checkpoint {}", p.accepted.as_str()).into()))
@@ -231,7 +231,9 @@ impl StudioShell {
                 .flex_none()
                 .flex()
                 .flex_col()
-                .bg(theme.colors.card)
+                // Quiet, after Oleafly's status lines: the document surface under a
+                // hairline, small secondary text and a tone dot.
+                .bg(theme.colors.window)
                 .when(expanded, |bar| bar.child(lines))
                 .child(
                     div()
@@ -240,8 +242,10 @@ impl StudioShell {
                         .items_center()
                         .gap(px(METRICS.space_2))
                         .h(px(METRICS.status_bar_h))
-                        .px(px(METRICS.space_4))
-                        .border_t_1()
+                        // The ghost Details button's own padding finishes the right edge.
+                        .pl(px(METRICS.space_4))
+                        .pr(px(METRICS.space_2))
+                        .border_t(px(METRICS.size.divider))
                         .border_color(theme.colors.line)
                         .child(StatusDot::new(tone))
                         .child(

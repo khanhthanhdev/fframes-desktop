@@ -205,7 +205,9 @@ impl ConversationPanel {
     /// Rows get their spacing as padding inside the measured element, so the list's
     /// height measurement includes it and stays stable while a row streams.
     pub(super) fn row_shell() -> gpui::Div {
-        div().w_full().pb(px(METRICS.space_2))
+        div()
+            .w_full()
+            .pb(px(super::ui::metrics::transcript::ROW_GAP))
     }
 
     pub(super) fn caption(&self, text: &str) -> gpui::Div {

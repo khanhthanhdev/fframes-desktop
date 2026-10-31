@@ -1,4 +1,4 @@
-//! The player: preview frames, playback and audio, canvas selection, and the player card's toolbar
+//! The player: preview frames, playback and audio, canvas selection, and the player pane's toolbar
 //! and stage.
 
 use std::sync::atomic::Ordering;
@@ -20,7 +20,7 @@ use super::{PreparedInstall, StudioShell};
 use crate::actions;
 use crate::canvas_view::StageLayout;
 use crate::kit::{
-    Badge, Card, EmptyState, Icon, Notice, Toast, ToastHost, Tone, focus_ring, icon, selectable,
+    Badge, EmptyState, Icon, Notice, Toast, ToastHost, Tone, focus_ring, icon, selectable,
     with_tooltip,
 };
 
@@ -775,8 +775,9 @@ impl StudioShell {
         }));
     }
 
-    /// The preview, transport and history controls: toolbar, stage and transport
-    /// inside one card. The timeline card is placed by `render`.
+    /// The preview, transport and history controls: toolbar, stage and transport in one
+    /// flat, square pane on the window's fill; its neighbours draw the hairlines between
+    /// them. The timeline is placed by `render`.
     pub(super) fn render_player_area(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
         // Presenting, the section shows the presentation stage alone: frames still
         // notify only this section.
@@ -785,7 +786,8 @@ impl StudioShell {
         }
         self.sync_canvas_toast(cx);
         let entity = cx.entity();
-        let mut player = Card::raised(&self.theme)
+        let mut player = div()
+            .bg(self.theme.colors.window)
             .relative()
             .flex_1()
             .min_w_0()
@@ -847,7 +849,7 @@ impl StudioShell {
             .gap(px(METRICS.space_2))
             .h(px(METRICS.toolbar_h))
             .px(px(METRICS.space_3))
-            .border_b_1()
+            .border_b(px(METRICS.size.divider))
             .border_color(palette.line)
             .overflow_hidden()
             // The badge keeps one line; the audio note beside it truncates instead.

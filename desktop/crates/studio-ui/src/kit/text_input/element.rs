@@ -34,11 +34,11 @@ pub struct TextInput {
 }
 
 /// The field's horizontal padding and the gap before its leading icon.
-const PAD_X: f32 = 8.;
-const ICON_GAP: f32 = 4.;
+const PAD_X: f32 = METRICS.space_3;
+const ICON_GAP: f32 = METRICS.space_2;
 
 impl TextInput {
-    /// A borderless `ctl` field, `input_h` high, that shows an `accent` border while
+    /// An outlined document-surface field, `input_h` high, with an `accent` border while
     /// focused; `text_1` text and caret, `text_3` placeholder, `selection` highlight.
     pub fn new(theme: &Theme, id: impl Into<ElementId>, state: &Entity<TextInputState>) -> Self {
         let colors = theme.colors;
@@ -55,8 +55,8 @@ impl TextInput {
             line_height: None,
             weight: FontWeight::NORMAL,
             align: TextAlign::Left,
-            bg: Some(Hsla::from(colors.ctl)),
-            border: None,
+            bg: Some(Hsla::from(colors.window)),
+            border: Some(Hsla::from(colors.line_strong)),
             focus_border: Some(Hsla::from(colors.focus)),
             text: Hsla::from(colors.text_1),
             muted: Hsla::from(colors.text_3),
@@ -219,8 +219,12 @@ impl RenderOnce for TextInput {
             .rounded(self.radius)
             .overflow_hidden()
             .when_some(self.bg, |this, bg| this.bg(bg))
-            .when_some(border, |this, border| this.border_1().border_color(border))
+            .when_some(border, |this, border| {
+                this.border(px(METRICS.size.divider)).border_color(border)
+            })
             .when(!disabled, |this| this.cursor(gpui::CursorStyle::IBeam))
+            // Dimmed like every other disabled control.
+            .when(disabled, |this| this.opacity(crate::kit::DISABLED_OPACITY))
             .text_size(self.text_size)
             .text_color(self.text)
             .children(self.icon.map(|icon| {

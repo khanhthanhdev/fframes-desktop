@@ -55,7 +55,8 @@ impl Changes {
             let jump = file.path.clone();
             let toggle_path = file.path.clone();
             let accepted = !self.rejected.contains(&file.path);
-            let mut line = text_style(div(), TextStyle::Label)
+            // Paths and counts in 11 px mono, like the change card in the transcript.
+            let mut line = text_style(div(), TextStyle::CodeSmall)
                 .id(SharedString::from(format!("changes-list-{ix}")))
                 .w_full()
                 .h(px(METRICS.size.control_h))

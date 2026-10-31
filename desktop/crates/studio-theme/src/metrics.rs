@@ -67,7 +67,7 @@ pub struct Radius {
     pub segment: f32,
     pub tab: f32,
     pub card: f32,
-    /// Popovers and menus round like cards.
+    /// Popovers and menus use the medium control radius.
     pub popover: f32,
     /// Fully round ends (chips, badges, toggles).
     pub pill: f32,
@@ -113,6 +113,8 @@ pub struct Layout {
     pub toolbar_h: f32,
     pub transport_h: f32,
     pub status_bar_h: f32,
+    /// The space between the shell's panes: none, the player, sidebar and timeline meet at
+    /// hairlines, after Oleafly's flat workspace.
     pub gutter: f32,
     pub sidebar_w: f32,
     pub sidebar_min_w: f32,
@@ -132,8 +134,10 @@ pub struct Layout {
     pub title_min_w: f32,
     pub actions_w: f32,
     pub actions_closed_w: f32,
-    /// The app icon beside the header's title.
+    /// The app icon beside the header's title (Oleafly's `size-5` brand mark).
     pub header_logo: f32,
+    /// The open project's colour dot in the header's breadcrumb (Oleafly's `size-2`).
+    pub project_dot: f32,
 
     /// Transport: the tools' gap, the zoom slider's width, and the player widths below
     /// which the bar goes compact, narrow, and drops the total time (`shell/transport.rs`).
@@ -153,6 +157,8 @@ pub struct Layout {
     /// The start screen card's maximum width; the slides notes field's height.
     pub start_max_w: f32,
     pub slides_notes_h: f32,
+    /// The widest a Create or Export workflow column grows (Oleafly's dialog `max-w-2xl`).
+    pub workflow_max_w: f32,
     /// The tallest the start screen's recent projects and the Project tab's library (recent
     /// projects under the files) grow before they scroll.
     pub start_recents_max_h: f32,
@@ -223,24 +229,24 @@ pub const METRICS: Metrics = Metrics {
     space_3: 12.,
     space_4: 16.,
     space_6: 24.,
-    radius_control: 7.,
+    radius_control: 8.,
     radius_item: 6.,
     radius_segment: 8.,
-    radius_card: 12.,
-    radius_popover: 12.,
-    radius_tab: 9.,
+    radius_card: 10.,
+    radius_popover: 8.,
+    radius_tab: 6.,
     radius_frame: 6.,
-    control_h: 28.,
-    select_h: 30.,
-    input_h: 32.,
-    field_row_h: 34.,
+    control_h: 32.,
+    select_h: 36.,
+    input_h: 36.,
+    field_row_h: 40.,
     icon_sm: 14.,
     icon_md: 16.,
     header_h: 52.,
     tab_bar_h: 46.,
     toolbar_h: 44.,
     transport_h: 48.,
-    gutter: 8.,
+    gutter: 0.,
     sidebar_w: 416.,
     sidebar_min_w: 320.,
     sidebar_max_w: 520.,
@@ -260,22 +266,22 @@ pub const METRICS: Metrics = Metrics {
 
     space_8: 32.,
     radius: Radius {
-        control: 7.,
+        control: 8.,
         item: 6.,
         segment: 8.,
-        tab: 9.,
-        card: 12.,
-        popover: 12.,
+        tab: 6.,
+        card: 10.,
+        popover: 8.,
         pill: 999.,
     },
     size: Size {
-        control_h: 28.,
+        control_h: 32.,
         control_sm_h: 24.,
-        select_h: 30.,
-        input_h: 32.,
-        field_row_h: 34.,
-        list_row_h: 28.,
-        list_row_2_h: 40.,
+        select_h: 36.,
+        input_h: 36.,
+        field_row_h: 40.,
+        list_row_h: 32.,
+        list_row_2_h: 44.,
         icon_sm: 14.,
         icon_md: 16.,
         icon_lg: 20.,
@@ -291,7 +297,7 @@ pub const METRICS: Metrics = Metrics {
         grip_w: 4.,
         grip_h: 36.,
         grip_hit: 14.,
-        divider: 1.,
+        divider: 0.5,
         focus_ring: 2.,
     },
     layout: Layout {
@@ -300,7 +306,7 @@ pub const METRICS: Metrics = Metrics {
         toolbar_h: 44.,
         transport_h: 48.,
         status_bar_h: 28.,
-        gutter: 8.,
+        gutter: 0.,
         sidebar_w: 416.,
         sidebar_min_w: 320.,
         sidebar_max_w: 520.,
@@ -310,16 +316,17 @@ pub const METRICS: Metrics = Metrics {
 
         traffic_lights_w: 82.,
         traffic_light_inset: 20.,
-        title_min_w: 200.,
-        actions_w: 680.,
-        actions_closed_w: 300.,
-        header_logo: 22.,
+        title_min_w: 270.,
+        actions_w: 440.,
+        actions_closed_w: 236.,
+        header_logo: 20.,
+        project_dot: 8.,
 
         transport_tools_gap: 6.,
         zoom_slider_w: 72.,
-        transport_compact_below: 1290.,
-        transport_narrow_below: 820.,
-        transport_total_hidden_below: 620.,
+        transport_compact_below: 1270.,
+        transport_narrow_below: 830.,
+        transport_total_hidden_below: 520.,
 
         settings_w: 782.,
         settings_h: 775.,
@@ -329,6 +336,7 @@ pub const METRICS: Metrics = Metrics {
 
         start_max_w: 520.,
         slides_notes_h: 96.,
+        workflow_max_w: 672.,
         start_recents_max_h: 260.,
         library_max_h: 360.,
         slide_number_w: 20.,
@@ -369,7 +377,7 @@ pub const METRICS: Metrics = Metrics {
         minimap_radius: 2.,
     },
     opacity: Opacity {
-        disabled: 0.45,
+        disabled: 0.5,
         dragging: 0.7,
         muted_media: 0.55,
         stop_default: 0.85,
@@ -381,7 +389,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn metrics_match_cap_spec() {
+    fn metrics_match_studio_spec() {
         let m = METRICS;
         assert_eq!(
             [m.space_1, m.space_2, m.space_3, m.space_4, m.space_6],
@@ -397,7 +405,7 @@ mod tests {
                 m.radius_tab,
                 m.radius_frame
             ],
-            [7., 6., 8., 12., 12., 9., 6.]
+            [8., 6., 8., 10., 8., 6., 6.]
         );
         assert_eq!(
             [
@@ -408,7 +416,7 @@ mod tests {
                 m.icon_sm,
                 m.icon_md
             ],
-            [28., 30., 32., 34., 14., 16.]
+            [32., 36., 36., 40., 14., 16.]
         );
         assert_eq!(
             [
@@ -421,7 +429,7 @@ mod tests {
                 m.timeline_min_h,
                 m.player_min_h
             ],
-            [52., 46., 44., 48., 8., 260., 240., 320.]
+            [52., 46., 44., 48., 0., 260., 240., 320.]
         );
         assert_eq!(
             [
@@ -557,7 +565,7 @@ mod tests {
                 s.chip_h,
                 s.thumb_sm,
             ],
-            [24., 28., 40., 20., 24., 28., 32., 28., 56.]
+            [24., 32., 44., 20., 24., 28., 32., 28., 56.]
         );
         assert_eq!(
             [
@@ -570,9 +578,9 @@ mod tests {
                 s.divider,
                 s.focus_ring,
             ],
-            [3., 12., 4., 4., 36., 14., 1., 2.]
+            [3., 12., 4., 4., 36., 14., 0.5, 2.]
         );
-        assert_eq!([o.disabled, o.dragging, o.muted_media], [0.45, 0.7, 0.55]);
+        assert_eq!([o.disabled, o.dragging, o.muted_media], [0.5, 0.7, 0.55]);
         assert_eq!(
             [
                 l.traffic_lights_w,
@@ -580,7 +588,7 @@ mod tests {
                 l.actions_w,
                 l.actions_closed_w
             ],
-            [82., 200., 680., 300.]
+            [82., 270., 440., 236.]
         );
         assert_eq!(
             [
@@ -589,7 +597,7 @@ mod tests {
                 l.transport_total_hidden_below,
                 l.zoom_slider_w,
             ],
-            [1290., 820., 620., 72.]
+            [1270., 830., 520., 72.]
         );
         assert_eq!(
             [
@@ -601,7 +609,10 @@ mod tests {
             ],
             [782., 775., 780., 560., 36.]
         );
-        assert_eq!([l.start_max_w, l.slides_notes_h], [520., 96.]);
+        assert_eq!(
+            [l.start_max_w, l.slides_notes_h, l.workflow_max_w],
+            [520., 96., 672.]
+        );
         // The breakpoints only make sense in this order.
         assert!(l.transport_compact_below > l.transport_narrow_below);
         assert!(l.transport_narrow_below > l.transport_total_hidden_below);

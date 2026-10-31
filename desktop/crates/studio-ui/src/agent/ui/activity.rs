@@ -7,7 +7,8 @@ use gpui::{
 };
 use studio_theme::{METRICS, TextStyle, Theme, text_style};
 
-use super::{ITEM_RADIUS, ROW_H, STATUS_MARK};
+use super::metrics::activity as a;
+use super::{ITEM_RADIUS, STATUS_MARK};
 use crate::kit::{Handler, Icon, Spinner, focusable, icon, on_activate, with_tooltip};
 
 /// What a run of activity did, counted for its summary line.
@@ -77,15 +78,14 @@ pub fn summary_parts(counts: &ActivityCounts) -> Vec<(String, bool)> {
 }
 
 /// The collapsed line of a run, and its header while open: a chevron, the summary in
-/// `text_2` (`text_1` on hover; only the failed part in `danger`) and a spinner while a step
-/// runs.
+/// `text_2` (`text_1` on hover; only the failed part in `danger`). Progress shows once, in
+/// the turn's "Working" trailer.
 #[derive(IntoElement)]
 pub struct ActivityHeader {
     theme: Theme,
     id: ElementId,
     parts: Vec<(String, bool)>,
     open: bool,
-    running: bool,
     on_toggle: Option<Handler>,
 }
 
@@ -96,18 +96,12 @@ impl ActivityHeader {
             id: id.into(),
             parts,
             open: false,
-            running: false,
             on_toggle: None,
         }
     }
 
     pub fn open(mut self, open: bool) -> Self {
         self.open = open;
-        self
-    }
-
-    pub fn running(mut self, running: bool) -> Self {
-        self.running = running;
         self
     }
 
@@ -124,12 +118,10 @@ impl RenderOnce for ActivityHeader {
             id,
             parts,
             open,
-            running,
             on_toggle,
         } = self;
         let colors = theme.colors;
         let group = SharedString::from(format!("activity-{id}"));
-        let spinner = SharedString::from(format!("activity-spin-{id}"));
         let interactive = on_toggle.is_some();
         let row = focusable(div().id(id), &theme, !interactive);
         let last = parts.len().saturating_sub(1);
@@ -157,10 +149,10 @@ impl RenderOnce for ActivityHeader {
             .group(group)
             .role(Role::Button)
             .aria_expanded(open)
-            .h(px(ROW_H))
+            .h(px(a::ROW_H))
             .flex()
             .items_center()
-            .gap(px(METRICS.space_1))
+            .gap(px(a::SUMMARY_GAP))
             .rounded(ITEM_RADIUS)
             .when(interactive, |row| row.cursor_pointer())
             .child(icon(
@@ -169,11 +161,10 @@ impl RenderOnce for ActivityHeader {
                 } else {
                     Icon::ChevronRight
                 },
-                METRICS.size.icon_sm,
+                a::DISCLOSURE,
                 colors.text_3,
             ))
             .child(summary.flex().flex_row())
-            .children(running.then(|| Spinner::new(&theme, spinner)))
     }
 }
 
@@ -285,15 +276,15 @@ impl RenderOnce for ActivityRow {
         let row = on_activate(row, false, on_click);
         let row = with_tooltip(row, &theme, Some(tip))
             .group(group.clone())
-            .h(px(ROW_H))
+            .h(px(a::ROW_H))
             .flex()
             .items_center()
-            .gap(px(METRICS.space_2))
+            .gap(px(a::GAP))
             .px(px(METRICS.space_2))
             .rounded(ITEM_RADIUS)
             .hover(move |style| style.bg(colors.ctl_hover))
             .when(interactive, |row| row.cursor_pointer())
-            .child(icon(glyph, METRICS.size.icon_sm, icon_color))
+            .child(icon(glyph, a::ICON, icon_color))
             .child(
                 text_style(div().flex_none(), TextStyle::Label)
                     .text_color(verb_color)
@@ -319,13 +310,13 @@ impl RenderOnce for ActivityRow {
                     } else {
                         Icon::ChevronRight
                     },
-                    METRICS.size.icon_sm,
+                    a::DISCLOSURE,
                     colors.text_3,
                 )
                 .invisible()
                 .group_hover(group, |style| style.visible())
             }));
-        div().w_full().pl(px(METRICS.space_4)).child(row)
+        div().w_full().pl(px(a::NESTED_INSET)).child(row)
     }
 }
 

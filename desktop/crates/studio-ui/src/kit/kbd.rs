@@ -50,8 +50,45 @@ pub fn kbd_symbol(key: &str) -> SharedString {
     SharedString::from(symbol)
 }
 
-/// A keycap: a square chip on `ctl` behind a `line_strong` hairline, or, inside a
-/// tooltip, a small chip in the tooltip's inverse colours.
+/// The keycaps of one keystroke in gpui's syntax (`secondary-shift-z`), modifiers first:
+/// `["Ctrl", "Shift", "Z"]`, or the glyphs on macOS. Named keys are spelled out (`Space`,
+/// `PageDown`, `Esc`) and the arrows are arrows. `None` when gpui cannot parse `keys`.
+pub fn keystroke_caps(keys: &str) -> Option<Vec<SharedString>> {
+    let keystroke = gpui::Keystroke::parse(keys).ok()?;
+    let modifiers = keystroke.modifiers;
+    let mut caps: Vec<SharedString> = [
+        (modifiers.control, "ctrl"),
+        (modifiers.alt, "alt"),
+        (modifiers.shift, "shift"),
+        (modifiers.platform, "cmd"),
+    ]
+    .into_iter()
+    .filter(|(held, _)| *held)
+    .map(|(_, name)| kbd_symbol(name))
+    .collect();
+    let key = match keystroke.key.as_str() {
+        "space" => "Space".to_owned(),
+        "escape" => "Esc".to_owned(),
+        "enter" => "Enter".to_owned(),
+        "backspace" => "Backspace".to_owned(),
+        "delete" => "Delete".to_owned(),
+        "home" => "Home".to_owned(),
+        "end" => "End".to_owned(),
+        "pageup" => "PageUp".to_owned(),
+        "pagedown" => "PageDown".to_owned(),
+        "tab" => "Tab".to_owned(),
+        "left" => "←".to_owned(),
+        "right" => "→".to_owned(),
+        "up" => "↑".to_owned(),
+        "down" => "↓".to_owned(),
+        other => other.to_uppercase(),
+    };
+    caps.push(key.into());
+    Some(caps)
+}
+
+/// A keycap, Oleafly's `Kbd`: a borderless 20 px chip on the quiet `ctl` fill with `Label`
+/// text in `text_2`, or, inside a tooltip, a smaller `Caption` chip in the same colours.
 #[derive(IntoElement)]
 pub struct KbdChip {
     theme: Theme,
@@ -59,10 +96,10 @@ pub struct KbdChip {
     in_tooltip: bool,
 }
 
-/// The standalone chip's least side, and the paddings of both looks.
-const CHIP_MIN: f32 = 24.;
+/// The standalone chip's least side (`h-5 min-w-5`), and the paddings of both looks.
+const CHIP_MIN: f32 = 20.;
 const CHIP_PAD_X: f32 = 4.;
-const TOOLTIP_PAD_X: f32 = 5.;
+const TOOLTIP_PAD_X: f32 = 4.;
 const PAD_Y: f32 = 2.;
 
 impl KbdChip {
@@ -70,6 +107,15 @@ impl KbdChip {
         Self {
             theme: *theme,
             key: kbd_symbol(key.as_ref()),
+            in_tooltip: false,
+        }
+    }
+
+    /// A chip showing `cap` as it is, for caps [`keystroke_caps`] already named.
+    pub fn literal(theme: &Theme, cap: impl Into<SharedString>) -> Self {
+        Self {
+            theme: *theme,
+            key: cap.into(),
             in_tooltip: false,
         }
     }
@@ -95,22 +141,18 @@ impl RenderOnce for KbdChip {
             .justify_center()
             .flex_shrink_0()
             .py(px(PAD_Y))
-            .rounded(px(METRICS.radius.item));
+            .rounded(px(METRICS.radius.item))
+            .bg(colors.ctl)
+            .text_color(colors.text_2);
         if in_tooltip {
             text_style(chip, TextStyle::Caption)
                 .px(px(TOOLTIP_PAD_X))
-                .bg(colors.tooltip_text)
-                .text_color(colors.tooltip_bg)
                 .child(key)
         } else {
-            text_style(chip, TextStyle::Small)
+            text_style(chip, TextStyle::Label)
                 .px(px(CHIP_PAD_X))
                 .min_w(px(CHIP_MIN))
                 .h(px(CHIP_MIN))
-                .bg(colors.ctl)
-                .border_1()
-                .border_color(colors.line_strong)
-                .text_color(colors.text_1)
                 .child(key)
         }
     }
@@ -132,6 +174,17 @@ mod tests {
     fn a_key_code_loses_its_prefix() {
         assert_eq!(kbd_symbol("KeyA").as_ref(), "A");
         assert_eq!(kbd_symbol("F5").as_ref(), "F5");
+    }
+
+    #[test]
+    #[cfg(not(target_os = "macos"))]
+    fn a_keystroke_becomes_its_modifiers_then_its_key() {
+        let caps = |keys| keystroke_caps(keys).unwrap();
+        assert_eq!(caps("secondary-shift-z"), ["Ctrl", "Shift", "Z"]);
+        assert_eq!(caps("pagedown"), ["PageDown"]);
+        assert_eq!(caps("left"), ["←"]);
+        assert_eq!(caps("f5"), ["F5"]);
+        assert_eq!(caps("shift-="), ["Shift", "="]);
     }
 
     #[test]

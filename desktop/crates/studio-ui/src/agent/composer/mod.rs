@@ -28,14 +28,14 @@ pub mod steer;
 #[cfg(test)]
 mod tests;
 
-use std::{path::PathBuf, rc::Rc, sync::Arc};
+use std::{cell::Cell, path::PathBuf, rc::Rc, sync::Arc};
 
 use gpui::{
-    App, Bounds, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, Hsla,
-    IntoElement, ParentElement, Pixels, Render, SharedString, Styled, Subscription, Window, div,
-    prelude::*, px,
+    App, Bounds, ClickEvent, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
+    ParentElement, Pixels, Render, Role, SharedString, Styled, Subscription, Window, canvas, div,
+    prelude::*, px, svg,
 };
-use studio_theme::{METRICS, TextStyle, Theme, text_style};
+use studio_theme::{METRICS, Shadow, TextStyle, Theme, shadow_for, text_style};
 
 pub use attachments::{
     Attachment, AttachmentDraft, AttachmentId, AttachmentKind, Attachments, ContextChip,
@@ -45,16 +45,20 @@ pub use slash::SlashCommand;
 pub use steer::{SendAction, SteerMode};
 
 use crate::kit::{
-    Emphasis, Icon, IconButton, IconButtonSize, Popover, Select, dim_disabled, focusable,
+    Emphasis, Icon, IconButton, IconButtonSize, Menu, Popover, States, dim_disabled, focusable,
+    with_tooltip,
 };
 use crate::probe::{self, BoundsSink};
+use metrics::{
+    CONTROL_CORNER, CONTROLS_GAP, CONTROLS_GAP_NARROW, CONTROLS_GAP_TOP, CONTROLS_MIN_H,
+    INPUT_INSET_X, INPUT_INSET_Y, MODEL_CHEVRON, MODEL_H, MODEL_MAX_W, MODEL_PAD_X, SHELL_CORNER,
+    SHELL_PAD_BOTTOM, SHELL_PAD_TOP, SHELL_PAD_X, STOP_FILL, STOP_FILL_CORNER, is_narrow,
+};
 use slash::SlashState;
 use steer::steer_actions;
 
 /// The tallest the slash menu grows before it scrolls.
 const SLASH_MAX_H: f32 = 240.;
-/// The composer's border while its input has focus: `accent` at this alpha.
-const FOCUS_BORDER_ALPHA: f32 = 0.6;
 
 /// Opens the agent's model menu under the trigger's bounds.
 pub type ModelMenuHandler = Rc<dyn Fn(&Bounds<Pixels>, &mut Window, &mut App)>;
@@ -146,6 +150,9 @@ pub struct Composer {
     /// The send button's menu (Send now) is open.
     send_menu_open: bool,
     send_menu_focus: FocusHandle,
+    /// Whether the controls row measured at most [`metrics::NARROW_MAX_W`] wide the last
+    /// time it was painted. Only presentation follows it: sizes and gaps, never state.
+    narrow: Rc<Cell<bool>>,
     _input_events: Subscription,
 }
 
@@ -179,6 +186,7 @@ impl Composer {
             model: None,
             send_menu_open: false,
             send_menu_focus: cx.focus_handle(),
+            narrow: Rc::new(Cell::new(false)),
             _input_events: subscription,
         }
     }
@@ -631,12 +639,65 @@ impl Composer {
         )
     }
 
+    /// The model the next message goes to: a compact 28 px trigger in `Label` type that
+    /// truncates its name (the full name is the tooltip) and opens the agent's model menu.
+    fn model_trigger(&self, model: &ModelChoice) -> impl IntoElement {
+        let theme = self.theme;
+        let colors = theme.colors;
+        let states = States::of(&theme);
+        let open = model.on_open.clone();
+        let trigger = focusable(div().id("composer-model"), &theme, false)
+            .role(Role::ComboBox)
+            .aria_label(model.label.clone())
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(METRICS.space_1))
+            .h(px(MODEL_H))
+            .px(px(MODEL_PAD_X))
+            .min_w_0()
+            .max_w(px(MODEL_MAX_W))
+            .flex_shrink(1.)
+            .rounded(CONTROL_CORNER)
+            .cursor_pointer()
+            .hover(move |style| style.bg(states.hover));
+        let trigger = text_style(trigger, TextStyle::Label)
+            .text_color(colors.text_2)
+            .child(div().min_w_0().truncate().child(model.label.clone()))
+            .child(
+                svg()
+                    .path(Icon::ChevronDown.path())
+                    .size(px(MODEL_CHEVRON))
+                    .flex_shrink_0()
+                    .text_color(colors.text_3),
+            );
+        Menu::trigger(
+            with_tooltip(trigger, &theme, Some(model.label.clone())),
+            move |bounds, window, cx| open(bounds, window, cx),
+        )
+    }
+
+    /// The controls row: attach file, attach image and the model on the left, which may
+    /// shrink (the model name truncates) or scroll; More ways to send, Send and Stop on the
+    /// right, which never shrink. A narrow row (at most 384 px) tightens the gaps to 2 px,
+    /// the attachment targets to 24 px and Send and Stop to 28 px.
     fn controls(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.theme;
         let actions = steer_actions(self.steer_mode, self.running);
         let sendable = self.can_send(cx);
+        let narrow = self.narrow.get();
+        let gap = if narrow {
+            CONTROLS_GAP_NARROW
+        } else {
+            CONTROLS_GAP
+        };
+        let (control_size, send_size) = if narrow {
+            (IconButtonSize::Sm, IconButtonSize::Md)
+        } else {
+            (IconButtonSize::Md, IconButtonSize::Lg)
+        };
         let file_button = IconButton::new(&theme, "composer-attach-file", Icon::File.path())
-            .size(IconButtonSize::Sm)
+            .size(control_size)
             .emphasis(Emphasis::Ghost)
             .label("Attach file")
             .tooltip(
@@ -653,7 +714,7 @@ impl Composer {
             None => file_button,
         };
         let image_button = IconButton::new(&theme, "composer-attach-image", Icon::Image.path())
-            .size(IconButtonSize::Sm)
+            .size(control_size)
             .emphasis(Emphasis::Ghost)
             .label("Attach image")
             .tooltip(
@@ -670,19 +731,25 @@ impl Composer {
             None => image_button,
         };
 
-        let mut right = div()
+        let left = div()
+            .id("composer-controls-left")
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(METRICS.space_1));
-        if let Some(model) = &self.model {
-            let open = model.on_open.clone();
-            right = right.child(
-                Select::new(&theme, "composer-model", model.label.clone())
-                    .ghost()
-                    .on_open(move |bounds, window, cx| open(bounds, window, cx)),
-            );
-        }
+            .gap(px(gap))
+            .min_w_0()
+            .flex_1()
+            .overflow_x_scroll()
+            .child(file_button)
+            .child(image_button)
+            .children(self.model.as_ref().map(|model| self.model_trigger(model)));
+
+        let mut right = div()
+            .flex()
+            .flex_row()
+            .flex_none()
+            .items_center()
+            .gap(px(gap));
         if self.running {
             right = right.child(
                 IconButton::new(
@@ -690,7 +757,7 @@ impl Composer {
                     "composer-send-menu-toggle",
                     Icon::ChevronDown.path(),
                 )
-                .size(IconButtonSize::Sm)
+                .size(control_size)
                 .emphasis(Emphasis::Ghost)
                 .pressed(self.send_menu_open)
                 .label("More ways to send")
@@ -708,7 +775,7 @@ impl Composer {
         }
         if let Some(primary) = actions.primary {
             let send = IconButton::new(&theme, "composer-send", Icon::ArrowUp.path())
-                .size(IconButtonSize::Md)
+                .size(send_size)
                 .round()
                 .emphasis(Emphasis::Primary)
                 .label(primary.label())
@@ -722,34 +789,63 @@ impl Composer {
         }
         if self.running {
             let stop = IconButton::new(&theme, "composer-stop", Icon::Square.path())
-                .size(IconButtonSize::Md)
+                .size(send_size)
                 .inverted()
                 .label("Stop")
                 .tooltip("Stop")
                 .on_click(cx.listener(|this, _, _, cx| this.stop(cx)));
-            right = right.child(match probe::report_to(&self.bounds_sink, "composer-stop") {
+            let stop = match probe::report_to(&self.bounds_sink, "composer-stop") {
                 Some(report) => stop.on_bounds(report),
                 None => stop,
-            });
+            };
+            // The outlined square filled in the glyph's colour: Oleafly's filled Stop. The
+            // fill takes no pointer events, so the button keeps its hover and clicks.
+            right = right.child(
+                div().relative().flex_none().child(stop).child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(
+                            div()
+                                .size(px(STOP_FILL))
+                                .rounded(STOP_FILL_CORNER)
+                                .bg(theme.colors.card),
+                        ),
+                ),
+            );
         }
 
+        let measured = self.narrow.clone();
+        let composer = cx.entity_id();
         div()
+            .relative()
             .flex()
             .flex_row()
             .items_center()
             .justify_between()
-            .px(px(METRICS.space_2))
-            .pb(px(METRICS.space_2))
-            .child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .gap(px(METRICS.space_1))
-                    .child(file_button)
-                    .child(image_button),
-            )
+            .gap(px(gap))
+            .min_h(px(CONTROLS_MIN_H))
+            .mt(px(CONTROLS_GAP_TOP))
+            .child(left)
             .child(right)
+            .child(
+                // Oleafly sizes the controls by the row's own width (a container query), not
+                // the window's. A change shows from the next frame.
+                canvas(
+                    move |bounds, _, cx| {
+                        let narrow = is_narrow(f32::from(bounds.size.width));
+                        if measured.replace(narrow) != narrow {
+                            cx.notify(composer);
+                        }
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
     }
 
     /// What Send does while a turn runs, under the composer: only while there is something
@@ -785,12 +881,9 @@ impl Render for Composer {
             weak.update(cx, |this, cx| this.remove_from_strip(id, cx))
                 .ok();
         });
+        // Oleafly's `focus-within:border-ring`: the focus colour while the input has focus.
         let focused = self.input.focus_handle(cx).is_focused(window);
-        let border = if focused {
-            Hsla::from(colors.accent).opacity(FOCUS_BORDER_ALPHA)
-        } else {
-            colors.line.into()
-        };
+        let border = if focused { colors.focus } else { colors.line };
         let hint = self.running_hint(cx);
         div()
             .w_full()
@@ -804,10 +897,14 @@ impl Render for Composer {
                     .flex()
                     .flex_col()
                     .w_full()
-                    .rounded(crate::agent::ui::CARD_RADIUS)
+                    .pt(px(SHELL_PAD_TOP))
+                    .px(px(SHELL_PAD_X))
+                    .pb(px(SHELL_PAD_BOTTOM))
+                    .rounded(SHELL_CORNER)
                     .border_1()
                     .border_color(border)
                     .bg(colors.card)
+                    .shadow(shadow_for(theme.appearance, Shadow::RaisedPill).into_vec())
                     .children(self.slash_menu(cx))
                     .children(self.send_menu(cx))
                     .children(attachments::strip(
@@ -819,8 +916,8 @@ impl Render for Composer {
                     .child(
                         div()
                             .relative()
-                            .px(px(METRICS.space_3))
-                            .py(px(METRICS.space_2))
+                            .px(px(INPUT_INSET_X))
+                            .py(px(INPUT_INSET_Y))
                             .child(self.input.clone())
                             .children(probe::probe_element(&self.bounds_sink, "composer-input")),
                     )
