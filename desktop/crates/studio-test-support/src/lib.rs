@@ -90,7 +90,6 @@ fn launcher_executable() -> Option<PathBuf> {
     (!path.is_empty()).then(|| PathBuf::from(path))
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
