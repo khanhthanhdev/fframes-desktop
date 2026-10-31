@@ -156,9 +156,9 @@ pub fn focusable(element: Stateful<Div>, theme: &Theme, disabled: bool) -> State
 }
 
 /// Moves the focus to the next tab stop inside container (the previous one when
-/// ackwards), wrapping at its ends, and asks the control to come into view
+/// `backwards`), wrapping at its ends, and asks the control to come into view
 /// ([RevealFocused]): Tab and Shift+Tab inside a modal or a popover, so they never reach
-/// what lies under it. Returns alse, the focus unchanged, when container holds no stop.
+/// what lies under it. Returns `false`, the focus unchanged, when container holds no stop.
 pub fn focus_within(
     container: &FocusHandle,
     backwards: bool,
