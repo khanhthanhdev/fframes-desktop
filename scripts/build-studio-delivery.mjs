@@ -7,11 +7,11 @@ import { join } from "node:path";
 import { gzipSync } from "node:zlib";
 
 const studio = fileURLToPath(new URL("../landing/studio/", import.meta.url));
-for (const [page, specific] of [
-  ["index.html", "features.css"],
-  ["how-it-works.html", "how-it-works.css"],
+// The landing page has its own sky stylesheet; How it works keeps the original three.
+for (const [page, sources] of [
+  ["index.html", ["sky.css"]],
+  ["how-it-works.html", ["home.css", "how-it-works.css", "readability.css"]],
 ]) {
-  const sources = ["home.css", specific, "readability.css"];
   const css = sources
     .map(source => readFileSync(join(studio, source), "utf8"))
     .join("\n")
@@ -28,7 +28,7 @@ for (const [page, specific] of [
     .replace(/\s*<!-- studio:fonts -->[\s\S]*?<!-- \/studio:fonts -->/g, "")
     .replace(/\s*<!-- studio:scripts -->[\s\S]*?<!-- \/studio:scripts -->/g, "")
     .replace(
-      /\s*<script src="(?:studio|scroll-motion|home|how-it-works)\.js(?:\?[^"]*)?"><\/script>/g,
+      /\s*<script src="(?:studio|scroll-motion|home|how-it-works|sky)\.js(?:\?[^"]*)?"><\/script>/g,
       ""
     )
     .replace(
@@ -37,7 +37,7 @@ for (const [page, specific] of [
     )
     .replace(/\s*<!-- studio:styles -->[\s\S]*?<!-- \/studio:styles -->/g, "")
     .replace(
-      /\s*<link\s+rel="stylesheet"\s+href="(?:home|features|how-it-works|readability)\.css(?:\?[^"]*)?"\s*\/?>/g,
+      /\s*<link\s+rel="stylesheet"\s+href="(?:home|features|how-it-works|readability|sky)\.css(?:\?[^"]*)?"\s*\/?>/g,
       ""
     );
   // Establish the saved motion layout before first paint. The normal controller
@@ -55,7 +55,7 @@ for (const [page, specific] of [
   // exists. Deliver them together, preserving the motion controller dependency.
   const scripts =
     page === "index.html"
-      ? ["studio.js", "scroll-motion.js", "home.js"]
+      ? ["sky.js"]
       : ["scroll-motion.js", "how-it-works.js"];
   const js = scripts
     .map(source => readFileSync(join(studio, source), "utf8").trim())
