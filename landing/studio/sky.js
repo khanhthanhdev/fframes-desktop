@@ -32,6 +32,55 @@
     });
   }
 
+  // Hero player: four example videos. A clip shows its frame and fills in the window title,
+  // timecode, prompt and the command that rendered it. They advance every five seconds until
+  // someone picks one, and only when motion is allowed.
+  const show = document.querySelector("[data-show]");
+  if (show) {
+    const clips = [...show.querySelectorAll(".clip")];
+    const frames = [...show.querySelectorAll(".player-frame")];
+    // The three hidden frames carry data-srcset so they do not compete with the first paint;
+    // each one loads while the browser is idle, one rotation ahead of being shown.
+    const load = img => {
+      if (!img.dataset.srcset) return;
+      img.srcset = img.dataset.srcset;
+      delete img.dataset.srcset;
+    };
+    const idle = window.requestIdleCallback ?? (fn => setTimeout(fn, 200));
+    const preload = i => idle(() => load(frames[i % frames.length]), { timeout: 3000 });
+    const set = (sel, text) => {
+      const el = document.querySelector(sel);
+      if (el) el.textContent = text;
+    };
+    let at = 0;
+    const pick = i => {
+      at = i;
+      clips.forEach((clip, k) => {
+        clip.classList.toggle("is-on", k === i);
+        clip.setAttribute("aria-pressed", String(k === i));
+      });
+      load(frames[i]);
+      if (!still) preload(i + 1);
+      frames.forEach((img, k) => img.classList.toggle("is-on", k === i));
+      const d = clips[i].dataset;
+      set("[data-show-name]", d.name);
+      set("[data-show-time]", d.time);
+      set("[data-show-scope]", d.scope);
+      set("[data-show-prompt]", d.prompt);
+      set("[data-show-cmd]", d.cmd);
+      set("[data-show-out]", d.out);
+      show.style.setProperty("--ph", `${(i + 0.5) * 25}%`);
+    };
+    let timer = still ? 0 : setInterval(() => pick((at + 1) % clips.length), 5000);
+    clips.forEach((clip, i) =>
+      clip.addEventListener("click", () => {
+        clearInterval(timer);
+        timer = 0;
+        pick(i);
+      })
+    );
+    pick(0);
+  }
   // Copy button: a tint on success; otherwise the command is selected for Ctrl+C.
   for (const btn of document.querySelectorAll("[data-copy]")) {
     const label = btn.getAttribute("aria-label") ?? "";
@@ -194,6 +243,9 @@
     measure();
     update();
   });
-  measure();
-  update();
+  // The first measurement waits for a frame so it does not force a layout before first paint.
+  requestAnimationFrame(() => {
+    measure();
+    update();
+  });
 })();

@@ -6,7 +6,11 @@
     <title>fframes Studio — A video studio built around your code.</title>
     <meta
       name="description"
-      content="fframes turns Rust into video. fframes Studio is the desktop app around it: a managed SDK, your coding agent on a draft copy, click-to-select, checked edits, live preview and timeline cuts. The video stays an ordinary Rust crate."
+      content="Free, open-source desktop editor for programmatic video. Your AI coding agent writes it as Rust code; preview it, change scenes by asking, export MP4."
+    />
+    <meta
+      name="keywords"
+      content="programmatic video, code-first video editor, AI video editor, Rust video, motion graphics, explainer video maker, video from code, Remotion alternative, Motion Canvas alternative, coding agent, Claude Code, Codex, fframes"
     />
 
     <!-- Social link previews: absolute URLs for the deployed GitHub Pages site. -->
@@ -31,18 +35,18 @@
     />
     <meta
       property="og:image"
-      content="https://khanhthanhdev.github.io/fframes-desktop/studio/brand/studio-social-blue-v1.png"
+      content="https://khanhthanhdev.github.io/fframes-desktop/studio/brand/studio-og.jpg"
     />
     <meta
       property="og:image:secure_url"
-      content="https://khanhthanhdev.github.io/fframes-desktop/studio/brand/studio-social-blue-v1.png"
+      content="https://khanhthanhdev.github.io/fframes-desktop/studio/brand/studio-og.jpg"
     />
-    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:type" content="image/jpeg" />
     <meta property="og:image:width" content="1200" />
     <meta property="og:image:height" content="630" />
     <meta
       property="og:image:alt"
-      content="The blue fframes Studio logo on an ice-white background. A video studio. Built around your code."
+      content="fframes Studio share card: “A video studio built around your code.” beside three frames from explainer videos made with fframes."
     />
     <meta name="twitter:card" content="summary_large_image" />
     <meta
@@ -55,13 +59,38 @@
     />
     <meta
       name="twitter:image"
-      content="https://khanhthanhdev.github.io/fframes-desktop/studio/brand/studio-social-blue-v1.png"
+      content="https://khanhthanhdev.github.io/fframes-desktop/studio/brand/studio-og.jpg"
     />
     <meta
       name="twitter:image:alt"
-      content="The blue fframes Studio logo on an ice-white background. A video studio. Built around your code."
+      content="fframes Studio share card: “A video studio built around your code.” beside three frames from explainer videos made with fframes."
     />
-    <meta name="color-scheme" content="light" />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "fframes Studio",
+        "description": "A desktop video studio built around your code. Describe an animated video to your coding agent, watch the preview, select a scene to change, and export. The video stays an ordinary Rust project.",
+        "url": "https://khanhthanhdev.github.io/fframes-desktop/studio/",
+        "image": "https://khanhthanhdev.github.io/fframes-desktop/studio/brand/studio-og.jpg",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "Windows",
+        "license": "https://opensource.org/licenses/MIT",
+        "isAccessibleForFree": true,
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "keywords": "programmatic video, code-first video editor, AI video editor, Rust video, motion graphics, explainer videos, Remotion alternative",
+        "featureList": [
+          "Your coding agent edits the video on a draft copy",
+          "Agent edits are built and frame-checked before they apply",
+          "Live preview and timeline",
+          "Export to MP4 or WebM, rendered natively on the CPU or GPU",
+          "The video stays an ordinary Rust project"
+        ],
+        "screenshot": "https://khanhthanhdev.github.io/fframes-desktop/studio/shots/editor-light.webp",
+        "sameAs": ["https://github.com/khanhthanhdev/fframes-desktop"]
+      }
+    </script>    <meta name="color-scheme" content="light" />
     <!-- studio:fonts -->
     <link
       rel="preload"
@@ -630,10 +659,21 @@ font-weight: 600;
 .player-badge .dot {
 background: #22a05a;
 }
-.player-frame {
-width: 100%;
+.player-stage {
+display: grid;
+overflow: hidden;
 border-radius: var(--radius-inner);
 box-shadow: 0 1px 0 rgb(10 35 66 / 0.08);
+background: #f3f1ec;
+}
+.player-frame {
+grid-area: 1 / 1;
+width: 100%;
+opacity: 0;
+transition: opacity 600ms var(--ease);
+}
+.player-frame.is-on {
+opacity: 1;
 }
 .player-timeline {
 display: grid;
@@ -650,10 +690,13 @@ color: var(--ink-muted);
 .player-clips {
 position: relative;
 display: grid;
-grid-template-columns: repeat(3, minmax(0, 1fr));
+grid-template-columns: repeat(4, minmax(0, 1fr));
 gap: 6px;
 }
 .clip {
+cursor: pointer;
+font: inherit;
+text-align: left;
 display: grid;
 gap: 4px;
 padding: 4px;
@@ -671,6 +714,9 @@ text-overflow: ellipsis;
 width: 100%;
 border-radius: 6px;
 }
+.clip:hover {
+background: rgb(255 255 255 / 0.85);
+}
 .clip.is-on {
 border-color: #2f7cf6;
 box-shadow: 0 0 0 2px rgb(47 124 246 / 0.25);
@@ -680,8 +726,9 @@ color: var(--ink);
 position: absolute;
 top: -4px;
 bottom: 18px;
-left: 16.5%;
+left: var(--ph, 12%);
 width: 2px;
+transition: left 600ms var(--ease);
 border-radius: 2px;
 background: #e5484d;
 }
@@ -695,12 +742,12 @@ transform: translateY(calc(var(--f, 0) * 1px));
 .float-prompt {
 top: 0;
 left: -36px;
-max-width: 330px;
+max-width: 420px;
 rotate: -2deg;
 }
 .float-code {
 right: -28px;
-bottom: 0;
+bottom: -36px;
 margin: 0;
 padding: 12px 16px 14px;
 rotate: 2deg;
@@ -1125,97 +1172,28 @@ font-size: 0.8125rem;
 color: var(--accent);
 }
 .use-art {
-position: relative;
 display: flex;
-align-items: center;
 justify-content: center;
-gap: 10px;
 aspect-ratio: 16 / 9;
 overflow: hidden;
 border-radius: var(--radius-inner);
-background: radial-gradient(120% 90% at 20% 0%, #1c2a4a 0%, #0b0d12 70%);
-color: #fff;
+border: 1px solid var(--glass-rule);
+background: #f3f1ec;
 }
-.use-art b {
-font-weight: 700;
-letter-spacing: -0.03em;
+.use-art img {
+width: 100%;
+height: 100%;
+object-fit: cover;
 }
-.art-launch b {
-font-size: 2.6rem;
-background: var(--gradient-text);
--webkit-background-clip: text;
-background-clip: text;
-color: transparent;
+.use-tall {
+background: linear-gradient(135deg, #e9eef6, #f6f4ef);
 }
-.art-launch i {
-position: absolute;
-left: 18%;
-right: 18%;
-height: 3px;
-border-radius: 3px;
-background: rgb(255 255 255 / 0.15);
-}
-.art-launch i:nth-of-type(1) {
-bottom: 26%;
-}
-.art-launch i:nth-of-type(2) {
-bottom: 20%;
-right: 45%;
-background: #4f8cff;
-}
-.art-math b {
-font-family: "Times New Roman", serif;
-font-style: italic;
-font-weight: 400;
-font-size: 1.9rem;
-letter-spacing: 0;
-}
-.art-chart {
-align-items: flex-end;
-padding: 18% 22% 14%;
-}
-.art-chart i {
-flex: 1;
-height: var(--h);
-border-radius: 6px 6px 0 0;
-background: linear-gradient(#8ab8ff, #2f74f2);
-}
-.art-social b {
-display: grid;
-place-items: center;
-width: 26%;
-aspect-ratio: 9 / 16;
-border: 2px solid rgb(255 255 255 / 0.7);
+.use-tall img {
+width: auto;
+height: 118%;
+margin-top: 6%;
 border-radius: 10px;
-font-size: 0.9rem;
-}
-.art-captions {
-flex-direction: column;
-gap: 4px;
-justify-content: flex-end;
-padding-bottom: 12%;
-}
-.art-captions b {
-padding: 2px 10px;
-font-size: 1.05rem;
-font-weight: 600;
-color: rgb(255 255 255 / 0.6);
-}
-.art-captions .hl {
-color: #fff;
-border-radius: 6px;
-background: rgb(79 140 255 / 0.5);
-}
-.art-slides i {
-width: 34%;
-aspect-ratio: 16 / 10;
-border-radius: 8px;
-background: linear-gradient(160deg, #f4f7ff, #c9dbff);
-}
-.art-slides i:nth-child(1),
-.art-slides i:nth-child(3) {
-width: 24%;
-opacity: 0.45;
+box-shadow: 0 10px 30px rgb(10 35 66 / 0.18);
 }
 .table-wrap {
 overflow-x: auto;
@@ -1901,7 +1879,7 @@ display: none;
       <section class="hero" id="intro" data-scene="Intro" aria-labelledby="hero-title">
         <div class="container hero-grid">
           <div class="hero-copy">
-            <div class="badges" data-reveal>
+            <div class="badges">
               <a class="badge" href="#checks"
                 ><span class="badge-new">New</span>Every agent edit is checked
                 <span class="badge-arrow" aria-hidden="true">→</span></a
@@ -1911,17 +1889,17 @@ display: none;
                 MIT</span
               >
             </div>
-            <h1 id="hero-title" data-reveal style="--d: 1">
+            <h1 id="hero-title">
               A video studio built around
               <span class="sky-gradient">your code.</span>
             </h1>
-            <p class="lede" data-reveal style="--d: 2">
+            <p class="lede">
               Describe an animated video to your AI coding assistant. Studio
               builds a preview you can watch. Select a scene, ask for a change,
               then export the finished video. The video stays an ordinary Rust
               project you own.
             </p>
-            <div class="actions" data-reveal style="--d: 3">
+            <div class="actions">
               <a
                 class="button"
                 href="https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/fframes-studio-x86_64-pc-windows-msvc-setup.exe"
@@ -1933,53 +1911,48 @@ display: none;
                 >Download for Windows</a
               ><a class="button secondary" href="#tour">Take the tour</a>
             </div>
-            <p class="hero-note" data-reveal style="--d: 4">
+            <p class="hero-note">
               Bring your own coding agent: Claude Code, Codex, OpenCode, Pi,
               Antigravity or any ACP agent.
             </p>
           </div>
 
-          <!-- A real frame from the signal-lab example (rendered with its CLI), its scenes as a
-               timeline, and the Rust source that draws its title. -->
+          <!-- Four explainer videos made with fframes, each frame rendered by the project's own
+               `frame` command. sky.js rotates them; the clips below pick one. -->
           <div class="hero-visual">
             <div class="float float-prompt glass" data-float="-18" aria-hidden="true">
               <p class="float-label">
-                <span class="dot dot-blue"></span>ProductScene · 0:00–0:06
+                <span class="dot dot-blue"></span><span data-show-scope>Hook · 2:39</span>
               </p>
-              <p class="float-text">Make the title say “Make your move.”</p>
+              <p class="float-text" data-show-prompt>Show how the palette shrinks to eight colours.</p>
             </div>
-            <figure class="glass player" data-float="10">
+            <figure class="glass player" data-float="10" data-show>
               <div class="player-bar" aria-hidden="true">
                 <span class="window-dots"><i></i><i></i><i></i></span>
-                <span class="player-name">studio-signal-lab</span>
+                <span class="player-name" data-show-name>image-compression</span>
                 <span class="player-badge"><span class="dot"></span>Preview ready</span>
               </div>
-              <img
-                class="player-frame"
-                src="frames/signal-product.webp"
-                width="1440"
-                height="810"
-                alt="A frame of the signal-lab example video: the title “Signal. Your next release, in motion.” beside a release card with Build, Review and Publish ready."
-                fetchpriority="high"
-              />
-              <div class="player-timeline" aria-hidden="true">
-                <span class="player-time">0:03.00 / 0:24.00</span>
-                <div class="player-clips">
-                  <span class="clip is-on"><img src="frames/signal-product-thumb.webp" width="400" height="225" alt="" />ProductScene</span>
-                  <span class="clip"><img src="frames/signal-data-thumb.webp" width="400" height="225" alt="" />DataScene</span>
-                  <span class="clip"><img src="frames/signal-system-thumb.webp" width="400" height="225" alt="" />SystemScene</span>
-                  <i class="playhead"></i>
+              <div class="player-stage">
+                <img class="player-frame is-on" src="frames/hero-image-compression-1080.webp" srcset="frames/hero-image-compression-720.webp 720w, frames/hero-image-compression-1080.webp 1080w, frames/hero-image-compression.webp 1440w" sizes="(max-width: 64rem) calc(100vw - 48px), 610px" width="1440" height="810" fetchpriority="high" alt="From an explainer on image compression: a photo of two parrots reduced to eight colours, beside the colour cube the palette was cut from." />
+                <img class="player-frame" data-srcset="frames/hero-screen-works-720.webp 720w, frames/hero-screen-works-1080.webp 1080w, frames/hero-screen-works.webp 1440w" sizes="(max-width: 64rem) calc(100vw - 48px), 610px" width="1440" height="810" decoding="async" alt="From an explainer on how screens work: pixel density on a phone, a monitor and a TV, at 367, 92 and 34 pixels per inch." />
+                <img class="player-frame" data-srcset="frames/hero-phone-emf-720.webp 720w, frames/hero-phone-emf-1080.webp 1080w, frames/hero-phone-emf.webp 1440w" sizes="(max-width: 64rem) calc(100vw - 48px), 610px" width="1440" height="810" decoding="async" alt="From an explainer on phone radiation: a phone photon placed on the electromagnetic spectrum, a million times too weak to ionise DNA." />
+                <img class="player-frame" data-srcset="frames/hero-activation-function-720.webp 720w, frames/hero-activation-function-1080.webp 1080w, frames/hero-activation-function.webp 1440w" sizes="(max-width: 64rem) calc(100vw - 48px), 610px" width="1440" height="810" decoding="async" alt="From an explainer on activation functions: the chain rule with each derivative highlighted above a chart of the gradient shrinking layer by layer." />
+              </div>
+              <div class="player-timeline">
+                <span class="player-time" aria-hidden="true" data-show-time>2:39 / 22:09</span>
+                <div class="player-clips" role="group" aria-label="Example videos">
+                  <button class="clip is-on" type="button" aria-pressed="true" data-name="image-compression" data-time="2:39 / 22:09" data-scope="Hook · 2:39" data-prompt="Show how the palette shrinks to eight colours." data-cmd="frame 12%" data-out="12% frame 9569 159.48s [Hook]"><img src="frames/hero-image-compression-thumb.webp" width="200" height="113" alt="" />Compression</button>
+                  <button class="clip" type="button" aria-pressed="false" data-name="screen-works" data-time="1:32 / 7:42" data-scope="Density · 1:32" data-prompt="Compare pixel density on a phone, a monitor and a TV." data-cmd="frame 20%" data-out="20% frame 5544 92.40s [Density]"><img src="frames/hero-screen-works-thumb.webp" width="200" height="113" alt="" />Screens</button>
+                  <button class="clip" type="button" aria-pressed="false" data-name="phone-emf" data-time="1:01 / 2:20" data-scope="Photon · 1:01" data-prompt="Put the phone's photon on the full spectrum." data-cmd="frame 44%" data-out="44% frame 1859 61.97s [Photon]"><img src="frames/hero-phone-emf-thumb.webp" width="200" height="113" alt="" />Phone EMF</button>
+                  <button class="clip" type="button" aria-pressed="false" data-name="activation-function" data-time="1:12 / 10:02" data-scope="Chain · 1:12" data-prompt="Highlight each f′ term in the chain rule." data-cmd="frame 12%" data-out="12% frame 2167 72.23s [Chain]"><img src="frames/hero-activation-function-thumb.webp" width="200" height="113" alt="" />Activations</button>
+                  <i class="playhead" aria-hidden="true"></i>
                 </div>
               </div>
             </figure>
             <figure class="float float-code glass" data-float="-30" aria-hidden="true">
-              <p class="code-file">examples/signal-lab/src/lib.rs</p>
-              <pre><code><span class="tk-t">svgr!</span>(&lt;<span class="tk-k">text</span> font-size=<span class="tk-s">"208"</span>&gt;
-  <span class="tk-s">"Signal."</span>
-&lt;/<span class="tk-k">text</span>&gt;
-&lt;<span class="tk-k">text</span> font-size=<span class="tk-s">"52"</span>&gt;
-  <span class="tk-s">"in motion."</span>
-&lt;/<span class="tk-k">text</span>&gt;)</code></pre>
+              <p class="code-file">Rendered with the project's own CLI</p>
+              <pre><code><span class="tk-t">$</span> cargo run --release -- <span class="tk-k" data-show-cmd>frame 12%</span>
+<span class="tk-s" data-show-out>12% frame 9569 159.48s [Hook]</span></code></pre>
             </figure>
           </div>
         </div>
@@ -1987,29 +1960,47 @@ display: none;
 
       <!-- Made with fframes: key frames of the repository's examples (e2e/snapshots). -->
       <section class="made" id="made" data-scene="Made with" aria-labelledby="made-title">
-        <p class="made-title" id="made-title">Made with fframes · frames from the example projects</p>
+        <p class="made-title" id="made-title">Made with fframes · frames from real explainer videos and the example projects</p>
         <div class="made-strip">
           <ul class="made-track">
-            <li><img src="frames/made-neon.webp" width="640" height="360" loading="lazy" alt="Neon triangle, an SkSL shader drawn by Skia" /></li>
-            <li><img src="frames/made-benchmark.webp" width="640" height="360" loading="lazy" alt="The fframes intro: render times compared" /></li>
-            <li><img src="frames/made-orbit.webp" width="640" height="480" loading="lazy" alt="Made of motion: icons orbiting" /></li>
-            <li><img src="frames/made-shaders.webp" width="640" height="360" loading="lazy" alt="GPU shaders with Skia" /></li>
-            <li><img src="frames/made-data.webp" width="640" height="360" loading="lazy" alt="Signal lab: a bar chart that grows" /></li>
-            <li><img src="frames/made-owl.webp" width="640" height="360" loading="lazy" alt="Low-poly art: an eagle owl" /></li>
-            <li><img src="frames/made-marketing.webp" width="640" height="360" loading="lazy" alt="A marketing video made in Rust" /></li>
-            <li><img src="frames/made-photos.webp" width="640" height="360" loading="lazy" alt="Pixel memory: a photo gallery in parallax" /></li>
-            <li><img src="frames/made-outro.webp" width="640" height="360" loading="lazy" alt="The fframes intro outro" /></li>
-            <li><img src="frames/made-gpu.webp" width="640" height="360" loading="lazy" alt="A glass shape lit by a GPU shader" /></li>
-                      <li class="dup" aria-hidden="true"><img src="frames/made-neon.webp" width="640" height="360" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-benchmark.webp" width="640" height="360" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-orbit.webp" width="640" height="480" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-shaders.webp" width="640" height="360" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-data.webp" width="640" height="360" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-owl.webp" width="640" height="360" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-marketing.webp" width="640" height="360" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-photos.webp" width="640" height="360" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-outro.webp" width="640" height="360" loading="lazy" alt="" /></li>
-            <li class="dup" aria-hidden="true"><img src="frames/made-gpu.webp" width="640" height="360" loading="lazy" alt="" /></li>
+            <li><img src="frames/made-ic-webp-320.webp" srcset="frames/made-ic-webp-320.webp 320w, frames/made-ic-webp.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Image compression: the parrots photo split into WebP macroblocks" /></li>
+            <li><img src="frames/made-sw-phosphor-320.webp" srcset="frames/made-sw-phosphor-320.webp 320w, frames/made-sw-phosphor.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="How screens work: electrons hitting a phosphor dot" /></li>
+            <li><img src="frames/made-neon-320.webp" srcset="frames/made-neon-320.webp 320w, frames/made-neon.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Neon triangle, an SkSL shader drawn by Skia" /></li>
+            <li><img src="frames/made-af-leaky-320.webp" srcset="frames/made-af-leaky-320.webp 320w, frames/made-af-leaky.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Activation functions: Leaky ReLU and its slope" /></li>
+            <li><img src="frames/made-pe-head-320.webp" srcset="frames/made-pe-head-320.webp 320w, frames/made-pe-head.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Phone radiation: a phone at full power beside a head" /></li>
+            <li><img src="frames/made-ic-median-cut-320.webp" srcset="frames/made-ic-median-cut-320.webp 320w, frames/made-ic-median-cut.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Image compression: median cut boxes in the colour cube" /></li>
+            <li><img src="frames/made-sw-oled-320.webp" srcset="frames/made-sw-oled-320.webp 320w, frames/made-sw-oled.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="How screens work: the layers of an OLED pixel" /></li>
+            <li><img src="frames/made-shaders-320.webp" srcset="frames/made-shaders-320.webp 320w, frames/made-shaders.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="GPU shaders with Skia" /></li>
+            <li><img src="frames/made-pe-claim-320.webp" srcset="frames/made-pe-claim-320.webp 320w, frames/made-pe-claim.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Phone radiation: the claim of an EMF shield sticker" /></li>
+            <li><img src="frames/made-af-swiglu-320.webp" srcset="frames/made-af-swiglu-320.webp 320w, frames/made-af-swiglu.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Activation functions: steps to reach the target loss, per activation" /></li>
+            <li><img src="frames/made-ic-quantize-320.webp" srcset="frames/made-ic-quantize-320.webp 320w, frames/made-ic-quantize.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Image compression: DCT coefficients divided by the quantisation table" /></li>
+            <li><img src="frames/made-sw-curves-320.webp" srcset="frames/made-sw-curves-320.webp 320w, frames/made-sw-curves.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="How screens work: the curves of a letter on a pixel grid" /></li>
+            <li><img src="frames/made-owl-320.webp" srcset="frames/made-owl-320.webp 320w, frames/made-owl.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Low-poly art: an eagle owl" /></li>
+            <li><img src="frames/made-pe-lab-320.webp" srcset="frames/made-pe-lab-320.webp 320w, frames/made-pe-lab.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Phone radiation: a phantom head with a probe in the lab" /></li>
+            <li><img src="frames/made-af-residual-320.webp" srcset="frames/made-af-residual-320.webp 320w, frames/made-af-residual.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Activation functions: a residual block with its skip path" /></li>
+            <li><img src="frames/made-benchmark-320.webp" srcset="frames/made-benchmark-320.webp 320w, frames/made-benchmark.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="The fframes intro: render times compared" /></li>
+            <li><img src="frames/made-sw-tandem-320.webp" srcset="frames/made-sw-tandem-320.webp 320w, frames/made-sw-tandem.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="How screens work: a tandem OLED stack" /></li>
+            <li><img src="frames/made-ic-lossless-320.webp" srcset="frames/made-ic-lossless-320.webp 320w, frames/made-ic-lossless.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="Image compression: lossless WebP subtracts green" /></li>
+            <li><img src="frames/made-orbit-320.webp" srcset="frames/made-orbit-320.webp 320w, frames/made-orbit.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="480" loading="lazy" decoding="async" alt="Made of motion: icons orbiting" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-ic-webp-320.webp" srcset="frames/made-ic-webp-320.webp 320w, frames/made-ic-webp.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-sw-phosphor-320.webp" srcset="frames/made-sw-phosphor-320.webp 320w, frames/made-sw-phosphor.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-neon-320.webp" srcset="frames/made-neon-320.webp 320w, frames/made-neon.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-af-leaky-320.webp" srcset="frames/made-af-leaky-320.webp 320w, frames/made-af-leaky.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-pe-head-320.webp" srcset="frames/made-pe-head-320.webp 320w, frames/made-pe-head.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-ic-median-cut-320.webp" srcset="frames/made-ic-median-cut-320.webp 320w, frames/made-ic-median-cut.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-sw-oled-320.webp" srcset="frames/made-sw-oled-320.webp 320w, frames/made-sw-oled.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-shaders-320.webp" srcset="frames/made-shaders-320.webp 320w, frames/made-shaders.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-pe-claim-320.webp" srcset="frames/made-pe-claim-320.webp 320w, frames/made-pe-claim.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-af-swiglu-320.webp" srcset="frames/made-af-swiglu-320.webp 320w, frames/made-af-swiglu.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-ic-quantize-320.webp" srcset="frames/made-ic-quantize-320.webp 320w, frames/made-ic-quantize.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-sw-curves-320.webp" srcset="frames/made-sw-curves-320.webp 320w, frames/made-sw-curves.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-owl-320.webp" srcset="frames/made-owl-320.webp 320w, frames/made-owl.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-pe-lab-320.webp" srcset="frames/made-pe-lab-320.webp 320w, frames/made-pe-lab.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-af-residual-320.webp" srcset="frames/made-af-residual-320.webp 320w, frames/made-af-residual.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-benchmark-320.webp" srcset="frames/made-benchmark-320.webp 320w, frames/made-benchmark.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-sw-tandem-320.webp" srcset="frames/made-sw-tandem-320.webp 320w, frames/made-sw-tandem.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-ic-lossless-320.webp" srcset="frames/made-ic-lossless-320.webp 320w, frames/made-ic-lossless.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="360" loading="lazy" decoding="async" alt="" /></li>
+            <li class="dup" aria-hidden="true"><img src="frames/made-orbit-320.webp" srcset="frames/made-orbit-320.webp 320w, frames/made-orbit.webp 640w" sizes="(max-width: 40rem) 214px, 300px" width="640" height="480" loading="lazy" decoding="async" alt="" /></li>
           </ul>
         </div>
       </section>
@@ -2038,19 +2029,19 @@ display: none;
                 <span class="window-title">fframes Studio</span>
               </div>
               <div class="panel is-active" id="panel-editor" role="tabpanel" aria-labelledby="tab-editor">
-                <img src="shots/editor-light.webp" width="1600" height="900" loading="lazy" alt="fframes Studio with a project open: the video preview, a timeline with two scene tracks and an audio clip, and the agent chat panel on the right." />
+                <img src="shots/editor-light.webp" srcset="shots/editor-light-800.webp 800w, shots/editor-light.webp 1600w" sizes="(max-width: 64rem) calc(100vw - 48px), 1180px" width="1600" height="900" loading="lazy" alt="fframes Studio with a project open: the video preview, a timeline with two scene tracks and an audio clip, and the agent chat panel on the right." />
               </div>
               <div class="panel" id="panel-agents" role="tabpanel" aria-labelledby="tab-agents">
                 <img class="shot-contained" src="shots/agents.webp" width="1040" height="872" loading="lazy" alt="Studio's Agent settings: Claude in use with its sign-in command, and Codex, Pi, Antigravity and a custom ACP agent listed below." />
               </div>
               <div class="panel" id="panel-projects" role="tabpanel" aria-labelledby="tab-projects">
-                <img src="shots/projects.webp" width="1584" height="560" loading="lazy" alt="The Studio home screen with three recent video projects as cards and a search field." />
+                <img src="shots/projects.webp" srcset="shots/projects-800.webp 800w, shots/projects.webp 1584w" sizes="(max-width: 64rem) calc(100vw - 48px), 1180px" width="1584" height="560" loading="lazy" alt="The Studio home screen with three recent video projects as cards and a search field." />
               </div>
               <div class="panel" id="panel-export" role="tabpanel" aria-labelledby="tab-export">
                 <img class="shot-contained" src="shots/export.webp" width="1040" height="872" loading="lazy" alt="Studio's export defaults: MP4 with MPEG-4, H.264 or HEVC, WebM with VP9, the size and the frame rate." />
               </div>
               <div class="panel" id="panel-dark" role="tabpanel" aria-labelledby="tab-dark">
-                <img src="shots/editor-dark.webp" width="1600" height="900" loading="lazy" alt="The same project in Studio's dark theme." />
+                <img src="shots/editor-dark.webp" srcset="shots/editor-dark-800.webp 800w, shots/editor-dark.webp 1600w" sizes="(max-width: 64rem) calc(100vw - 48px), 1180px" width="1600" height="900" loading="lazy" alt="The same project in Studio's dark theme." />
               </div>
             </div>
             <p class="shot-note">Screenshots of the Windows preview build.</p>
@@ -2203,37 +2194,37 @@ display: none;
           </div>
           <ul class="use-grid">
             <li class="glass use" data-reveal>
-              <span class="use-art art-launch" aria-hidden="true"><b>v2.0</b><i></i><i></i></span>
+              <span class="use-art"><img src="frames/signal-product.webp" width="1440" height="810" loading="lazy" alt="A frame of the signal-lab example: “Signal. Your next release, in motion.”" /></span>
               <h3>Launch and release videos</h3>
               <p>A title, three feature beats and a logo sting, kept in the same repository as the product.</p>
               <p class="prompt">“Make a 20-second intro for our v2 launch.”</p>
             </li>
             <li class="glass use" data-reveal style="--d: 1">
-              <span class="use-art art-math" aria-hidden="true"><b>∑ k = n(n+1)/2</b></span>
+              <span class="use-art"><img src="frames/use-explainer.webp" width="640" height="360" loading="lazy" alt="From the activation functions explainer: the sigmoid curve and its formula on a timeline from 1943 to 1986" /></span>
               <h3>Lessons and explainers</h3>
               <p>Formulas, plots and step-by-step figures for math, physics, chemistry and computer science with fframes-kit.</p>
               <p class="prompt">“Animate a binary search over 16 numbers.”</p>
             </li>
             <li class="glass use" data-reveal style="--d: 2">
-              <span class="use-art art-chart" aria-hidden="true"><i style="--h: 40%"></i><i style="--h: 65%"></i><i style="--h: 50%"></i><i style="--h: 85%"></i><i style="--h: 72%"></i></span>
+              <span class="use-art"><img src="frames/use-data.webp" width="640" height="360" loading="lazy" alt="From the activation functions explainer: ReLU trains six times faster than tanh, with the ImageNet error rates as bars" /></span>
               <h3>Data stories</h3>
               <p>Charts that grow from your own CSV or JSON. Change the data and render again; the same input gives the same frames.</p>
               <p class="prompt">“Turn sales.csv into a bar race by month.”</p>
             </li>
             <li class="glass use" data-reveal>
-              <span class="use-art art-social" aria-hidden="true"><b>9:16</b></span>
+              <span class="use-art use-tall"><img src="frames/use-social.webp" width="360" height="640" loading="lazy" alt="A 9:16 short from the image compression series: the parrots photo at 48 by 32 squares, with a Vietnamese caption" /></span>
               <h3>Social clips and title cards</h3>
               <p>Vertical and square formats from one project, with your fonts, colours and timing.</p>
               <p class="prompt">“Make a vertical version with bigger text.”</p>
             </li>
             <li class="glass use" data-reveal style="--d: 1">
-              <span class="use-art art-captions" aria-hidden="true"><b>and every word</b><b class="hl">lands on the beat</b></span>
+              <span class="use-art use-tall"><img src="frames/use-captions.webp" width="360" height="640" loading="lazy" alt="A 9:16 short with Vietnamese captions: “Bước 2: tách ba màu.” beside the red, green and blue lights of one pixel" /></span>
               <h3>Captions and lyric videos</h3>
               <p>Subtitles and words timed to audio, with the audio mix on the same timeline.</p>
               <p class="prompt">“Highlight each word as it is sung.”</p>
             </li>
             <li class="glass use" data-reveal style="--d: 2">
-              <span class="use-art art-slides" aria-hidden="true"><i></i><i></i><i></i></span>
+              <span class="use-art"><img src="frames/use-slides.webp" width="640" height="360" loading="lazy" alt="From the phone radiation explainer: a closing slide comparing the $30 sticker with distance" /></span>
               <h3>Talks and slide decks</h3>
               <p>Animated slides with presenter stops, played full screen with Present.</p>
               <p class="prompt">“Add a slide that explains attention.”</p>
@@ -2296,7 +2287,7 @@ display: none;
               <thead>
                 <tr>
                   <th scope="col"><span class="visually-hidden">Feature</span></th>
-                  <th scope="col" class="col-us"><img src="brand/icon-192.png" width="28" height="28" alt="" />fframes Studio</th>
+                  <th scope="col" class="col-us"><img src="brand/icon-56.webp" width="28" height="28" alt="" />fframes Studio</th>
                   <th scope="col">Remotion</th>
                   <th scope="col">Motion Canvas</th>
                   <th scope="col">Prompt-to-video generators</th>
@@ -2640,6 +2631,55 @@ display: none;
     });
   }
 
+  // Hero player: four example videos. A clip shows its frame and fills in the window title,
+  // timecode, prompt and the command that rendered it. They advance every five seconds until
+  // someone picks one, and only when motion is allowed.
+  const show = document.querySelector("[data-show]");
+  if (show) {
+    const clips = [...show.querySelectorAll(".clip")];
+    const frames = [...show.querySelectorAll(".player-frame")];
+    // The three hidden frames carry data-srcset so they do not compete with the first paint;
+    // each one loads while the browser is idle, one rotation ahead of being shown.
+    const load = img => {
+      if (!img.dataset.srcset) return;
+      img.srcset = img.dataset.srcset;
+      delete img.dataset.srcset;
+    };
+    const idle = window.requestIdleCallback ?? (fn => setTimeout(fn, 200));
+    const preload = i => idle(() => load(frames[i % frames.length]), { timeout: 3000 });
+    const set = (sel, text) => {
+      const el = document.querySelector(sel);
+      if (el) el.textContent = text;
+    };
+    let at = 0;
+    const pick = i => {
+      at = i;
+      clips.forEach((clip, k) => {
+        clip.classList.toggle("is-on", k === i);
+        clip.setAttribute("aria-pressed", String(k === i));
+      });
+      load(frames[i]);
+      if (!still) preload(i + 1);
+      frames.forEach((img, k) => img.classList.toggle("is-on", k === i));
+      const d = clips[i].dataset;
+      set("[data-show-name]", d.name);
+      set("[data-show-time]", d.time);
+      set("[data-show-scope]", d.scope);
+      set("[data-show-prompt]", d.prompt);
+      set("[data-show-cmd]", d.cmd);
+      set("[data-show-out]", d.out);
+      show.style.setProperty("--ph", `${(i + 0.5) * 25}%`);
+    };
+    let timer = still ? 0 : setInterval(() => pick((at + 1) % clips.length), 5000);
+    clips.forEach((clip, i) =>
+      clip.addEventListener("click", () => {
+        clearInterval(timer);
+        timer = 0;
+        pick(i);
+      })
+    );
+    pick(0);
+  }
   // Copy button: a tint on success; otherwise the command is selected for Ctrl+C.
   for (const btn of document.querySelectorAll("[data-copy]")) {
     const label = btn.getAttribute("aria-label") ?? "";
@@ -2802,8 +2842,11 @@ display: none;
     measure();
     update();
   });
-  measure();
-  update();
+  // The first measurement waits for a frame so it does not force a layout before first paint.
+  requestAnimationFrame(() => {
+    measure();
+    update();
+  });
 })();
 </script>
     <!-- /studio:scripts -->
