@@ -104,6 +104,10 @@ body {
 main {
   overflow-x: clip;
 }
+/* Logo pictures pick a dark-mode source; layout styles target the img inside. */
+.brand picture {
+  display: contents;
+}
 img,
 svg {
   display: block;
@@ -1257,7 +1261,7 @@ tbody tr:last-child .col-us {
   color: var(--ink-muted);
 }
 .install-card .small code {
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 .command {
   display: flex;
@@ -1358,6 +1362,9 @@ tbody tr:last-child .col-us {
 /* Call to action and footer -------------------------------------------------------------- */
 .cta {
   padding: 112px 0 48px;
+}
+.cta-card .actions {
+  justify-content: center;
 }
 .cta-card {
   display: grid;
@@ -1733,6 +1740,26 @@ tbody tr:last-child .col-us {
   .race {
     padding: 20px 18px 18px;
   }
+  /* The table scrolls sideways; its row labels stay in view. */
+  table {
+    min-width: 800px;
+    font-size: 0.875rem;
+  }
+  thead th {
+    white-space: normal;
+  }
+  th,
+  td {
+    padding: 12px 12px;
+  }
+  tbody th,
+  thead th:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 1;
+    width: 10rem;
+    background: var(--glass-strong);
+  }
   .card-grid,
   .use-grid,
   .install-grid {
@@ -1761,5 +1788,144 @@ tbody tr:last-child .col-us {
 @media (prefers-reduced-motion: reduce) {
   .made-track .dup {
     display: none;
+  }
+}
+
+/* Dark mode: a night sky ------------------------------------------------------------------ */
+/* The same layout under a navy sky with a moon, faint stars and dim clouds. The rendered video
+   frames keep their own paper colour; they are the content. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --sky-top: color-mix(in oklab, color-mix(in oklab, #10203f, #071226 var(--a, 100%)), #050a18 var(--b, 0%));
+    --sky-high: color-mix(in oklab, color-mix(in oklab, #15294d, #0b1b37 var(--a, 100%)), #08112a var(--b, 0%));
+    --sky-mid: color-mix(in oklab, color-mix(in oklab, #1b3159, #0f2446 var(--a, 100%)), #0c1838 var(--b, 0%));
+    --sky-low: color-mix(in oklab, color-mix(in oklab, #223a66, #142d55 var(--a, 100%)), #111f47 var(--b, 0%));
+    --sky-horizon: color-mix(in oklab, color-mix(in oklab, #2b4677, #1a3662 var(--a, 100%)), #172656 var(--b, 0%));
+    --sky-haze: rgb(120 150 230 / 0.12);
+    --sky-ray: rgb(190 210 255 / 0.05);
+    --sun-core: #eef4ff;
+    --sun-glow: rgb(170 200 255 / 0.22);
+    --cloud: rgb(150 180 230 / 0.13);
+    --cloud-edge: rgb(150 180 230 / 0.09);
+    --cloud-far: rgb(130 160 220 / 0.07);
+    --cloud-far-edge: rgb(130 160 220 / 0.05);
+    --cloud-shade: rgb(0 0 0 / 0.12);
+
+    --ink: #e8effb;
+    --ink-soft: #bccbe4;
+    --ink-muted: #93a8c9;
+    --accent: #8ab8ff;
+    --action: #3b82f6;
+    --action-hover: #2f6fe0;
+    --ok: #4ade80;
+    --ok-soft: rgb(74 222 128 / 0.14);
+    --warn: #fbbf24;
+    --warn-soft: rgb(251 191 36 / 0.14);
+    --bad: #f87171;
+    --gradient-text: linear-gradient(100deg, #7fb0ff 0%, #a7c8ff 45%, #d9e8ff 100%);
+
+    --glass: linear-gradient(160deg, rgb(24 42 76 / 0.82), rgb(14 27 52 / 0.66));
+    --glass-solid: rgb(14 27 52 / 0.72);
+    --glass-strong: rgb(16 30 56 / 0.96);
+    --glass-border: rgb(150 185 255 / 0.16);
+    --glass-rule: rgb(160 190 240 / 0.14);
+    --glass-shadow: inset 0 1px 0 rgb(255 255 255 / 0.07), 0 22px 48px -22px rgb(0 0 0 / 0.7),
+      0 2px 6px rgb(0 0 0 / 0.25);
+    --glass-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 34px 64px -26px rgb(0 0 0 / 0.8),
+      0 4px 10px rgb(0 0 0 / 0.3);
+    --action-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 10px 24px -10px rgb(59 130 246 / 0.6);
+  }
+  ::selection {
+    background: #24467e;
+  }
+  /* Stars instead of sun rays. */
+  .sky-rays {
+    opacity: 0.8;
+    filter: none;
+    mask-image: linear-gradient(#000 0%, rgb(0 0 0 / 0.6) 45%, transparent 85%);
+    background:
+      radial-gradient(1px 1px at 12% 18%, #fff, transparent),
+      radial-gradient(1px 1px at 28% 42%, #dfe9ff, transparent),
+      radial-gradient(1.5px 1.5px at 44% 12%, #fff, transparent),
+      radial-gradient(1px 1px at 58% 33%, #cddcff, transparent),
+      radial-gradient(1px 1px at 71% 8%, #fff, transparent),
+      radial-gradient(1.5px 1.5px at 86% 27%, #e8f0ff, transparent),
+      radial-gradient(1px 1px at 93% 48%, #fff, transparent),
+      radial-gradient(1px 1px at 6% 56%, #dfe9ff, transparent),
+      radial-gradient(1px 1px at 36% 64%, #fff, transparent),
+      radial-gradient(1px 1px at 79% 61%, #cddcff, transparent);
+    background-size: 420px 360px;
+  }
+  .sky-sun {
+    width: 54px;
+    height: 54px;
+    box-shadow: 0 0 60px 24px var(--sun-glow), 0 0 160px 80px var(--sky-ray);
+  }
+  .button.secondary:hover,
+  .tabs [role="tab"][aria-selected="true"],
+  .scrub-clips a:hover {
+    background: #22406f;
+  }
+  .player-badge {
+    background: rgb(74 222 128 / 0.14);
+    color: #86efac;
+  }
+  .clip {
+    background: rgb(255 255 255 / 0.05);
+  }
+  .clip:hover {
+    background: rgb(255 255 255 / 0.1);
+  }
+  .clip.is-on {
+    border-color: #5b9bff;
+  }
+  .made-track img,
+  .use-tall img,
+  .panel img.shot-contained {
+    box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+  }
+  .made-track img {
+    border-color: rgb(150 185 255 / 0.18);
+  }
+  .use-tall {
+    background: linear-gradient(135deg, #142847, #1b2f52);
+  }
+  .panel {
+    background: #0d1a31;
+  }
+  .crop,
+  .report-card {
+    background: #0f1f3a;
+  }
+  .mini,
+  .no::before {
+    background: rgb(255 255 255 / 0.08);
+  }
+  .col-us {
+    background: linear-gradient(180deg, rgb(59 130 246 / 0.18), rgb(59 130 246 / 0.1));
+  }
+  .copy.copied {
+    background: #1d3a66;
+  }
+  .lane-track {
+    background: rgb(255 255 255 / 0.08);
+  }
+  .lane-bar {
+    background: linear-gradient(90deg, #4c6488, #5f7aa3);
+  }
+  .scrub-track {
+    background:
+      repeating-linear-gradient(90deg, rgb(190 210 255 / 0.4) 0 1px, transparent 1px 10%) 0 0 / 100% 7px no-repeat,
+      repeating-linear-gradient(90deg, rgb(190 210 255 / 0.2) 0 1px, transparent 1px 2%) 0 0 / 100% 4px no-repeat;
+  }
+  .scrub-clips a {
+    border-color: rgb(150 185 255 / 0.16);
+    background: rgb(255 255 255 / 0.05);
+  }
+  .scrub-clips .is-on a {
+    border-color: #5b9bff;
+    background: linear-gradient(180deg, #1f3c6e, #183260);
+    color: #cfe0ff;
   }
 }

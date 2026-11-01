@@ -47,9 +47,8 @@ for (const [page, sources] of [
   const bootstrap = `\n    <!-- studio:bootstrap -->\n    <!-- prettier-ignore -->\n    <script data-studio-bootstrap>(()=>{const root=document.documentElement;root.classList.add("js-enabled");let choice=null;try{choice=localStorage.getItem("fframes-studio-scroll-motion")}catch{}if(choice==="on"||(choice!=="off"&&!matchMedia("(prefers-reduced-motion: reduce)").matches))root.classList.add("${motionClass}")})()</script>\n    <!-- /studio:bootstrap -->`;
   const fonts = `\n    <!-- studio:fonts -->${["geist-latin-v5.woff2", "geist-mono-latin-v6.woff2"].map(font => `\n    <link\n      rel="preload"\n      href="fonts/${font}"\n      as="font"\n      type="font/woff2"\n      crossorigin\n    />`).join("")}\n    <!-- /studio:fonts -->`;
   const block = `${fonts}${bootstrap}\n    <!-- studio:styles -->\n    <!-- prettier-ignore -->\n    <style data-studio-styles>\n${css}\n</style>\n    <!-- /studio:styles -->`;
-  const anchor = '<meta name="color-scheme" content="light" />';
-  if (!html.includes(anchor))
-    throw new Error(`Missing styles insertion point: ${page}`);
+  const anchor = html.match(/<meta name="color-scheme" content="[^"]*" \/>/)?.[0];
+  if (!anchor) throw new Error(`Missing styles insertion point: ${page}`);
   html = html.replace(anchor, anchor + block);
   // These small controllers run at the end of the document, after their DOM
   // exists. Deliver them together, preserving the motion controller dependency.
