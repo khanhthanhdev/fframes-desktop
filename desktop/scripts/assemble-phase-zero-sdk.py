@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Assemble a native SDK from an actual Rust sysroot and FFmpeg install."""
 import argparse
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -50,7 +51,8 @@ def toml_value(value):
 
 def archive(source, output, name, destination):
     path = output / "artifacts" / f"{name}.tar.gz"
-    with tarfile.open(path, "w:gz", dereference=True) as tar:
+    # Level 6 instead of tarfile's 9: several times faster for a few percent more bytes.
+    with tarfile.open(path, "w:gz", compresslevel=6, dereference=True) as tar:
         for entry in sorted(source.iterdir()):
             tar.add(entry, arcname=entry.name)
     with path.open("rb") as stream:
@@ -434,7 +436,9 @@ def assemble(output, ffmpeg_root, vendor=None):
             binary = Path(environment["CARGO_TARGET_DIR"]) / "debug" / ("sdk-qualification-worker.exe" if os.name == "nt" else "sdk-qualification-worker")
             verify_preview_worker(binary, directory, environment, "skia-cpu")
             verify_preview_worker(binary, directory, environment)
-        artifacts = [archive(staging / name, output, f"{name}-{target}", name) for name in ["toolchain", "ffmpeg", "framework"]]
+        # zlib releases the GIL while it compresses, so the three archives build in parallel.
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            artifacts = list(pool.map(lambda name: archive(staging / name, output, f"{name}-{target}", name), ["toolchain", "ffmpeg", "framework"]))
     if crate_version(ROOT / "fframes-studio-kit/Cargo.toml") != crate_version(ROOT / "fframes-studio-runtime/Cargo.toml"):
         raise ValueError("fframes-studio-kit is released with fframes-studio-runtime; give both the same version")
     manifest.update(sdk_id=f"studio-sdk-{target}-{SDK_RELEASE}", runtime_version=crate_version(ROOT / "fframes-studio-runtime/Cargo.toml"), kit_version=kit, target_triple=target, arch=target.split("-")[0], artifacts=artifacts,

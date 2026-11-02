@@ -22,6 +22,11 @@ on:
       - "scripts/grammar-build-cost.sh"
   # Runs the macOS and dependency jobs on demand; the fork tests need a pull request.
   workflow_dispatch:
+  # Caches a pull request saves are visible to that pull request only, so without a run on
+  # main every pull request rebuilt FFmpeg and the whole workspace on macOS. This keeps main's
+  # caches (evicted after 7 unused days) warm for them.
+  schedule:
+    - cron: "0 5 * * 1,4"
 
 permissions:
   contents: read
@@ -77,6 +82,8 @@ jobs:
           cache-workspaces: "desktop -> target"
           # A failed job saves a near-empty target that later runs restore as an exact hit
           cache-on-failure: false
+          # Only main's cache is visible to every pull request; theirs would evict it.
+          cache-save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: macOS native prerequisites
         run: |
           # The FFmpeg build compiles OpenH264 and finds it through pkg-config.
@@ -130,6 +137,11 @@ jobs:
       - id: scope
         shell: bash
         run: |
+          # The scheduled run only warms caches.
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [ "${{ github.event_name }}" != "pull_request" ]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
             exit 0
