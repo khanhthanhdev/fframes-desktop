@@ -1,0 +1,1 @@
+- [Component library initiative](project-component-library.md) — fframes-components research chain in plans/reports; verified core constraints to check against API sketches
