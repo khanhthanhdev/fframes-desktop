@@ -114,6 +114,14 @@ impl<'a> Svgr<'a> {
     }
 }
 
+/// `None` is nothing, so `{clip.image(&frame, ctx).map(|image| svgr!(...))}` draws the
+/// element only while there is an image.
+impl<'a> From<Option<Svgr<'a>>> for Svgr<'a> {
+    fn from(value: Option<Svgr<'a>>) -> Self {
+        value.unwrap_or_default()
+    }
+}
+
 #[cfg(any(not(feature = "compile-time-svgtree"), target_arch = "wasm32"))]
 fn svg_document_bounds(
     svg: &str,

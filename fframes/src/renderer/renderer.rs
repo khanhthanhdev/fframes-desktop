@@ -136,7 +136,46 @@ impl<'a, 'media: 'a> FFramesRendererRuntime<'a> {
         media: Option<&'media dyn MediaProvider<'media>>,
         timing: Option<&crate::TimingDoc>,
     ) -> FFramesRendererResult<Self> {
-        let timeline = Self::resolve_timeline(time_base, video, scenes, media, timing)?;
+        Self::build(time_base, video, scenes, media, timing, || {
+            time_base.sample_rate
+        })
+    }
+
+    /// Choose the playback device's sample rate only for projects with audio tracks.
+    /// Silent projects keep the supplied time base and never need to open a device.
+    pub fn with_audio_sample_rate<TVideo: Video>(
+        time_base: TimeBase,
+        video: &'a TVideo,
+        scenes: &Scenes<'a>,
+        media: Option<&'media dyn MediaProvider<'media>>,
+        audio_sample_rate: impl FnOnce() -> usize,
+    ) -> FFramesRendererResult<Self> {
+        Self::build(time_base, video, scenes, media, None, audio_sample_rate)
+    }
+
+    fn build<TVideo: Video>(
+        mut time_base: TimeBase,
+        video: &'a TVideo,
+        scenes: &Scenes<'a>,
+        media: Option<&'media dyn MediaProvider<'media>>,
+        timing: Option<&crate::TimingDoc>,
+        audio_sample_rate: impl FnOnce() -> usize,
+    ) -> FFramesRendererResult<Self> {
+        let scenes = ScenesWithAudio::new(scenes);
+        let audio = video.audio();
+        let has_tracks =
+            |map: &crate::AudioMap<'_>| map.0.as_ref().is_some_and(|tracks| !tracks.is_empty());
+        if has_tracks(&audio)
+            || scenes
+                .0
+                .iter()
+                .flatten()
+                .any(|scene| has_tracks(&scene.audio_map))
+        {
+            time_base.sample_rate = audio_sample_rate();
+        }
+        let timeline =
+            Self::resolve_audio_timeline(time_base, video, &scenes, &audio, media, timing)?;
 
         let mut font_source = RendererFontSource {
             fontdb: fontdb::Database::new(),
@@ -161,11 +200,39 @@ impl<'a, 'media: 'a> FFramesRendererRuntime<'a> {
         media: Option<&'media dyn MediaProvider<'media>>,
         timing: Option<&crate::TimingDoc>,
     ) -> FFramesRendererResult<ResolvedRenderingTimeline<'a, AudioTimelineSamples>> {
+        Self::resolve_audio_timeline(
+            time_base,
+            video,
+            &ScenesWithAudio::new(scenes),
+            &video.audio(),
+            media,
+            timing,
+        )
+    }
+
+    #[cfg(feature = "cli")]
+    pub(super) fn resolve_video_timeline<TVideo: Video>(
+        time_base: TimeBase,
+        video: &'a TVideo,
+        scenes: &Scenes<'a>,
+        media: Option<&'media dyn MediaProvider<'media>>,
+    ) -> FFramesRendererResult<ResolvedRenderingTimeline<'a, AudioTimelineSamples>> {
+        Self::resolve_timeline(time_base, video, scenes, media, None)
+    }
+
+    fn resolve_audio_timeline<TVideo: Video>(
+        time_base: TimeBase,
+        video: &'a TVideo,
+        scenes: &ScenesWithAudio<'a>,
+        audio: &crate::AudioMap<'_>,
+        media: Option<&'media dyn MediaProvider<'media>>,
+        timing: Option<&crate::TimingDoc>,
+    ) -> FFramesRendererResult<ResolvedRenderingTimeline<'a, AudioTimelineSamples>> {
         Ok(crate::resolve_timeline_with_timing(
             &video.duration(),
-            &ScenesWithAudio::new(scenes),
+            scenes,
             &time_base,
-            &video.audio(),
+            audio,
             timing,
             |name| {
                 let media = media.ok_or_else(|| {
