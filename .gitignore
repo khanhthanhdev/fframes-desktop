@@ -35,3 +35,6 @@ __pycache__/
 *.pyc
 .agents/
 skills-lock.json
+
+# Browser profiles saved by UI capture runs (logins, cookies, history).
+/output/**/chrome-profile/
