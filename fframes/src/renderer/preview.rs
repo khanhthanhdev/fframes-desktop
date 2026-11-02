@@ -402,6 +402,13 @@ impl<'a, 'media: 'a, TVideo: Video> Previewer<'a, 'media, TVideo> {
         self
     }
 
+    /// Decodes video sources of the following single frames with `decoders`, e.g.
+    /// [`VideoDecodersWorker::for_preview`] for interactive playback and scrubbing. The
+    /// caller then calls [`VideoDecodersWorker::finish_preview_frame`] after each frame.
+    pub fn set_video_decoders(&mut self, decoders: VideoDecodersWorker) {
+        self.worker.decoders = decoders;
+    }
+
     /// Scenes and duration for resolving time specs like `Intro@1.5s`.
     pub fn timeline(&self) -> &TimelineIndex {
         &self.timeline_index

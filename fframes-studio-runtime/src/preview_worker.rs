@@ -98,6 +98,30 @@ impl PreviewWorkerConfig {
         self
     }
 }
+/// Preview video decoders per output scale, like the renderers per output size: the
+/// playhead and timeline thumbnails come at different scales and positions, so each keeps
+/// its own decoders and a thumbnail batch neither seeks nor retires the playhead's.
+#[derive(Default)]
+struct PreviewDecoders {
+    /// Most recently used last.
+    by_scale: Vec<(u64, fframes::VideoDecodersWorker)>,
+}
+impl PreviewDecoders {
+    fn for_scale(&mut self, scale: f64) -> fframes::VideoDecodersWorker {
+        let key = scale.to_bits();
+        if let Some(index) = self.by_scale.iter().position(|(k, _)| *k == key) {
+            let entry = self.by_scale.remove(index);
+            self.by_scale.push(entry);
+        } else {
+            if self.by_scale.len() == crate::renderer::SIZE_CLASSES {
+                self.by_scale.remove(0);
+            }
+            self.by_scale
+                .push((key, fframes::VideoDecodersWorker::for_preview(false)));
+        }
+        self.by_scale[self.by_scale.len() - 1].1.clone()
+    }
+}
 struct Artifact {
     descriptor: PreparedAudioDescriptor,
     path: PathBuf,
@@ -432,6 +456,7 @@ pub fn serve_preview_worker<V: Video>(
     let mut artifacts = Artifacts {
         entries: VecDeque::new(),
     };
+    let mut decoders = PreviewDecoders::default();
     // The reader owns only control bytes. Cancellation can interrupt mixing between
     // chunks without transferring the borrowed Video/media or blocking the UI.
     let input = std::mem::replace(&mut transport.control_in, Box::new(std::io::empty()));
@@ -607,6 +632,8 @@ pub fn serve_preview_worker<V: Video>(
                     .min(1.);
                 let scale = req.scale.min(max_scale);
                 previewer.set_scale(scale);
+                let frame_decoders = decoders.for_scale(scale);
+                previewer.set_video_decoders(frame_decoders.clone());
                 let started = Instant::now();
                 let mut rendered =
                     previewer.render_with_editor_geometry(req.frame_index, &mut renderer);
@@ -616,6 +643,7 @@ pub fn serve_preview_worker<V: Video>(
                     rendered =
                         previewer.render_with_editor_geometry(req.frame_index, &mut renderer);
                 }
+                frame_decoders.finish_preview_frame(1);
                 match rendered {
                     Ok((frame, geometry)) => {
                         let expected = (frame.width as usize)

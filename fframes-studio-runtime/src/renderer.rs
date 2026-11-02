@@ -126,7 +126,7 @@ pub(crate) type MakeRenderer<'a> = Box<dyn Fn() -> Box<dyn FrameRenderer + 'a> +
 
 /// How many output sizes keep their own renderer. Main frames and timeline thumbnails come
 /// at different sizes; a Skia renderer drops its GPU context and caches on a size change.
-const SIZE_CLASSES: usize = 2;
+pub(crate) const SIZE_CLASSES: usize = 2;
 
 /// The renderer of a worker: Skia renderers per output size, or the built-in CPU renderer.
 /// A Skia render that fails switches the rest of the session to the built-in renderer,
