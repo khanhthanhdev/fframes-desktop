@@ -1,0 +1,74 @@
+ M README.md
+M  desktop/Cargo.lock
+M  desktop/app/src/main.rs
+M  desktop/crates/studio-engine/Cargo.toml
+M  desktop/crates/studio-engine/src/app_settings.rs
+M  desktop/crates/studio-engine/src/controller.rs
+M  desktop/crates/studio-engine/src/engine/backend.rs
+M  desktop/crates/studio-engine/src/engine/handle.rs
+M  desktop/crates/studio-engine/src/lib.rs
+M  desktop/crates/studio-engine/src/sdk_setup.rs
+M  desktop/crates/studio-project/Cargo.toml
+M  desktop/crates/studio-project/src/manifest.rs
+MM desktop/crates/studio-sdk/src/doctor.rs
+M  desktop/crates/studio-sdk/src/environment.rs
+M  desktop/crates/studio-sdk/src/project.rs
+ M desktop/crates/studio-theme/src/elevation.rs
+ M desktop/crates/studio-theme/src/lib.rs
+ M desktop/crates/studio-theme/src/metrics.rs
+ M desktop/crates/studio-theme/src/palette.rs
+M  desktop/crates/studio-ui/src/agent/attachment_flow.rs
+M  desktop/crates/studio-ui/src/agent/commands.rs
+M  desktop/crates/studio-ui/src/agent/controls.rs
+M  desktop/crates/studio-ui/src/agent/project_tab.rs
+M  desktop/crates/studio-ui/src/agent/provider_setup.rs
+M  desktop/crates/studio-ui/src/export/progress.rs
+ M desktop/crates/studio-ui/src/kit/nav_rail.rs
+M  desktop/crates/studio-ui/src/shell/engine_events.rs
+MM desktop/crates/studio-ui/src/shell/header.rs
+ M desktop/crates/studio-ui/src/shell/layout.rs
+ M desktop/crates/studio-ui/src/shell/left_column.rs
+M  desktop/crates/studio-ui/src/shell/mod.rs
+M  desktop/crates/studio-ui/src/shell/onboarding.rs
+ M desktop/crates/studio-ui/src/shell/player.rs
+MM desktop/crates/studio-ui/src/shell/settings.rs
+M  desktop/crates/studio-ui/src/shell/status_strip.rs
+ M desktop/crates/studio-ui/src/shell/transport.rs
+ M desktop/crates/studio-ui/src/timeline/playhead.rs
+ M desktop/crates/studio-ui/src/timeline/segment.rs
+ M desktop/crates/studio-ui/src/timeline/view.rs
+ M desktop/packaging/windows/install.ps1
+ M desktop/scripts/assemble-phase-zero-sdk.py
+ M desktop/scripts/package-phase-zero.py
+MM docs/desktop/README.md
+M  examples/fframes-studio-intro/src/lib.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/comp.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/finale.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/layers.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/look.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/problem.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/solution.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/speed.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/use_cases.rs
+M  examples/fframes-studio-intro/src/scenes/keynote/workflow.rs
+M  landing/studio/studio.css
+M  scripts/build-studio-figures.mjs
+?? design-system/
+?? desktop/crates/studio-engine/src/updates.rs
+?? docs/design/
+?? docs/desktop/open-fframes-project-in-studio.md
+?? examples/fframes-studio-intro/assets/geist-LICENSE.txt
+?? examples/fframes-studio-intro/assets/geist-mono-LICENSE.txt
+?? examples/fframes-studio-intro/media/Geist-Book.ttf
+?? examples/fframes-studio-intro/media/Geist-Medium.ttf
+?? examples/fframes-studio-intro/media/Geist-Regular.ttf
+?? examples/fframes-studio-intro/media/GeistMono-Medium.ttf
+?? examples/fframes-studio-intro/media/GeistMono-Regular.ttf
+?? output/
+?? plans/261020-1617-studio-scroll-experiments/
+?? plans/261020-2131-studio-intro-editorial-style/
+?? plans/261021-1011-studio-cap-editor-layout/
+?? plans/journals/2026-10-20-scroll-animations-for-the-studio-pages.md
+?? plans/reports/
+?? scripts/install-deps.ps1
+?? scripts/install-deps.sh

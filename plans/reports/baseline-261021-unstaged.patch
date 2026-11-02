@@ -1,0 +1,1145 @@
+diff --git a/README.md b/README.md
+index a76fd99..6ae4b04 100644
+--- a/README.md
++++ b/README.md
+@@ -204,7 +204,21 @@ compile them from source (up to ~20 minutes). Later builds take seconds. `--back
+ 
+ ## Requirements
+ 
+-[Rust](https://www.rust-lang.org/learn/get-started) and, for working on the editor, [NodeJS](https://nodejs.org/en/download/).
++One command installs everything below that is missing: Rust (rustup's minimal profile, without the offline docs),
++the C toolchain and codec libraries, and on Windows the Visual Studio Build Tools with clang and a shared FFmpeg 9
++(it also sets `FFMPEG_DIR`, `LIBCLANG_PATH` and `PATH` for your user). Running it again skips what is installed.
++
++```sh
++# macOS (Homebrew), Debian/Ubuntu (apt) or Arch (pacman)
++curl -fsSL https://raw.githubusercontent.com/khanhthanhdev/fframes-desktop/main/scripts/install-deps.sh | bash
++```
++
++```powershell
++# Windows
++irm https://raw.githubusercontent.com/khanhthanhdev/fframes-desktop/main/scripts/install-deps.ps1 | iex
++```
++
++The manual steps follow. You need [Rust](https://www.rust-lang.org/learn/get-started) and, for working on the editor, [NodeJS](https://nodejs.org/en/download/).
+ fframes links ffmpeg's libav libraries statically. A prebuilt build is downloaded for macOS and Linux (arm64 and x86_64) and
+ compiled from source for other targets or `FFMPEG_FORCE_BUILD=1`; either way the system encoders they link against have to be installed.
+ 
+diff --git a/desktop/crates/studio-sdk/src/doctor.rs b/desktop/crates/studio-sdk/src/doctor.rs
+index 08a4755..34c31d5 100644
+--- a/desktop/crates/studio-sdk/src/doctor.rs
++++ b/desktop/crates/studio-sdk/src/doctor.rs
+@@ -96,15 +96,27 @@ fn probe_command(program: impl AsRef<std::ffi::OsStr>) -> Command {
+ 
+ pub fn install_hint(packages: &[String]) -> String {
+     if cfg!(windows) {
++        // The Build Tools command also adds Visual Studio's clang, which carries libclang, so
++        // one command covers both prerequisites; LLVM alone is needed when MSVC is present.
++        let command = if packages.iter().any(|p| p == WINDOWS_MSVC_PACKAGE) {
++            WINDOWS_BUILD_TOOLS_COMMAND
++        } else {
++            WINDOWS_LLVM_COMMAND
++        };
+         format!(
+-            "Install with the Visual Studio Installer or LLVM setup: {}",
++            "Run in PowerShell: {command}\n(or install with the Visual Studio Installer or LLVM setup: {})",
+             packages.join(", ")
+         )
++    } else if cfg!(target_os = "macos") {
++        "Run in Terminal: xcode-select --install".into()
+     } else {
+         format!("sudo apt-get install -y {}", packages.join(" "))
+     }
+ }
+ 
++const WINDOWS_BUILD_TOOLS_COMMAND: &str = "winget install -e --id Microsoft.VisualStudio.BuildTools --override \"--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Llvm.Clang --includeRecommended\"";
++const WINDOWS_LLVM_COMMAND: &str = "winget install -e --id LLVM.LLVM";
++
+ const WINDOWS_MSVC_PACKAGE: &str =
+     "Visual Studio Build Tools with the \"Desktop development with C++\" workload";
+ const WINDOWS_LLVM_PACKAGE: &str =
+@@ -649,6 +661,13 @@ mod tests {
+         if cfg!(windows) {
+             assert!(!hint.contains("apt-get"), "{hint}");
+             assert!(hint.contains("Visual Studio Installer"), "{hint}");
++            // Only libclang missing: LLVM, not the multi-gigabyte Build Tools.
++            let llvm = install_hint(&[WINDOWS_LLVM_PACKAGE.into()]);
++            assert!(llvm.contains(WINDOWS_LLVM_COMMAND), "{llvm}");
++            let both = install_hint(&[WINDOWS_MSVC_PACKAGE.into(), WINDOWS_LLVM_PACKAGE.into()]);
++            assert!(both.contains(WINDOWS_BUILD_TOOLS_COMMAND), "{both}");
++        } else if cfg!(target_os = "macos") {
++            assert_eq!(hint, "Run in Terminal: xcode-select --install");
+         } else {
+             assert_eq!(hint, "sudo apt-get install -y a b");
+         }
+diff --git a/desktop/crates/studio-theme/src/elevation.rs b/desktop/crates/studio-theme/src/elevation.rs
+index 5ed1e4b..609c1ab 100644
+--- a/desktop/crates/studio-theme/src/elevation.rs
++++ b/desktop/crates/studio-theme/src/elevation.rs
+@@ -35,7 +35,7 @@ pub fn shadow_for(appearance: Appearance, kind: Shadow) -> SmallVec<[BoxShadow;
+             pick(32., 40.),
+             -12.
+         )],
+-        Shadow::Preview => smallvec![black(0.35, 12., 32., -8.)],
++        Shadow::Preview => smallvec![black(pick(0.06, 0.30), 4., 20., -2.)],
+         Shadow::RaisedPill => smallvec![black(0.12, 1., 2., 0.), black(0.06, 0., 0., 0.5)],
+         Shadow::Thumb => smallvec![black(0.25, 1., 3., 0.)],
+     }
+diff --git a/desktop/crates/studio-theme/src/lib.rs b/desktop/crates/studio-theme/src/lib.rs
+index edc44f2..db7d67e 100644
+--- a/desktop/crates/studio-theme/src/lib.rs
++++ b/desktop/crates/studio-theme/src/lib.rs
+@@ -500,27 +500,27 @@ mod tests {
+     }
+ 
+     #[test]
+-    fn light_palette_matches_cap_spec() {
++    fn light_palette_matches_studio_spec() {
+         assert_roles(
+             Appearance::Light,
+             [
+-                0xf1f1f3ff, 0xffffffff, 0xf6f6f7ff, 0xe9e9ecff, 0x00000013, 0x0000001f, 0x1c1c1eff,
+-                0x6e6e75ff, 0xa0a0a8ff, 0x0000000b, 0x00000013, 0x0000001c, 0x007affff, 0x2b8cffff,
+-                0xffffffff, 0xff3b30ff, 0xffffffff, 0x218358ff, 0xe6f6ebff, 0xab6400ff, 0xfff7c2ff,
+-                0xce2c31ff, 0xfeebecff, 0x007aff40, 0x202020ff, 0xfcfcfcff,
++                0xfafcffff, 0xffffffff, 0xedf3ffff, 0xdce4f0ff, 0xdce4f0ff, 0xc6d3e8ff, 0x15294bff,
++                0x586b85ff, 0x8a98adff, 0x15294b0b, 0x15294b14, 0x15294b1f, 0x2864f5ff, 0x174fd5ff,
++                0xffffffff, 0x2864f5ff, 0xffffffff, 0x218358ff, 0xe6f6ebff, 0xab6400ff, 0xfff7c2ff,
++                0xce2c31ff, 0xfeebecff, 0x2864f540, 0x202020ff, 0xfcfcfcff,
+             ],
+         );
+     }
+ 
+     #[test]
+-    fn dark_palette_matches_cap_spec() {
++    fn dark_palette_matches_studio_spec() {
+         assert_roles(
+             Appearance::Dark,
+             [
+-                0x131315ff, 0x1b1b1eff, 0x202024ff, 0x121214ff, 0xffffff14, 0xffffff21, 0xf4f4f5ff,
+-                0x9a9aa3ff, 0x62626aff, 0xffffff0f, 0xffffff17, 0xffffff21, 0x0a84ffff, 0x3d9bffff,
+-                0xffffffff, 0xff453aff, 0xe8e8eaff, 0x3dd68cff, 0x132d21ff, 0xffca16ff, 0x302008ff,
+-                0xff9592ff, 0x3b1219ff, 0x0a84ff40, 0xeeeeeeff, 0x111111ff,
++                0x0c1526ff, 0x111e34ff, 0x15294bff, 0x08101eff, 0xffffff14, 0xffffff21, 0xfafcffff,
++                0xa8b8cfff, 0x6f829fff, 0xffffff0f, 0xffffff17, 0xffffff21, 0x2864f5ff, 0x174fd5ff,
++                0xffffffff, 0x8bb0ffff, 0xe8e8eaff, 0x3dd68cff, 0x132d21ff, 0xffca16ff, 0x302008ff,
++                0xff9592ff, 0x3b1219ff, 0x2864f540, 0xeeeeeeff, 0x111111ff,
+             ],
+         );
+     }
+@@ -602,8 +602,8 @@ mod tests {
+                 0x3dd68cff, 0x132d21ff, 0xffca16ff, 0x302008ff, 0xff9592ff, 0x3b1219ff
+             ]
+         );
+-        assert_eq!(bytes(light.selection()), 0x007aff40);
+-        assert_eq!(bytes(dark.selection()), 0x0a84ff40);
++        assert_eq!(bytes(light.selection()), 0x2864f540);
++        assert_eq!(bytes(dark.selection()), 0x2864f540);
+         assert_eq!(
+             [light.tooltip_bg(), light.tooltip_text()].map(bytes),
+             [0x202020ff, 0xfcfcfcff]
+@@ -618,7 +618,7 @@ mod tests {
+     fn translucent_roles_keep_alpha() {
+         for theme in [Theme::light(), Theme::dark()] {
+             let p = theme.editor;
+-            for color in [p.line, p.line_strong, p.ctl, p.ctl_hover, p.ctl_active] {
++            for color in [p.ctl, p.ctl_hover, p.ctl_active] {
+                 assert!(
+                     color.a > 0. && color.a < 1.,
+                     "{:?} {color:?}",
+@@ -632,11 +632,12 @@ mod tests {
+     fn body_text_contrast() {
+         for theme in [Theme::light(), Theme::dark()] {
+             let p = theme.editor;
++            assert!(ratio(theme.on_accent(), p.accent) >= 4.5);
+             for background in [p.window, p.card, p.card_2] {
+                 let value = ratio(p.text_1, background);
+                 assert!(value >= 4.5, "{:?} text_1 {value}", theme.appearance);
+             }
+-            for background in [p.card, p.card_2] {
++            for background in [p.window, p.card, p.card_2] {
+                 let value = ratio(p.text_2, background);
+                 assert!(value >= 4.5, "{:?} text_2 {value}", theme.appearance);
+             }
+@@ -645,29 +646,12 @@ mod tests {
+ 
+     #[test]
+     fn accepted_contrast_shortfalls_are_recorded() {
+-        let (light, dark) = (Theme::light(), Theme::dark());
+-        let cases = [
+-            (
+-                "white on accent, light",
+-                ratio(light.on_accent(), light.editor.accent),
+-                4.02,
+-            ),
+-            (
+-                "white on accent, dark",
+-                ratio(dark.on_accent(), dark.editor.accent),
+-                3.65,
+-            ),
+-            (
+-                "text_2 on window, light",
+-                ratio(light.editor.text_2, light.editor.window),
+-                4.49,
+-            ),
+-            (
+-                "text_3 on card, light",
+-                ratio(light.editor.text_3, light.editor.card),
+-                2.60,
+-            ),
+-        ];
++        let light = Theme::light();
++        let cases = [(
++            "text_3 on card, light",
++            ratio(light.editor.text_3, light.editor.card),
++            2.93,
++        )];
+         for (name, measured, recorded) in cases {
+             assert!(
+                 (measured - recorded).abs() <= 0.01,
+diff --git a/desktop/crates/studio-theme/src/metrics.rs b/desktop/crates/studio-theme/src/metrics.rs
+index 4091994..15d1db4 100644
+--- a/desktop/crates/studio-theme/src/metrics.rs
++++ b/desktop/crates/studio-theme/src/metrics.rs
+@@ -57,7 +57,7 @@ pub const METRICS: Metrics = Metrics {
+     radius_control: 7.,
+     radius_item: 6.,
+     radius_segment: 8.,
+-    radius_card: 12.,
++    radius_card: 10.,
+     radius_popover: 12.,
+     radius_tab: 9.,
+     radius_frame: 6.,
+@@ -67,12 +67,12 @@ pub const METRICS: Metrics = Metrics {
+     field_row_h: 34.,
+     icon_sm: 14.,
+     icon_md: 16.,
+-    header_h: 52.,
++    header_h: 44.,
+     tab_bar_h: 46.,
+-    toolbar_h: 44.,
+-    transport_h: 48.,
++    toolbar_h: 36.,
++    transport_h: 40.,
+     gutter: 8.,
+-    rail_w: 56.,
++    rail_w: 48.,
+     drawer_w: 320.,
+     agent_w: 360.,
+     agent_min_w: 320.,
+@@ -83,7 +83,7 @@ pub const METRICS: Metrics = Metrics {
+     timeline_min_h: 240.,
+     player_min_h: 320.,
+     ruler_h: 26.,
+-    track_h: 44.,
++    track_h: 36.,
+     track_gap: 6.,
+     track_gutter_w: 104.,
+     control_pad_x: 12.,
+@@ -95,7 +95,7 @@ mod tests {
+     use super::*;
+ 
+     #[test]
+-    fn metrics_match_cap_spec() {
++    fn metrics_follow_editor_density_scale() {
+         let m = METRICS;
+         assert_eq!(
+             [m.space_1, m.space_2, m.space_3, m.space_4, m.space_6],
+@@ -111,7 +111,7 @@ mod tests {
+                 m.radius_tab,
+                 m.radius_frame
+             ],
+-            [7., 6., 8., 12., 12., 9., 6.]
++            [7., 6., 8., 10., 12., 9., 6.]
+         );
+         assert_eq!(
+             [
+@@ -135,7 +135,7 @@ mod tests {
+                 m.timeline_min_h,
+                 m.player_min_h
+             ],
+-            [52., 46., 44., 48., 8., 260., 240., 320.]
++            [44., 46., 36., 40., 8., 260., 240., 320.]
+         );
+         assert_eq!(
+             [
+@@ -147,11 +147,11 @@ mod tests {
+                 m.editor_min_w,
+                 m.status_bar_h
+             ],
+-            [56., 320., 360., 320., 520., 480., 28.]
++            [48., 320., 360., 320., 520., 480., 28.]
+         );
+         assert_eq!(
+             [m.ruler_h, m.track_h, m.track_gap, m.track_gutter_w],
+-            [26., 44., 6., 104.]
++            [26., 36., 6., 104.]
+         );
+     }
+ }
+diff --git a/desktop/crates/studio-theme/src/palette.rs b/desktop/crates/studio-theme/src/palette.rs
+index 22072cb..5f5dee8 100644
+--- a/desktop/crates/studio-theme/src/palette.rs
++++ b/desktop/crates/studio-theme/src/palette.rs
+@@ -24,24 +24,26 @@ pub const fn hexa(value: u32) -> Rgba {
+     }
+ }
+ 
++// Brand reference: landing/studio/home.css and landing/studio/brand/PALETTE.md.
++// The light palette uses the page tokens; dark surfaces extend its midnight navy.
+ impl EditorPalette {
+     pub fn light() -> Self {
+         Self {
+-            window: rgb(0xf1f1f3),
++            window: rgb(0xfafcff),
+             card: rgb(0xffffff),
+-            card_2: rgb(0xf6f6f7),
+-            stage: rgb(0xe9e9ec),
+-            line: rgba(0x00000013),
+-            line_strong: rgba(0x0000001f),
+-            text_1: rgb(0x1c1c1e),
+-            text_2: rgb(0x6e6e75),
+-            text_3: rgb(0xa0a0a8),
+-            ctl: rgba(0x0000000b),
+-            ctl_hover: rgba(0x00000013),
+-            ctl_active: rgba(0x0000001c),
+-            accent: rgb(0x007aff),
+-            accent_2: rgb(0x2b8cff),
+-            playhead: rgb(0xff3b30),
++            card_2: rgb(0xedf3ff),
++            stage: rgb(0xdce4f0),
++            line: rgb(0xdce4f0),
++            line_strong: rgb(0xc6d3e8),
++            text_1: rgb(0x15294b),
++            text_2: rgb(0x586b85),
++            text_3: rgb(0x8a98ad),
++            ctl: rgba(0x15294b0b),
++            ctl_hover: rgba(0x15294b14),
++            ctl_active: rgba(0x15294b1f),
++            accent: rgb(0x2864f5),
++            accent_2: rgb(0x174fd5),
++            playhead: rgb(0x2864f5),
+             thumb: rgb(0xffffff),
+             seg_tint: 0.13,
+             seg_line: 0.34,
+@@ -56,21 +58,21 @@ impl EditorPalette {
+ 
+     pub fn dark() -> Self {
+         Self {
+-            window: rgb(0x131315),
+-            card: rgb(0x1b1b1e),
+-            card_2: rgb(0x202024),
+-            stage: rgb(0x121214),
++            window: rgb(0x0c1526),
++            card: rgb(0x111e34),
++            card_2: rgb(0x15294b),
++            stage: rgb(0x08101e),
+             line: rgba(0xffffff14),
+             line_strong: rgba(0xffffff21),
+-            text_1: rgb(0xf4f4f5),
+-            text_2: rgb(0x9a9aa3),
+-            text_3: rgb(0x62626a),
++            text_1: rgb(0xfafcff),
++            text_2: rgb(0xa8b8cf),
++            text_3: rgb(0x6f829f),
+             ctl: rgba(0xffffff0f),
+             ctl_hover: rgba(0xffffff17),
+             ctl_active: rgba(0xffffff21),
+-            accent: rgb(0x0a84ff),
+-            accent_2: rgb(0x3d9bff),
+-            playhead: rgb(0xff453a),
++            accent: rgb(0x2864f5),
++            accent_2: rgb(0x174fd5),
++            playhead: rgb(0x8bb0ff),
+             thumb: rgb(0xe8e8ea),
+             seg_tint: 0.20,
+             seg_line: 0.42,
+@@ -208,12 +210,12 @@ pub enum TrackKind {
+     Audio,
+ }
+ 
+-/// Base colour of a track kind (Tailwind 500: blue, violet, green).
++/// Muted base colours: cobalt scenes, peach overlays, mint audio.
+ pub const fn track_color(kind: TrackKind) -> Rgba {
+     match kind {
+-        TrackKind::Clip => hex(0x3b82f6),
+-        TrackKind::Overlay => hex(0x8b5cf6),
+-        TrackKind::Audio => hex(0x22c55e),
++        TrackKind::Clip => hex(0x2864f5),
++        TrackKind::Overlay => hex(0xcb8b53),
++        TrackKind::Audio => hex(0x4b9c7a),
+     }
+ }
+ 
+@@ -224,29 +226,50 @@ pub struct SegmentColors {
+     pub label: Rgba,
+ }
+ 
+-/// Segment colours for an appearance. The track colour is mixed into `card`:
+-/// fill 13 % light / 20 % dark (a selected segment adds 10 points), border
+-/// 34 % / 42 %; the label mixes the track colour toward black (light) or
+-/// white (dark) by 58 % / 55 %. Every result is opaque.
++/// Timeline surfaces use the landing page's powder blue, peach and mint.
++/// Dark mode tints navy panels with each track colour; selection deepens the fill.
+ pub fn segment_colors_for(
+     appearance: Appearance,
+     kind: TrackKind,
+     selected: bool,
+ ) -> SegmentColors {
+-    let (palette, fill_mix, border_mix, label_target, label_mix) = match appearance {
+-        Appearance::Light => (EditorPalette::light(), 0.13, 0.34, hex(0x000000), 0.58),
+-        Appearance::Dark => (EditorPalette::dark(), 0.20, 0.42, hex(0xffffff), 0.55),
++    let palette = match appearance {
++        Appearance::Light => EditorPalette::light(),
++        Appearance::Dark => EditorPalette::dark(),
+     };
+     let track = track_color(kind);
+     let opaque = |color: Rgba| Rgba { a: 1., ..color };
++    let fill = match appearance {
++        Appearance::Light => {
++            let surface = match kind {
++                TrackKind::Clip => hex(0xedf3ff),
++                TrackKind::Overlay => hex(0xfff0e3),
++                TrackKind::Audio => hex(0xe5f4ef),
++            };
++            mix(surface, track, if selected { 0.10 } else { 0. })
++        }
++        Appearance::Dark => mix(palette.card, track, if selected { 0.30 } else { 0.20 }),
++    };
+     SegmentColors {
+-        fill: opaque(mix(
++        fill: opaque(fill),
++        border: opaque(mix(
+             palette.card,
+             track,
+-            fill_mix + if selected { 0.10 } else { 0. },
++            if appearance == Appearance::Light {
++                0.34
++            } else {
++                0.42
++            },
++        )),
++        label: opaque(mix(
++            track,
++            palette.text_1,
++            if appearance == Appearance::Light {
++                0.70
++            } else {
++                0.55
++            },
+         )),
+-        border: opaque(mix(palette.card, track, border_mix)),
+-        label: opaque(mix(track, label_target, label_mix)),
+     }
+ }
+ 
+@@ -278,22 +301,22 @@ mod tests {
+ 
+     #[test]
+     fn segment_colors_follow_mix_rule() {
+-        // Clip blue 3b82f6 mixed into card; expected bytes computed from the rule
+-        // (fill 13 %/20 %, +10 points selected, border 34 %/42 %, label 58 %/55 %).
++        // Light scene fills match the landing page powder blue exactly.
++        // Dark audio fills retain their navy tint and mint identity.
+         let light = segment_colors_for(Appearance::Light, TrackKind::Clip, false);
+-        assert_close(light.fill, 0xe6effe, "light fill");
+-        assert_close(light.border, 0xbcd4fc, "light border");
+-        assert_close(light.label, 0x193767, "light label");
++        assert_close(light.fill, 0xedf3ff, "light fill");
++        assert_close(light.border, 0xb6cafc, "light border");
++        assert_close(light.label, 0x1b3b7e, "light label");
+         let light_selected = segment_colors_for(Appearance::Light, TrackKind::Clip, true);
+-        assert_close(light_selected.fill, 0xd2e2fd, "light selected fill");
++        assert_close(light_selected.fill, 0xd9e5fe, "light selected fill");
+         assert_eq!(light_selected.border, light.border);
+ 
+         let dark = segment_colors_for(Appearance::Dark, TrackKind::Audio, false);
+-        assert_close(dark.fill, 0x1c3d2b, "dark fill");
+-        assert_close(dark.border, 0x1e6239, "dark border");
+-        assert_close(dark.label, 0x9ce5b7, "dark label");
++        assert_close(dark.fill, 0x1d3742, "dark fill");
++        assert_close(dark.border, 0x295351, "dark border");
++        assert_close(dark.label, 0xabd1c3, "dark label");
+         let dark_selected = segment_colors_for(Appearance::Dark, TrackKind::Audio, true);
+-        assert_close(dark_selected.fill, 0x1d4e31, "dark selected fill");
++        assert_close(dark_selected.fill, 0x224449, "dark selected fill");
+         for color in [light.fill, light.border, light.label, dark.fill] {
+             assert_eq!(color.a, 1.);
+         }
+diff --git a/desktop/crates/studio-ui/src/kit/nav_rail.rs b/desktop/crates/studio-ui/src/kit/nav_rail.rs
+index 911c80d..8b7067c 100644
+--- a/desktop/crates/studio-ui/src/kit/nav_rail.rs
++++ b/desktop/crates/studio-ui/src/kit/nav_rail.rs
+@@ -43,8 +43,8 @@ impl NavRailItem {
+ type SelectHandler = Box<dyn Fn(&usize, &mut Window, &mut App) + 'static>;
+ 
+ /// Width and height of an item's hit box.
+-const ITEM_W: f32 = 46.;
+-const ITEM_H: f32 = 48.;
++const ITEM_W: f32 = 40.;
++const ITEM_H: f32 = 44.;
+ const ICON: f32 = 18.;
+ 
+ #[derive(IntoElement)]
+@@ -98,7 +98,7 @@ impl RenderOnce for NavRail {
+             .flex()
+             .flex_col()
+             .items_center()
+-            .gap(px(METRICS.space_2))
++            .gap(px(METRICS.space_1))
+             .pt(px(METRICS.space_2))
+             .children(items.into_iter().enumerate().map(|(index, item)| {
+                 let NavRailItem {
+diff --git a/desktop/crates/studio-ui/src/shell/header.rs b/desktop/crates/studio-ui/src/shell/header.rs
+index 22b13e6..6fc9134 100644
+--- a/desktop/crates/studio-ui/src/shell/header.rs
++++ b/desktop/crates/studio-ui/src/shell/header.rs
+@@ -117,10 +117,15 @@ impl StudioShell {
+             .as_ref()
+             .map(|p| p.name.clone())
+             .unwrap_or_else(|| "fframes Studio".into());
+-        let mut text = div().flex().flex_col().min_w_0().child(
+-            text_style(div().truncate(), TextStyle::Title)
+-                .child(selectable(title).over_drag_area()),
+-        );
++        let mut text = div()
++            .flex()
++            .items_center()
++            .gap(px(METRICS.space_3))
++            .min_w_0()
++            .child(
++                text_style(div().truncate(), TextStyle::BodyStrong)
++                    .child(selectable(title).over_drag_area()),
++            );
+         if let Some(p) = &project {
+             let path = studio_bootstrap::external_path(&p.root)
+                 .display()
+@@ -155,8 +160,8 @@ impl StudioShell {
+                     .gap(px(METRICS.space_3))
+                     .child(
+                         gpui::img("branding/studio-icon.png")
+-                            .w(px(28.))
+-                            .h(px(28.))
++                            .w(px(22.))
++                            .h(px(22.))
+                             .flex_none(),
+                     )
+                     .child(text),
+diff --git a/desktop/crates/studio-ui/src/shell/layout.rs b/desktop/crates/studio-ui/src/shell/layout.rs
+index 7549100..7e5fa6b 100644
+--- a/desktop/crates/studio-ui/src/shell/layout.rs
++++ b/desktop/crates/studio-ui/src/shell/layout.rs
+@@ -667,18 +667,18 @@ mod tests {
+     fn the_agent_column_is_clamped_to_its_range_and_the_editor_minimum() {
+         assert_eq!(agent_width(row(1920.), false, 100.), 320.);
+         assert_eq!(agent_width(row(1920.), false, 900.), 520.);
+-        // 1264 - 56 - 16 - 320 - 8 leaves 864: the editor keeps 480 of it.
+-        assert_eq!(agent_width(row(1280.), true, 900.), 384.);
++        // 1264 - 48 - 16 - 320 - 8 leaves 872: the editor keeps 480 of it.
++        assert_eq!(agent_width(row(1280.), true, 900.), 392.);
+     }
+ 
+     #[test]
+     fn narrow_windows_shrink_the_agent_and_editor_minimums_together() {
+-        // 784 - 72 = 712 of 800: both minimums at 89 %.
++        // 784 - 64 = 720 of 800: both minimums at 90 %.
+         let width = agent_width(row(800.), false, METRICS.agent_w);
+-        assert!((width - 284.8).abs() < 0.01, "{width}");
+-        // The open drawer leaves 384: both minimums at 48 %.
++        assert!((width - 288.).abs() < 0.01, "{width}");
++        // The open drawer leaves 392: both minimums at 49 %.
+         let width = agent_width(row(800.), true, METRICS.agent_w);
+-        assert!((width - 153.6).abs() < 0.01, "{width}");
++        assert!((width - 156.8).abs() < 0.01, "{width}");
+         assert_eq!(agent_width(0., true, METRICS.agent_w), 0.);
+     }
+ 
+diff --git a/desktop/crates/studio-ui/src/shell/left_column.rs b/desktop/crates/studio-ui/src/shell/left_column.rs
+index 7667745..ffb7539 100644
+--- a/desktop/crates/studio-ui/src/shell/left_column.rs
++++ b/desktop/crates/studio-ui/src/shell/left_column.rs
+@@ -5,7 +5,7 @@ use std::path::PathBuf;
+ 
+ use gpui::{
+     Context, InteractiveElement, IntoElement, ParentElement, StatefulInteractiveElement, Styled,
+-    div, px,
++    div, prelude::FluentBuilder, px,
+ };
+ use studio_engine::engine::backend::Command;
+ use studio_theme::{METRICS, TextStyle, text_style};
+@@ -379,7 +379,11 @@ impl StudioShell {
+                 .child(
+                     text_style(div().truncate(), TextStyle::Small)
+                         .text_color(theme.editor.text_3)
+-                        .child(recent.path.display().to_string()),
++                        .child(
++                            studio_bootstrap::external_path(&recent.path)
++                                .display()
++                                .to_string(),
++                        ),
+                 );
+             let main = if open_enabled {
+                 main.hover(move |style| style.bg(theme.editor.ctl_hover))
+@@ -392,7 +396,16 @@ impl StudioShell {
+                 !open_enabled,
+                 Some(open),
+             );
+-            let main = with_tooltip(main, &theme, Some(recent.path.display().to_string().into()));
++            let main = with_tooltip(
++                main,
++                &theme,
++                Some(
++                    studio_bootstrap::external_path(&recent.path)
++                        .display()
++                        .to_string()
++                        .into(),
++                ),
++            );
+ 
+             // Row actions appear on pointer hover and while keyboard focus is inside.
+             let mut actions = div()
+@@ -490,6 +503,17 @@ impl StudioShell {
+                 cx,
+                 |s, cx| s.pick(Picker::SdkBundle, cx),
+             ))
++            .when(self.presentation.sdk_repin.is_some(), |controls| {
++                controls.child(self.action_button(
++                    "use-installed-sdk",
++                    "Use installed SDK",
++                    enabled,
++                    false,
++                    None,
++                    cx,
++                    |s, cx| s.dispatch(Command::UseInstalledSdk, cx),
++                ))
++            })
+             .child(self.action_button(
+                 "sdk",
+                 "Select installed SDK…",
+diff --git a/desktop/crates/studio-ui/src/shell/player.rs b/desktop/crates/studio-ui/src/shell/player.rs
+index 5f7fd1e..084e2ed 100644
+--- a/desktop/crates/studio-ui/src/shell/player.rs
++++ b/desktop/crates/studio-ui/src/shell/player.rs
+@@ -701,7 +701,12 @@ impl StudioShell {
+             .overflow_hidden()
+             .child(self.render_player_toolbar(cx))
+             .child(self.render_stage(cx))
+-            .child(self.render_transport(cx))
++            .child(
++                div()
++                    .flex_none()
++                    .bg(self.theme.editor.stage)
++                    .child(self.render_transport(cx)),
++            )
+             .child(super::sections::section_probe(
+                 super::sections::Section::Player,
+                 cx,
+@@ -1031,6 +1036,30 @@ impl StudioShell {
+             .overflow_hidden()
+             .p(px(METRICS.space_4))
+             .bg(palette.stage)
++            .child(
++                canvas(
++                    |_, _, _| {},
++                    move |bounds, _, window, _| {
++                        // A quiet grid separates pale footage from the workspace.
++                        let step = 20.;
++                        for row in 0..(f32::from(bounds.size.height) / step) as usize {
++                            for column in 0..(f32::from(bounds.size.width) / step) as usize {
++                                let origin = bounds.origin
++                                    + gpui::point(
++                                        px(column as f32 * step + 10.),
++                                        px(row as f32 * step + 10.),
++                                    );
++                                window.paint_quad(gpui::fill(
++                                    gpui::Bounds::new(origin, gpui::size(px(1.), px(1.))),
++                                    palette.line,
++                                ));
++                            }
++                        }
++                    },
++                )
++                .absolute()
++                .size_full(),
++            )
+             .child(preview_surface);
+         if let Some(message) = &self.canvas.message {
+             stage = stage.child(
+diff --git a/desktop/crates/studio-ui/src/shell/settings.rs b/desktop/crates/studio-ui/src/shell/settings.rs
+index fccf323..1ec9fa9 100644
+--- a/desktop/crates/studio-ui/src/shell/settings.rs
++++ b/desktop/crates/studio-ui/src/shell/settings.rs
+@@ -254,18 +254,15 @@ impl StudioShell {
+             ),
+             UpdateCheck::Failed(error) => error.clone(),
+         };
+-        let mut actions = div().flex().gap(px(8.)).child(
+-            self.action_button(
+-                "check-update",
+-                "Check now",
+-                self.update != UpdateCheck::Checking,
+-                false,
+-                None,
+-                cx,
+-                |shell, cx| shell.check_for_update(cx),
+-            )
+-            .outlined(&theme),
+-        );
++        let mut actions = div().flex().gap(px(8.)).child(self.action_button(
++            "check-update",
++            "Check now",
++            self.update != UpdateCheck::Checking,
++            false,
++            None,
++            cx,
++            |shell, cx| shell.check_for_update(cx),
++        ));
+         if let UpdateCheck::Available(update) = &self.update {
+             actions = actions.child(self.download_update_button(update.url.clone(), cx));
+         }
+diff --git a/desktop/crates/studio-ui/src/shell/transport.rs b/desktop/crates/studio-ui/src/shell/transport.rs
+index d0a1dfe..2aaaed2 100644
+--- a/desktop/crates/studio-ui/src/shell/transport.rs
++++ b/desktop/crates/studio-ui/src/shell/transport.rs
+@@ -118,11 +118,16 @@ impl StudioShell {
+             .gap(px(METRICS.space_2))
+             .h(px(METRICS.transport_h))
+             .px(px(METRICS.space_3))
+-            .border_t_1()
++            .mx(px(METRICS.space_2))
++            .my(px(METRICS.space_2))
++            .rounded(px(20.))
++            .bg(palette.card)
++            .border_1()
+             .border_color(palette.line)
+             .overflow_hidden()
+             .child(with_tooltip(
+                 text_style(div().id("time-readout"), readout_style)
++                    .font_family("monospace")
+                     .flex_none()
+                     .min_w(px(if mode == TransportMode::Compact {
+                         60.
+@@ -148,7 +153,7 @@ impl StudioShell {
+                 "play-pause",
+                 if playing { "Pause" } else { "Play" },
+                 if playing { Icon::Pause } else { Icon::Play },
+-                IconButtonSize::Large,
++                IconButtonSize::Medium,
+                 has_frames,
+                 cx,
+                 |s, cx| s.toggle_playback(cx),
+diff --git a/desktop/crates/studio-ui/src/timeline/playhead.rs b/desktop/crates/studio-ui/src/timeline/playhead.rs
+index 8871314..86578f5 100644
+--- a/desktop/crates/studio-ui/src/timeline/playhead.rs
++++ b/desktop/crates/studio-ui/src/timeline/playhead.rs
+@@ -4,8 +4,7 @@
+ use gpui::{Bounds, ContentMask, Hsla, IntoElement, Pixels, Styled, canvas, fill, point, px, size};
+ use studio_theme::{METRICS, Theme};
+ 
+-const PLAYHEAD_HEAD: f32 = 12.;
+-const PLAYHEAD_RING: f32 = 4.;
++const PLAYHEAD_HEAD: f32 = 10.;
+ 
+ /// Where the playhead is, in window pixels: the time axis it is clipped to and its x.
+ #[derive(Debug, Clone, Copy, PartialEq)]
+@@ -17,7 +16,6 @@ pub struct PlayheadGeometry {
+ /// An overlay that paints the playhead line and its head on the ruler.
+ pub fn playhead_overlay(theme: &Theme, geometry: Option<PlayheadGeometry>) -> impl IntoElement {
+     let line = Hsla::from(theme.editor.playhead);
+-    let card = Hsla::from(theme.editor.card);
+     canvas(
+         |_, _, _| {},
+         move |_, _, window, _| {
+@@ -29,23 +27,18 @@ pub fn playhead_overlay(theme: &Theme, geometry: Option<PlayheadGeometry>) -> im
+                     Bounds::new(point(px(x), axis.top()), size(px(1.), axis.size.height)),
+                     line,
+                 ));
+-                let ring = PLAYHEAD_HEAD + 2. * PLAYHEAD_RING;
+-                let ring_origin = point(
+-                    px(x + 0.5 - ring / 2.),
+-                    axis.top() + px((METRICS.ruler_h - ring) / 2.),
+-                );
+-                window.paint_quad(
+-                    fill(Bounds::new(ring_origin, size(px(ring), px(ring))), card)
+-                        .corner_radii(px(ring / 2.)),
+-                );
+-                let head_origin = ring_origin + point(px(PLAYHEAD_RING), px(PLAYHEAD_RING));
+-                window.paint_quad(
+-                    fill(
+-                        Bounds::new(head_origin, size(px(PLAYHEAD_HEAD), px(PLAYHEAD_HEAD))),
+-                        line,
+-                    )
+-                    .corner_radii(px(PLAYHEAD_HEAD / 2.)),
+-                );
++                let center = x + 0.5;
++                let top = f32::from(axis.top()) + (METRICS.ruler_h - PLAYHEAD_HEAD) / 2.;
++                let mut head = gpui::PathBuilder::fill();
++                head.move_to(point(px(center - 5.), px(top)));
++                head.line_to(point(px(center + 5.), px(top)));
++                head.line_to(point(px(center + 5.), px(top + 5.)));
++                head.line_to(point(px(center), px(top + PLAYHEAD_HEAD)));
++                head.line_to(point(px(center - 5.), px(top + 5.)));
++                head.close();
++                if let Ok(path) = head.build() {
++                    window.paint_path(path, line);
++                }
+             });
+         },
+     )
+diff --git a/desktop/crates/studio-ui/src/timeline/segment.rs b/desktop/crates/studio-ui/src/timeline/segment.rs
+index 7ea211f..9bc0ec0 100644
+--- a/desktop/crates/studio-ui/src/timeline/segment.rs
++++ b/desktop/crates/studio-ui/src/timeline/segment.rs
+@@ -1,5 +1,5 @@
+ //! Track rows and segment boxes (Cap's `render_row` and segment), tinted per track kind.
+-use gpui::{ParentElement, Styled, div, px};
++use gpui::{ParentElement, Styled, div, prelude::FluentBuilder, px};
+ use studio_theme::{
+     METRICS, TextStyle, Theme, TrackKind, segment_colors_for, text_style, track_color,
+ };
+@@ -49,6 +49,7 @@ pub(super) fn track_row(
+     name: String,
+     glyph: Icon,
+     segments: Vec<gpui::AnyElement>,
++    ticks: &[studio_engine::TimelineTick],
+ ) -> gpui::Div {
+     let metrics = METRICS;
+     div()
+@@ -89,6 +90,19 @@ pub(super) fn track_row(
+                 .overflow_hidden()
+                 .rounded(px(metrics.radius_segment))
+                 .bg(theme.editor.card_2)
++                .children(ticks.iter().map(|tick| {
++                    div()
++                        .absolute()
++                        .left(px(tick.x as f32))
++                        .top_0()
++                        .bottom_0()
++                        .w(px(1.))
++                        .bg(if tick.major {
++                            theme.editor.line_strong
++                        } else {
++                            theme.editor.line
++                        })
++                }))
+                 .children(segments),
+         )
+ }
+@@ -117,6 +131,7 @@ pub(super) fn segment(
+         .border_1()
+         .border_color(colors.border)
+         .bg(colors.fill)
++        .when(selected, |clip| clip.border(px(1.5)))
+         .child(
+             div()
+                 .absolute()
+diff --git a/desktop/crates/studio-ui/src/timeline/view.rs b/desktop/crates/studio-ui/src/timeline/view.rs
+index 5158e27..8ed62c4 100644
+--- a/desktop/crates/studio-ui/src/timeline/view.rs
++++ b/desktop/crates/studio-ui/src/timeline/view.rs
+@@ -821,6 +821,10 @@ impl TimelineView {
+             .w(px(TRIM_HANDLE_W))
+             .when(start, |handle| handle.left_0())
+             .when(!start, |handle| handle.right_0())
++            .flex()
++            .items_center()
++            .justify_center()
++            .child(div().w(px(2.)).h(px(16.)).rounded(px(1.)).bg(accent))
+             .cursor(gpui::CursorStyle::ResizeLeftRight)
+             .hover(move |handle| handle.bg(accent))
+             .on_mouse_down(
+@@ -1160,7 +1164,7 @@ impl Render for TimelineView {
+                 .absolute()
+                 .size_full(),
+             )
+-            .child(render_ruler(&theme, geometry.ticks, inset));
++            .child(render_ruler(&theme, geometry.ticks.clone(), inset));
+ 
+         // Rows below the ruler: the clip track, overlay lanes, audio files and the mix.
+         // Only segments inside the padded viewport are built (Cap's `isSegmentVisible`).
+@@ -1257,6 +1261,7 @@ impl Render for TimelineView {
+                 lane_name("Scenes", lane, scene_lanes),
+                 Icon::Layers,
+                 segments,
++                &geometry.ticks,
+             ));
+         }
+         for (track, segments) in audio_rows.into_iter().enumerate() {
+@@ -1266,6 +1271,7 @@ impl Render for TimelineView {
+                 lane_name("Audio", track, audio_count),
+                 Icon::Volume2,
+                 segments,
++                &geometry.ticks,
+             ));
+         }
+         if mix {
+@@ -1275,6 +1281,7 @@ impl Render for TimelineView {
+                 "Mix".into(),
+                 Icon::Volume2,
+                 vec![self.mix_waveform(model).into_any_element()],
++                &geometry.ticks,
+             ));
+         }
+         let lanes = div()
+diff --git a/desktop/packaging/windows/install.ps1 b/desktop/packaging/windows/install.ps1
+index 64e7a57..899f885 100644
+--- a/desktop/packaging/windows/install.ps1
++++ b/desktop/packaging/windows/install.ps1
+@@ -2,8 +2,74 @@
+ #   irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex
+ # With options:
+ #   & ([scriptblock]::Create((irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1))) -Version v0.1.2 -Quiet
+-# Downloads the per-user Setup.exe, checks it against the release's SHA256SUMS.txt and runs it.
+-# No administrator rights are needed; uninstall from Settings > Apps keeps projects and app data.
++# First offers to install the build prerequisites projects compile with (Visual Studio Build
++# Tools with C++ and clang, through winget), then downloads the per-user Setup.exe, checks it
++# against the release's SHA256SUMS.txt and runs it. Rust, FFmpeg and the fframes framework come
++# with Studio's managed SDK. Studio itself needs no administrator rights; the Build Tools
++# installer asks for them. Uninstall from Settings > Apps keeps projects and app data.
++
++# The same discovery as the app's doctor (desktop/crates/studio-sdk/src/doctor.rs).
++function Find-MsvcInstallation {
++    $programFiles = if (${env:ProgramFiles(x86)}) { ${env:ProgramFiles(x86)} } else { $env:ProgramFiles }
++    $vswhere = Join-Path $programFiles "Microsoft Visual Studio\Installer\vswhere.exe"
++    if (-not (Test-Path -LiteralPath $vswhere)) { return $null }
++    $path = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
++    if ($LASTEXITCODE -eq 0 -and $path) { return "$path".Trim() }
++    return $null
++}
++
++function Find-Libclang {
++    $scoop = if ($env:SCOOP) { $env:SCOOP } else { Join-Path $env:USERPROFILE "scoop" }
++    $candidates = @($env:LIBCLANG_PATH, (Join-Path $env:ProgramFiles "LLVM\bin"), (Join-Path $scoop "apps\llvm\current\bin"))
++    $vs = Find-MsvcInstallation
++    if ($vs) { $candidates += Join-Path $vs "VC\Tools\Llvm\x64\bin" }
++    foreach ($dir in $candidates) {
++        if ($dir -and (Test-Path -LiteralPath (Join-Path $dir "libclang.dll"))) { return $dir }
++    }
++    return $null
++}
++
++function Install-BuildPrerequisites([string]$Mode, [bool]$Quiet) {
++    $msvc = Find-MsvcInstallation
++    $libclang = Find-Libclang
++    if ($msvc -and $libclang) {
++        Write-Host "Build prerequisites found: MSVC in $msvc, libclang in $libclang."
++        return
++    }
++    # The Build Tools command adds Visual Studio's clang as well, which carries libclang.
++    $buildTools = @("install", "-e", "--id", "Microsoft.VisualStudio.BuildTools", "--accept-package-agreements", "--accept-source-agreements",
++        "--override", "--wait --passive --add Microsoft.VisualStudio.Workload.VCTools --add Microsoft.VisualStudio.Component.VC.Llvm.Clang --includeRecommended")
++    $llvm = @("install", "-e", "--id", "LLVM.LLVM", "--accept-package-agreements", "--accept-source-agreements")
++    $arguments = if ($msvc) { $llvm } else { $buildTools }
++    $missing = if ($msvc) { "LLVM (libclang)" } else { "Visual Studio Build Tools with C++ and clang (a few GB)" }
++    $command = "winget " + (($arguments | ForEach-Object { if ($_ -match "\s") { "`"$_`"" } else { $_ } }) -join " ")
++
++    if ($Mode -eq "Skip") {
++        Write-Host "Skipping build prerequisites; projects will not compile until $missing is installed: $command"
++        return
++    }
++    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
++        Write-Warning "Projects need $missing, and winget is not available to install it. Install it from https://visualstudio.microsoft.com/visual-cpp-build-tools/ (Desktop development with C++, plus C++ Clang tools)."
++        return
++    }
++    if ($Mode -eq "Ask") {
++        if ($Quiet) {
++            Write-Host "Projects need $missing. Install it with: $command (or pass -Prerequisites Install)."
++            return
++        }
++        $answer = Read-Host "Projects need $missing. Install it now with winget? [Y/n]"
++        if ($answer -and $answer -notmatch "^(y|yes)$") {
++            Write-Host "Not installed. Later, run: $command"
++            return
++        }
++    }
++    Write-Host "Installing $missing (Windows asks for administrator rights)"
++    & winget @arguments
++    if ($LASTEXITCODE -ne 0) {
++        # Studio still installs; its setup screen checks the prerequisites again.
++        Write-Warning "winget exited with code $LASTEXITCODE. Install $missing yourself with: $command"
++    }
++}
+ 
+ function Install-FframesStudio {
+     [CmdletBinding()]
+@@ -14,6 +80,10 @@ function Install-FframesStudio {
+         [switch]$Quiet,
+         # Do not start fframes Studio after installing.
+         [switch]$NoLaunch,
++        # Build prerequisites (MSVC, libclang): Ask before installing them, Install without
++        # asking, or Skip. With -Quiet, Ask only prints the command.
++        [ValidateSet("Ask", "Install", "Skip")]
++        [string]$Prerequisites = "Ask",
+         [string]$Repository = "khanhthanhdev/fframes-desktop",
+         # Download location override (a mirror, or a local server for testing).
+         [string]$BaseUrl
+@@ -29,6 +99,7 @@ function Install-FframesStudio {
+     if (-not [Environment]::Is64BitOperatingSystem) {
+         throw "fframes Studio needs 64-bit Windows."
+     }
++    Install-BuildPrerequisites $Prerequisites $Quiet.IsPresent
+     if (-not $BaseUrl) {
+         $BaseUrl = if ($Version -eq "latest") {
+             "https://github.com/$Repository/releases/latest/download"
+@@ -56,7 +127,7 @@ function Install-FframesStudio {
+             throw "The release has no checksum for $setupName."
+         }
+ 
+-        Write-Host "Downloading $setupName (about 400 MB)"
++        Write-Host "Downloading $setupName (about 300 MB)"
+         $setupPath = Join-Path $work $setupName
+         Invoke-WebRequest -UseBasicParsing -Uri "$BaseUrl/$setupName" -OutFile $setupPath
+         $actual = (Get-FileHash -LiteralPath $setupPath -Algorithm SHA256).Hash.ToUpperInvariant()
+@@ -82,7 +153,7 @@ function Install-FframesStudio {
+     }
+     $executable = Join-Path $location "bin\fframes-studio.exe"
+     Write-Host "fframes Studio is installed in $location (Start menu: fframes Studio)."
+-    Write-Host "Compiling projects also needs Visual Studio Build Tools (C++) and LLVM; the app's setup screen guides you."
++    Write-Host "On first launch, Setup installs the managed SDK (Rust, FFmpeg and fframes) and checks the build prerequisites again."
+     if (-not $NoLaunch) {
+         Start-Process -FilePath $executable | Out-Null
+     }
+diff --git a/desktop/scripts/assemble-phase-zero-sdk.py b/desktop/scripts/assemble-phase-zero-sdk.py
+index a1a1eda..8680e11 100644
+--- a/desktop/scripts/assemble-phase-zero-sdk.py
++++ b/desktop/scripts/assemble-phase-zero-sdk.py
+@@ -25,6 +25,8 @@ OVERLAY = "desktop/fixtures/annotated-video-overlay"
+ SKIA_PINS = "desktop/packaging/sdk/skia-binaries.json"
+ # Host variables that would make skia-bindings download, build or bind another Skia.
+ SKIA_VARIABLE_PREFIXES = ("SKIA_", "FORCE_SKIA_")
++# The FFmpeg libraries fframes links; a built worker loads no other FFmpeg DLL.
++FFMPEG_LIBRARIES = ["libavcodec", "libavformat", "libavutil", "libswscale", "libswresample"]
+ 
+ 
+ def run(args, **kwargs):
+@@ -74,7 +76,7 @@ def validate_ffmpeg(prefix, expected):
+     pattern = rf"^n?{re.escape(major_minor)}(?:\.\d+)?(?:$|[-+._])"
+     if not re.match(pattern, version):
+         raise ValueError(f"Expected FFmpeg {expected}, found {version}; refusing to mislabel host libraries")
+-    for library in ["libavcodec", "libavformat", "libavutil", "libswscale", "libswresample"]:
++    for library in FFMPEG_LIBRARIES:
+         if not (prefix / "include" / library).is_dir():
+             raise ValueError(f"Missing FFmpeg headers: {library}")
+         stem = library.removeprefix("lib")
+@@ -83,6 +85,58 @@ def validate_ffmpeg(prefix, expected):
+     return version
+ 
+ 
++def prune_toolchain(toolchain, target):
++    """Drop what a native build for `target` never uses: other targets' standard libraries
++    (the host may have them installed), rust-src, debug symbols and the wasm component linker.
++    MSVC targets link with Visual Studio's link.exe, so they also drop rust-lld (108 MB); it
++    stays elsewhere, x86_64 Linux links with it by default."""
++    rustlib = toolchain / "lib/rustlib"
++    for entry in rustlib.iterdir():
++        if entry.is_dir() and entry.name not in {target, "etc"}:
++            shutil.rmtree(entry)
++    if target.endswith("windows-msvc"):
++        (rustlib / target / "bin/rust-lld.exe").unlink()
++        shutil.rmtree(rustlib / target / "bin/gcc-ld")
++    for path in toolchain.rglob("*"):
++        if path.is_file() and (path.suffix == ".pdb" or path.stem == "wasm-component-ld"):
++            path.unlink()
++
++
++def copy_ffmpeg(prefix, destination, link_mode):
++    """Copy headers and link libraries; for a shared build only the DLLs of FFMPEG_LIBRARIES.
++    Static builds need no `bin`, and nothing runs the ffmpeg, ffprobe or ffplay programs."""
++    for subdir in ["include", "lib"]:
++        shutil.copytree(prefix / subdir, destination / subdir, symlinks=False)
++    if link_mode == "shared":
++        (destination / "bin").mkdir()
++        for library in FFMPEG_LIBRARIES:
++            for dll in (prefix / "bin").glob(f"{library.removeprefix('lib')}-*.dll"):
++                shutil.copy(dll, destination / "bin" / dll.name)
++
++
++def prune_vendor(vendor_dir, used):
++    """Delete the prebuilt import libraries (`lib/`) of vendored crates that no build for this
++    target compiles, such as winapi's and windows-targets' crates for other targets. Cargo
++    still resolves the full lockfile, so the crates and their sources stay; their checksum
++    lists drop the deleted files, which Cargo then does not look for."""
++    for crate in vendor_dir.iterdir():
++        if crate.name in used or not (crate / "lib").is_dir():
++            continue
++        shutil.rmtree(crate / "lib")
++        checksums_path = crate / ".cargo-checksum.json"
++        checksums = json.loads(checksums_path.read_text())
++        checksums["files"] = {k: v for k, v in checksums["files"].items() if not k.startswith("lib/")}
++        checksums_path.write_text(json.dumps(checksums))
++
++
++def target_packages(cargo, worker, environment, target):
++    """The `name-version` vendor folders of the packages a build of `worker` for `target` uses."""
++    metadata = json.loads(run([cargo, "metadata", "--offline", "--format-version", "1", "--filter-platform", target],
++                              cwd=worker, env=environment, capture_output=True, encoding="utf-8").stdout)
++    packages = {p["id"]: f"{p['name']}-{p['version']}" for p in metadata["packages"]}
++    return {packages[node["id"]] for node in metadata["resolve"]["nodes"]}
++
++
+ def configure_bundled_ffmpeg(framework):
+     # The build feature downloads/builds FFmpeg before considering FFMPEG_DIR.
+     # SDK projects must link the verified install shipped beside the framework.
+@@ -291,9 +345,8 @@ def assemble(output, ffmpeg_root, vendor=None):
+         sysroot = Path(run(["rustc", "--print", "sysroot"], capture_output=True).stdout.strip())
+         for subdir in ["bin", "lib"]:
+             shutil.copytree(sysroot / subdir, staging / "toolchain" / subdir, symlinks=False)
+-        for subdir in ["include", "lib", "bin"]:
+-            if (ffmpeg_root / subdir).is_dir():
+-                shutil.copytree(ffmpeg_root / subdir, staging / "ffmpeg" / subdir, symlinks=False)
++        prune_toolchain(staging / "toolchain", target)
++        copy_ffmpeg(ffmpeg_root, staging / "ffmpeg", link_mode)
+         framework = staging / "framework/framework"
+         framework.mkdir(parents=True)
+         for crate in CRATES:
+@@ -322,6 +375,8 @@ def assemble(output, ffmpeg_root, vendor=None):
+         if os.name == "nt":
+             environment["PATH"] = str(staging / "ffmpeg/bin") + os.pathsep + environment["PATH"]
+         cargo = str(staging / "toolchain/bin" / ("cargo.exe" if os.name == "nt" else "cargo"))
++        # Pruned before the qualification builds below, which then prove the archive builds.
++        prune_vendor(vendor_dir, target_packages(cargo, worker, environment, target))
+         for directory, attempt in [(worker, "first"), (worker, "second")]:
+             environment["CARGO_TARGET_DIR"] = str(staging / f"build-{attempt}")
+             run([cargo, "build", "--offline"], cwd=directory, env=environment)
+diff --git a/desktop/scripts/package-phase-zero.py b/desktop/scripts/package-phase-zero.py
+index d7a9dea..5d114e2 100644
+--- a/desktop/scripts/package-phase-zero.py
++++ b/desktop/scripts/package-phase-zero.py
+@@ -167,11 +167,20 @@ def package(output, sdk_bundle=None):
+         ffmpeg = os.environ.get("FFMPEG_DIR")
+         if not ffmpeg:
+             raise ValueError("FFMPEG_DIR required for native Windows DLL packaging")
+-        dlls = list((Path(ffmpeg) / "bin").glob("*.dll"))
+-        if not dlls:
++        available = {dll.name.lower(): dll for dll in (Path(ffmpeg) / "bin").glob("*.dll")}
++        if not available:
+             raise ValueError("FFMPEG_DIR contains no runtime DLLs")
+-        for dll in dlls:
+-            shutil.copy2(dll, bin_dir)
++        # Only the DLLs the packaged binaries load, directly or through each other: avfilter
++        # and avdevice (about 40 MB) are imported by no Studio binary.
++        needed, pending = set(), [bin_dir / (name + suffix) for name in PACKAGED_BINARIES]
++        while pending:
++            for name in pe_imports(pending.pop()):
++                dll = available.get(name.lower())
++                if dll and dll.name.lower() not in needed:
++                    needed.add(dll.name.lower())
++                    pending.append(dll)
++        for name in needed:
++            shutil.copy2(available[name], bin_dir)
+         (output / "native-dependencies.txt").write_text(native_dependencies(bin_dir))
+         (output / "launch.ps1").write_text('$ErrorActionPreference = "Stop"\n$env:FFRAMES_SDK_BUNDLE = Join-Path $PSScriptRoot "sdk"\n& (Join-Path $PSScriptRoot "bin/fframes-studio.exe") studio | Out-Null\nexit $LASTEXITCODE\n')
+         (output / "launch.bat").write_text('@echo off\r\nset "FFRAMES_SDK_BUNDLE=%~dp0sdk"\r\n"%~dp0bin\\fframes-studio.exe" studio %*\r\n')
+diff --git a/docs/desktop/README.md b/docs/desktop/README.md
+index 88807c1..2668172 100644
+--- a/docs/desktop/README.md
++++ b/docs/desktop/README.md
+@@ -2,7 +2,7 @@
+ 
+ fframes Studio is a native GPUI app in Rust where a person describes a video, watches it, selects a scene or visible object, and asks a coding agent to change it. The agent edits an ordinary fframes Rust project. The app owns project setup, style presets, agent connections, compilation, preview, validation, history and export. Rust source remains the authority for the video; templates are starting points.
+ 
+-**Install the unsigned Windows preview** (per user, no administrator rights): `irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex`, Scoop, or the Setup.exe from the [latest release](https://github.com/khanhthanhdev/fframes-desktop/releases/latest). winget follows once `khanhthanhdev.fframesStudio` is accepted into the community repository. See [preview releases](phase-zero-feasibility.md#unsigned-preview-releases).
++**Install the unsigned Windows preview** (per user, no administrator rights): `irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex`, Scoop, or the Setup.exe from the [latest release](https://github.com/khanhthanhdev/fframes-desktop/releases/latest). The script first offers to install the only thing Studio does not bring, Visual Studio Build Tools with C++ and clang (through winget; that installer asks for administrator rights; `-Prerequisites Install` or `Skip` to not be asked). Rust, FFmpeg and fframes come with the managed SDK. winget follows once `khanhthanhdev.fframesStudio` is accepted into the community repository. See [preview releases](phase-zero-feasibility.md#unsigned-preview-releases).
+ 
+ Documents:
+ 

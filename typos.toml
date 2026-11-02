@@ -2,7 +2,8 @@
 # Keep the upstream minified player unchanged; its identifiers are not prose.
 # The Lottie files are third-party animations: their layer names are not prose either.
 # Recorded agent wire captures (*.jsonl) are full of random tool ids.
-extend-exclude = ["*.snapshot.txt", "sessions.json", "package-lock.json", "landing/the-why/vendor/hls.min.js", "landing/vendor/hls.min.js", "examples/lottie/media/*.json", "*.jsonl"]
+# Reports written partly in Vietnamese ("thay", "ba") and recorded diffs are not English prose.
+extend-exclude = ["plans/reports/booth-script-261022-0727-fframes-studio-career-day.md", "plans/reports/experiment-261025-1640-typst-vs-miktex.md", "plans/reports/experiment-261025-1803-typst-formula-parts.md", "plans/reports/*.patch", "*.snapshot.txt", "sessions.json", "package-lock.json", "landing/the-why/vendor/hls.min.js", "landing/vendor/hls.min.js", "examples/lottie/media/*.json", "*.jsonl"]
 [default]
 # Git commit hashes in plans and reports (`cb5d0daa`)
 extend-ignore-re = ["\\b[0-9a-f]{7,40}\\b"]

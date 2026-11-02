@@ -1,0 +1,3149 @@
+diff --git a/desktop/Cargo.lock b/desktop/Cargo.lock
+index a817e3d..789f0cb 100644
+--- a/desktop/Cargo.lock
++++ b/desktop/Cargo.lock
+@@ -6155,6 +6155,7 @@ dependencies = [
+  "notify",
+  "parking_lot",
+  "rusqlite",
++ "semver",
+  "serde",
+  "serde_json",
+  "sha2",
+@@ -6224,6 +6225,7 @@ dependencies = [
+  "serde",
+  "serde_json",
+  "sha2",
++ "studio-bootstrap",
+  "syn 2.0.119",
+  "tempfile",
+  "thiserror 2.0.21",
+diff --git a/desktop/app/src/main.rs b/desktop/app/src/main.rs
+index 0e559ed..1384972 100644
+--- a/desktop/app/src/main.rs
++++ b/desktop/app/src/main.rs
+@@ -167,6 +167,8 @@ fn run_studio(observation: Option<Observed>) {
+                 .map(|paths| studio_engine::app_settings::AppSettings::load(&paths))
+                 .unwrap_or_default();
+             studio_theme::init(cx, settings.theme);
++            // Observed (telemetry) runs are tests: they never reach the network.
++            let check_for_update = observation.is_none() && !settings.update_check_disabled;
+             let bounds = Bounds::centered(None, size(px(1275.), px(800.)), cx);
+             let window = cx
+                 .open_window(
+@@ -192,6 +194,9 @@ fn run_studio(observation: Option<Observed>) {
+                                 cx,
+                             );
+                             studio_theme::bind_window(window, cx);
++                            if check_for_update {
++                                shell.check_for_update(cx);
++                            }
+                             if let Some(Observed {
+                                 project,
+                                 output,
+diff --git a/desktop/crates/studio-engine/Cargo.toml b/desktop/crates/studio-engine/Cargo.toml
+index 5cb00fc..6a77397 100644
+--- a/desktop/crates/studio-engine/Cargo.toml
++++ b/desktop/crates/studio-engine/Cargo.toml
+@@ -12,6 +12,7 @@ studio-presets = { workspace = true }
+ serde = { workspace = true }
+ thiserror = { workspace = true }
+ serde_json = { workspace = true }
++semver = { workspace = true }
+ studio-sdk = { workspace = true }
+ studio-bootstrap = { workspace = true }
+ tempfile = { workspace = true }
+diff --git a/desktop/crates/studio-engine/src/app_settings.rs b/desktop/crates/studio-engine/src/app_settings.rs
+index b437efc..45aea51 100644
+--- a/desktop/crates/studio-engine/src/app_settings.rs
++++ b/desktop/crates/studio-engine/src/app_settings.rs
+@@ -29,6 +29,9 @@ pub struct AppSettings {
+     /// How agent permission requests are answered.
+     #[serde(deserialize_with = "lenient")]
+     pub permission_policy: PermissionPolicy,
++    /// Whether the check for a newer Studio at launch is turned off (it is on by default).
++    #[serde(deserialize_with = "lenient")]
++    pub update_check_disabled: bool,
+ }
+ 
+ /// A value that no longer reads (for example one this app dropped) is the default, instead
+diff --git a/desktop/crates/studio-engine/src/controller.rs b/desktop/crates/studio-engine/src/controller.rs
+index cc356cb..8f8d705 100644
+--- a/desktop/crates/studio-engine/src/controller.rs
++++ b/desktop/crates/studio-engine/src/controller.rs
+@@ -519,6 +519,28 @@ impl Controller {
+         record.sdk_path = Some(path);
+         self.persist(record)
+     }
++    /// Pins the project to another SDK by rewriting `studio.json`'s SDK pin, the way the
++    /// preset reference is written. The project then builds against that SDK's framework
++    /// crates; source that does not compile with them reports it at the next build. A
++    /// manual SDK selection is dropped, so the build picks the installed SDK of the pin.
++    pub fn repin_sdk(&mut self, sdk: studio_project::manifest::SdkPin) -> Result<(), EngineError> {
++        self.ensure_mutable()?;
++        if self.state().active_tag().is_some() {
++            return Err(EngineError::Diagnostic(
++                "Wait for the running build or export to finish before changing the SDK".into(),
++            ));
++        }
++        self.reconcile()?;
++        if self.project.manifest.sdk != sdk {
++            let mut next = self.project.manifest.clone();
++            next.sdk = sdk;
++            studio_project::lifecycle::write_manifest(&self.project.root, &next)?;
++            self.reconcile()?;
++        }
++        let mut record = self.record.clone();
++        record.sdk_path = None;
++        self.persist(record)
++    }
+     pub fn changed_hint(&self) -> bool {
+         self.dirty.load(Ordering::Acquire)
+     }
+diff --git a/desktop/crates/studio-engine/src/engine/backend.rs b/desktop/crates/studio-engine/src/engine/backend.rs
+index 7e46cec..823a27b 100644
+--- a/desktop/crates/studio-engine/src/engine/backend.rs
++++ b/desktop/crates/studio-engine/src/engine/backend.rs
+@@ -43,6 +43,8 @@ pub struct Presentation {
+     /// The installed SDK agent tasks compile and preview against (set only while it
+     /// verifies and supports the preview contract). Separate from agent readiness.
+     pub agent_sdk: Option<AgentSdk>,
++    /// See [`Backend::sdk_repin`].
++    pub sdk_repin: Option<String>,
+     /// Style-preset controls state of the open project (`None` when none is open).
+     pub preset: Option<PresetView>,
+     /// The open project's timing document, its clips and what can be edited now.
+@@ -69,6 +71,8 @@ pub enum Command {
+     Close,
+     RemoveRecent(ProjectId),
+     SelectSdk(PathBuf),
++    /// Pins the open project to the active installed SDK (its own is not installed).
++    UseInstalledSdk,
+     InstallSdk,
+     ImportSdkBundle(PathBuf),
+     Restore(PathBuf, studio_project::SourceRevision),
+@@ -93,6 +97,9 @@ pub struct Backend {
+     pub sdk_home: Option<PathBuf>,
+     pub sdk: String,
+     pub agent_sdk: Option<AgentSdk>,
++    /// The installed SDK the open project can be moved to with
++    /// [`Command::UseInstalledSdk`]; set while the SDK it is pinned to is not installed.
++    pub sdk_repin: Option<String>,
+     /// The manifest of the SDK the open project builds with (the project's selection or
+     /// the active installation), whether or not it verified.
+     pub selected_sdk: Option<CompatibilityManifest>,
+@@ -239,14 +246,11 @@ impl Backend {
+                 .map_err(|e| e.to_string())?,
+             Command::Build => {
+                 let builds = paths.builds();
+-                let fallback = self.sdk_home.as_ref().map(|h| h.join("active"));
+                 let controller = self.current()?;
+-                let mut controller = controller.lock();
+-                let sdk = controller
+-                    .sdk_path()
+-                    .map(PathBuf::from)
+-                    .or(fallback)
++                let sdk = self
++                    .project_sdk()
+                     .ok_or("Select an installed SDK before building preview")?;
++                let mut controller = controller.lock();
+                 let manifest_path = sdk.join("compatibility.json");
+                 let compatibility = CompatibilityManifest::from_json_str(
+                     &std::fs::read_to_string(&manifest_path).map_err(|e| {
+@@ -312,6 +316,18 @@ impl Backend {
+                     .map_err(|e| e.to_string())?;
+                 self.check_sdk();
+             }
++            Command::UseInstalledSdk => {
++                let home = self.sdk_home.as_deref().ok_or("SDK home unavailable")?;
++                let (_, active) = crate::sdk_setup::installed_sdks(home)
++                    .into_iter()
++                    .next()
++                    .ok_or("No SDK is installed; install the managed SDK first")?;
++                self.current()?
++                    .lock()
++                    .repin_sdk(sdk_pin(&active))
++                    .map_err(|e| e.to_string())?;
++                self.check_sdk();
++            }
+             Command::InstallSdk => {
+                 let sdk = match crate::sdk_setup::install_sdk(
+                     self.compatibility
+@@ -439,15 +455,28 @@ impl Backend {
+         }
+         self.check_sdk();
+     }
++    /// The SDK the open project builds with: the one selected for it while that folder
++    /// exists, else the installed SDK it is pinned to, else the active installation.
++    fn project_sdk(&self) -> Option<PathBuf> {
++        let home = self.sdk_home.as_deref();
++        let for_project = self.controller.as_ref().and_then(|c| {
++            let c = c.lock();
++            c.sdk_path()
++                .filter(|path| path.exists())
++                .map(PathBuf::from)
++                .or_else(|| {
++                    home.and_then(|h| crate::sdk_setup::installed_sdk_for(&c.project.manifest, h))
++                })
++        });
++        for_project
++            .or_else(|| home.map(|h| h.join("active")))
++            .filter(|path| path.exists())
++    }
+     pub fn check_sdk(&mut self) {
+         self.agent_sdk = None;
+         self.selected_sdk = None;
+-        let sdk = self
+-            .controller
+-            .as_ref()
+-            .and_then(|c| c.lock().sdk_path().map(PathBuf::from))
+-            .or_else(|| self.sdk_home.as_ref().map(|h| h.join("active")))
+-            .filter(|path| path.exists());
++        self.sdk_repin = None;
++        let sdk = self.project_sdk();
+         // Host prerequisites come from the SDK that is actually selected, which may be the
+         // only manifest this host has; the app default stands in while none is installed.
+         let selected = sdk.as_ref().map(|path| {
+@@ -482,12 +511,30 @@ impl Backend {
+                         return;
+                     }
+                 };
+-                if self
++                let pin = self
+                     .controller
+                     .as_ref()
+-                    .is_some_and(|c| framework_for(&c.lock().project.manifest, &selected).is_none())
+-                {
+-                    self.sdk = "Incompatible SDK pin; select the project's compatible SDK".into();
++                    .map(|c| c.lock().project.manifest.clone())
++                    .filter(|project| framework_for(project, &selected).is_none())
++                    .map(|project| project.sdk);
++                if let Some(pin) = pin {
++                    // No installed SDK matches the project's pin (`project_sdk` looked).
++                    self.sdk = if self
++                        .compatibility
++                        .as_ref()
++                        .is_some_and(|available| sdk_pin(available) == pin)
++                    {
++                        format!(
++                            "This project uses SDK {}, which is not installed yet · Install managed SDK",
++                            pin.release
++                        )
++                    } else {
++                        self.sdk_repin = Some(selected.sdk_id.clone());
++                        format!(
++                            "This project is pinned to SDK {}, which is not installed · Use installed SDK {} (rewrites studio.json's SDK pin) or import the project's SDK bundle",
++                            pin.release, selected.sdk_id
++                        )
++                    };
+                     return;
+                 }
+                 let report = Doctor::verify_candidate_sdk_with_processes(
+@@ -507,7 +554,23 @@ impl Backend {
+                             compatibility: selected.clone(),
+                         });
+                     }
+-                    format!("Available · {}", path.display())
++                    // The app ships a different SDK than the installed one (an app update
++                    // brought a newer bundle): installing it keeps this one as `previous`,
++                    // so projects pinned to it keep building.
++                    let active = self.sdk_home.as_ref().map(|home| home.join("active"));
++                    match &self.compatibility {
++                        Some(available)
++                            if active.as_ref() == Some(&path)
++                                && available.digest() != selected.digest() =>
++                        {
++                            format!(
++                                "Available · {} · SDK update {} available · Install managed SDK",
++                                path.display(),
++                                available.sdk_id
++                            )
++                        }
++                        _ => format!("Available · {}", path.display()),
++                    }
+                 } else {
+                     format!(
+                         "SDK failed verification: {}; select/reinstall compatible SDK",
+@@ -557,6 +620,7 @@ impl Backend {
+             owner: open.map(|(_, _, owner, ..)| owner),
+             paths: self.paths.clone(),
+             agent_sdk: self.agent_sdk.clone(),
++            sdk_repin: self.sdk_repin.clone(),
+         })
+     }
+ }
+@@ -599,6 +663,64 @@ mod tests {
+     use super::*;
+     use std::fs;
+ 
++    #[test]
++    fn use_installed_sdk_repins_a_project_whose_sdk_is_not_installed() {
++        let temp = tempfile::tempdir().unwrap();
++        let root = temp.path().join("video");
++        let paths = AppPaths::new(temp.path().join("history")).unwrap();
++        let mut old = CompatibilityManifest::default_linux_x64();
++        old.sdk_id = "studio-sdk-old".into();
++        studio_project::create(
++            &root,
++            "Video",
++            sdk_pin(&old),
++            &old.fframes_version,
++            &old.runtime_version,
++        )
++        .unwrap();
++        let sdk_home = temp.path().join("sdk");
++        let mut installed = CompatibilityManifest::default_linux_x64();
++        installed.target_triple = CompatibilityManifest::host_target().unwrap().into();
++        fs::create_dir_all(sdk_home.join("active")).unwrap();
++        fs::write(
++            sdk_home.join("active/compatibility.json"),
++            serde_json::to_string(&installed).unwrap(),
++        )
++        .unwrap();
++        let controller = Controller::open(&root, &paths).unwrap();
++        let mut backend = Backend {
++            paths: Some(paths),
++            controller: Some(Arc::new(Mutex::new(controller))),
++            session: Some(SessionId(1)),
++            sessions: 1,
++            compatibility: None,
++            compatibility_error: "SDK manifest unavailable".into(),
++            sdk_home: Some(sdk_home),
++            sdk: String::new(),
++            agent_sdk: None,
++            sdk_repin: None,
++            selected_sdk: None,
++            closed: Arc::new(AtomicBool::new(false)),
++            processes: studio_bootstrap::ProcessTreeManager::new(),
++            build_spec: None,
++            catalog: Catalog::default(),
++            preset_report: None,
++            environment: StudioEnvironment::system(),
++            app_version: "0.0.0",
++        };
++        let source = fs::read(root.join("src/lib.rs")).unwrap();
++
++        backend.command(Command::UseInstalledSdk).unwrap();
++
++        let reopened = studio_project::open(&root).unwrap().manifest;
++        assert_eq!(reopened.sdk, sdk_pin(&installed));
++        assert_eq!(fs::read(root.join("src/lib.rs")).unwrap(), source);
++        assert_eq!(
++            crate::sdk_setup::installed_sdk_for(&reopened, backend.sdk_home.as_ref().unwrap()),
++            backend.sdk_home.as_ref().map(|home| home.join("active"))
++        );
++    }
++
+     #[test]
+     fn restore_command_exports_selected_checkpoint_without_requiring_healthy_source() {
+         let temp = tempfile::tempdir().unwrap();
+@@ -630,6 +752,7 @@ mod tests {
+             sdk_home: None,
+             sdk: String::new(),
+             agent_sdk: None,
++            sdk_repin: None,
+             selected_sdk: None,
+             closed: Arc::new(AtomicBool::new(false)),
+             processes: studio_bootstrap::ProcessTreeManager::new(),
+diff --git a/desktop/crates/studio-engine/src/engine/handle.rs b/desktop/crates/studio-engine/src/engine/handle.rs
+index af7a30e..5eeddd8 100644
+--- a/desktop/crates/studio-engine/src/engine/handle.rs
++++ b/desktop/crates/studio-engine/src/engine/handle.rs
+@@ -177,6 +177,7 @@ impl EngineHandle {
+             sdk_home: None,
+             sdk: "Checking SDK…".into(),
+             agent_sdk: None,
++            sdk_repin: None,
+             selected_sdk: None,
+             closed: closed.clone(),
+             processes: processes.clone(),
+diff --git a/desktop/crates/studio-engine/src/lib.rs b/desktop/crates/studio-engine/src/lib.rs
+index 4cdb11c..68b6fd5 100644
+--- a/desktop/crates/studio-engine/src/lib.rs
++++ b/desktop/crates/studio-engine/src/lib.rs
+@@ -28,6 +28,7 @@ pub mod store;
+ pub mod task_scope;
+ pub mod timeline;
+ pub mod timing;
++pub mod updates;
+ pub mod waveform;
+ pub use agent_task::{
+     AgentTask, AgentTaskContext, AgentTaskId, AgentTaskManager, CandidateRevision, CaptureTicket,
+diff --git a/desktop/crates/studio-engine/src/sdk_setup.rs b/desktop/crates/studio-engine/src/sdk_setup.rs
+index 9930d64..1fd56f5 100644
+--- a/desktop/crates/studio-engine/src/sdk_setup.rs
++++ b/desktop/crates/studio-engine/src/sdk_setup.rs
+@@ -8,14 +8,65 @@ use std::{
+ use studio_bootstrap::ProcessTreeManager;
+ use studio_sdk::{install::SdkInstaller, manifest::CompatibilityManifest};
+ 
++/// Names the folder of installed SDKs, overriding the detected one.
++pub const SDK_HOME_ENV: &str = "FFRAMES_SDK_HOME";
++
++/// The folder of installed SDKs: `FFRAMES_SDK_HOME` when set, otherwise `.fframes/sdk` under
++/// `HOME` or `USERPROFILE`, preferring the one that already holds an installed SDK (they
++/// differ on Windows when one tool set `HOME` and another did not).
+ pub fn default_sdk_home() -> PathBuf {
+-    if let Ok(home) = std::env::var("HOME") {
+-        PathBuf::from(home).join(".fframes").join("sdk")
+-    } else if let Ok(profile) = std::env::var("USERPROFILE") {
+-        PathBuf::from(profile).join(".fframes").join("sdk")
+-    } else {
+-        std::env::temp_dir().join("fframes_sdk")
++    if let Some(explicit) = std::env::var_os(SDK_HOME_ENV).filter(|v| !v.is_empty()) {
++        return PathBuf::from(explicit);
+     }
++    let homes: Vec<PathBuf> = ["HOME", "USERPROFILE"]
++        .into_iter()
++        .filter_map(std::env::var_os)
++        .filter(|v| !v.is_empty())
++        .map(|home| PathBuf::from(home).join(".fframes").join("sdk"))
++        .collect();
++    pick_sdk_home(&homes).unwrap_or_else(|| std::env::temp_dir().join("fframes_sdk"))
++}
++
++/// The first of `homes` with an installed SDK, else the first of them.
++fn pick_sdk_home(homes: &[PathBuf]) -> Option<PathBuf> {
++    homes
++        .iter()
++        .find(|home| !installed_sdks(home).is_empty())
++        .or(homes.first())
++        .cloned()
++}
++
++fn read_sdk_manifest(dir: &Path) -> Result<CompatibilityManifest, String> {
++    fs::read_to_string(dir.join("compatibility.json"))
++        .map_err(|e| e.to_string())
++        .and_then(|json| CompatibilityManifest::from_json_str(&json).map_err(|e| e.to_string()))
++}
++
++/// The SDKs installed under `sdk_home` that target this host: the active installation,
++/// then the one it replaced (kept by the installer as `previous`).
++pub fn installed_sdks(sdk_home: &Path) -> Vec<(PathBuf, CompatibilityManifest)> {
++    let installer = SdkInstaller::new(sdk_home);
++    let host = CompatibilityManifest::host_target();
++    [installer.active_sdk_dir(), installer.previous_sdk_dir()]
++        .into_iter()
++        .filter_map(|dir| {
++            let manifest = read_sdk_manifest(&dir).ok()?;
++            (Some(manifest.target_triple.as_str()) == host).then_some((dir, manifest))
++        })
++        .collect()
++}
++
++/// The installed SDK `project` is pinned to, if any is installed under `sdk_home`.
++pub fn installed_sdk_for(
++    project: &studio_project::manifest::Manifest,
++    sdk_home: &Path,
++) -> Option<PathBuf> {
++    installed_sdks(sdk_home)
++        .into_iter()
++        .find(|(_, manifest)| {
++            crate::build_materialization::framework_for(project, manifest).is_some()
++        })
++        .map(|(dir, _)| dir)
+ }
+ 
+ /// What to do when no SDK bundle targets this host.
+@@ -63,11 +114,7 @@ pub fn resolve_manifest(
+     dev_bundles: &[PathBuf],
+     sdk_home: &Path,
+ ) -> Result<CompatibilityManifest, String> {
+-    let read = |bundle: &Path| {
+-        fs::read_to_string(bundle.join("compatibility.json"))
+-            .map_err(|e| e.to_string())
+-            .and_then(|json| CompatibilityManifest::from_json_str(&json).map_err(|e| e.to_string()))
+-    };
++    let read = read_sdk_manifest;
+     if let Some(bundle) = packaged.filter(|p| p.join("compatibility.json").is_file()) {
+         return read(bundle);
+     }
+@@ -288,6 +335,63 @@ mod tests {
+         manifest
+     }
+ 
++    #[test]
++    fn a_project_builds_with_the_installed_sdk_of_its_pin() {
++        let host = CompatibilityManifest::host_target().expect("supported host");
++        let root = tempfile::tempdir().unwrap();
++        let (empty, home) = (root.path().join("empty"), root.path().join("home"));
++        let older = write_bundle(&home.join("previous"), host);
++        let mut newer = older.clone();
++        newer.sdk_id = "studio-sdk-newer".into();
++        fs::create_dir_all(home.join("active")).unwrap();
++        fs::write(
++            home.join("active").join("compatibility.json"),
++            serde_json::to_string(&newer).unwrap(),
++        )
++        .unwrap();
++        // A foreign SDK is never one of this host's installations.
++        write_bundle(
++            &root.path().join("foreign").join("active"),
++            "riscv64gc-unknown-linux-gnu",
++        );
++
++        assert_eq!(installed_sdks(&home).len(), 2);
++        assert!(installed_sdks(&root.path().join("foreign")).is_empty());
++        // The home that holds an installation wins over an earlier empty one.
++        assert_eq!(
++            pick_sdk_home(&[empty.clone(), home.clone()]),
++            Some(home.clone())
++        );
++        assert_eq!(
++            pick_sdk_home(&[empty.clone(), root.path().join("foreign")]),
++            Some(empty)
++        );
++
++        let project = |sdk: &CompatibilityManifest| {
++            let dir = tempfile::tempdir().unwrap();
++            studio_project::create(
++                &dir.path().join("video"),
++                "Video",
++                crate::build_materialization::sdk_pin(sdk),
++                &sdk.fframes_version,
++                &sdk.runtime_version,
++            )
++            .unwrap()
++            .manifest
++        };
++        assert_eq!(
++            installed_sdk_for(&project(&newer), &home),
++            Some(home.join("active"))
++        );
++        assert_eq!(
++            installed_sdk_for(&project(&older), &home),
++            Some(home.join("previous"))
++        );
++        let mut missing = older.clone();
++        missing.sdk_id = "studio-sdk-not-installed".into();
++        assert_eq!(installed_sdk_for(&project(&missing), &home), None);
++    }
++
+     #[test]
+     fn manifest_resolution_never_falls_back_to_a_foreign_target() {
+         let host = CompatibilityManifest::host_target().expect("supported host");
+diff --git a/desktop/crates/studio-project/Cargo.toml b/desktop/crates/studio-project/Cargo.toml
+index 7a2e3ba..c397976 100644
+--- a/desktop/crates/studio-project/Cargo.toml
++++ b/desktop/crates/studio-project/Cargo.toml
+@@ -8,6 +8,7 @@ license = "MIT"
+ serde = { workspace = true }
+ serde_json = { workspace = true }
+ sha2 = { workspace = true }
++studio-bootstrap = { workspace = true }
+ thiserror = { workspace = true }
+ proc-macro2 = { version = "1", features = ["span-locations"] }
+ syn = { version = "2.0.119", features = ["full", "visit"] }
+diff --git a/desktop/crates/studio-project/src/manifest.rs b/desktop/crates/studio-project/src/manifest.rs
+index 4edecd8..e9c6eb8 100644
+--- a/desktop/crates/studio-project/src/manifest.rs
++++ b/desktop/crates/studio-project/src/manifest.rs
+@@ -13,7 +13,7 @@ pub const MAX_MANIFEST_BYTES: usize = 1024 * 1024;
+ 
+ /// Corrective diagnostics retain a native filename and a portable field name.
+ #[derive(Debug, thiserror::Error)]
+-#[error("{file}: {field}: {reason}; {action}")]
++#[error("{}: {field}: {reason}; {action}", studio_bootstrap::external_path(.file).display())]
+ pub struct ProjectError {
+     pub file: PathBuf,
+     pub field: String,
+diff --git a/desktop/crates/studio-sdk/src/doctor.rs b/desktop/crates/studio-sdk/src/doctor.rs
+index 06d2d9c..08a4755 100644
+--- a/desktop/crates/studio-sdk/src/doctor.rs
++++ b/desktop/crates/studio-sdk/src/doctor.rs
+@@ -133,13 +133,35 @@ fn windows_msvc_installation() -> Option<String> {
+     (output.status.success() && !path.is_empty()).then_some(path)
+ }
+ 
+-/// libclang for bindgen, resolved the same way `SdkEnvironment` does on Windows.
+-fn windows_libclang() -> Option<String> {
+-    std::env::var("LIBCLANG_PATH")
+-        .ok()
++/// The folder holding `libclang.dll` for bindgen, which `SdkEnvironment` passes to builds as
++/// `LIBCLANG_PATH`: that variable, the LLVM installer's folder, a Scoop install, then the
++/// LLVM that Visual Studio's "C++ Clang tools" component installs.
++pub fn windows_libclang() -> Option<String> {
++    let mut candidates: Vec<std::path::PathBuf> = std::env::var_os("LIBCLANG_PATH")
++        .map(Into::into)
+         .into_iter()
+-        .chain([r"C:\Program Files\LLVM\bin".to_owned()])
+-        .find(|dir| Path::new(dir).join("libclang.dll").is_file())
++        .collect();
++    for root in ["ProgramFiles", "ProgramW6432"]
++        .into_iter()
++        .filter_map(std::env::var_os)
++    {
++        candidates.push(Path::new(&root).join(r"LLVM\bin"));
++    }
++    let scoop = std::env::var_os("SCOOP")
++        .map(std::path::PathBuf::from)
++        .or_else(|| std::env::var_os("USERPROFILE").map(|p| Path::new(&p).join("scoop")));
++    candidates.extend(scoop.map(|s| s.join(r"apps\llvm\current\bin")));
++    let has_libclang = |dir: &std::path::PathBuf| dir.join("libclang.dll").is_file();
++    candidates
++        .into_iter()
++        .find(has_libclang)
++        // vswhere is a process start: asked only when nothing above has libclang.
++        .or_else(|| {
++            windows_msvc_installation()
++                .map(|vs| Path::new(&vs).join(r"VC\Tools\Llvm\x64\bin"))
++                .filter(has_libclang)
++        })
++        .map(|dir| dir.to_string_lossy().into_owned())
+ }
+ 
+ fn found_or_missing(
+diff --git a/desktop/crates/studio-sdk/src/environment.rs b/desktop/crates/studio-sdk/src/environment.rs
+index 7fdd1aa..b721db7 100644
+--- a/desktop/crates/studio-sdk/src/environment.rs
++++ b/desktop/crates/studio-sdk/src/environment.rs
+@@ -136,11 +136,9 @@ impl SdkEnvironment {
+ 
+             #[cfg(windows)]
+             {
+-                for candidate in [r"C:\Program Files\LLVM\bin", r"C:\Program Files\LLVM\lib"] {
+-                    if Path::new(candidate).exists() {
+-                        env.set("LIBCLANG_PATH", candidate);
+-                        break;
+-                    }
++                // The folder the doctor found, so what passed the check is what builds use.
++                if let Some(dir) = crate::doctor::windows_libclang() {
++                    env.set("LIBCLANG_PATH", dir);
+                 }
+             }
+         }
+diff --git a/desktop/crates/studio-sdk/src/project.rs b/desktop/crates/studio-sdk/src/project.rs
+index e3e4e19..ff2b3d4 100644
+--- a/desktop/crates/studio-sdk/src/project.rs
++++ b/desktop/crates/studio-sdk/src/project.rs
+@@ -412,48 +412,40 @@ pub(crate) fn wait_with_output_drained(
+         )
+     };
+ 
+-    let stdout_handle = std::thread::spawn(move || {
+-        let mut buf = Vec::new();
+-        if let Some(mut r) = stdout_opt {
+-            let mut chunk = [0u8; 4096];
+-            while let Ok(n) = r.read(&mut chunk) {
+-                if n == 0 {
+-                    break;
+-                }
+-                if buf.len() < max_diagnostic_bytes {
+-                    let to_take = n.min(max_diagnostic_bytes - buf.len());
+-                    buf.extend_from_slice(&chunk[..to_take]);
++    // A cold build of the SDK framework can take well over five minutes, but cargo keeps
++    // printing while it makes progress. Only a child that stays silent that long is hung.
++    let last_output = Arc::new(Mutex::new(Instant::now()));
++    let drain = |reader: Option<Box<dyn Read + Send>>| {
++        let last_output = last_output.clone();
++        std::thread::spawn(move || {
++            let mut buf = Vec::new();
++            if let Some(mut r) = reader {
++                let mut chunk = [0u8; 4096];
++                while let Ok(n) = r.read(&mut chunk) {
++                    if n == 0 {
++                        break;
++                    }
++                    *last_output.lock() = Instant::now();
++                    if buf.len() < max_diagnostic_bytes {
++                        let to_take = n.min(max_diagnostic_bytes - buf.len());
++                        buf.extend_from_slice(&chunk[..to_take]);
++                    }
+                 }
+             }
+-        }
+-        buf
+-    });
+-
+-    let stderr_handle = std::thread::spawn(move || {
+-        let mut buf = Vec::new();
+-        if let Some(mut r) = stderr_opt {
+-            let mut chunk = [0u8; 4096];
+-            while let Ok(n) = r.read(&mut chunk) {
+-                if n == 0 {
+-                    break;
+-                }
+-                if buf.len() < max_diagnostic_bytes {
+-                    let to_take = n.min(max_diagnostic_bytes - buf.len());
+-                    buf.extend_from_slice(&chunk[..to_take]);
+-                }
+-            }
+-        }
+-        buf
+-    });
++            buf
++        })
++    };
++    let stdout_handle = drain(stdout_opt.map(|r| Box::new(r) as Box<dyn Read + Send>));
++    let stderr_handle = drain(stderr_opt.map(|r| Box::new(r) as Box<dyn Read + Send>));
+ 
+-    let deadline = Instant::now() + Duration::from_secs(300);
++    let stall_limit = Duration::from_secs(300);
+     let status = loop {
+-        if Instant::now() >= deadline {
++        if last_output.lock().elapsed() >= stall_limit {
+             let _ = child_arc.lock().kill_forcefully();
+             let _ = stdout_handle.join();
+             let _ = stderr_handle.join();
+             return Err(ProjectError::BuildError(
+-                "Child exceeded five-minute build/render deadline".into(),
++                "Child produced no output for five minutes and was stopped".into(),
+             ));
+         }
+         let maybe_status = {
+diff --git a/desktop/crates/studio-ui/src/agent/attachment_flow.rs b/desktop/crates/studio-ui/src/agent/attachment_flow.rs
+index 126d8c1..372b7b8 100644
+--- a/desktop/crates/studio-ui/src/agent/attachment_flow.rs
++++ b/desktop/crates/studio-ui/src/agent/attachment_flow.rs
+@@ -343,7 +343,7 @@ impl ConversationPanel {
+         let front = self.host.stage.front()?;
+         let body = format!(
+             "{}\n{} bytes. The agent receives a copy of this file's content; it is not part of the project.",
+-            front.staged.path.display(),
++            studio_bootstrap::external_path(&front.staged.path).display(),
+             front.staged.size
+         );
+         Some(
+diff --git a/desktop/crates/studio-ui/src/agent/commands.rs b/desktop/crates/studio-ui/src/agent/commands.rs
+index 5e3ad6d..f0ec77a 100644
+--- a/desktop/crates/studio-ui/src/agent/commands.rs
++++ b/desktop/crates/studio-ui/src/agent/commands.rs
+@@ -295,7 +295,7 @@ impl ConversationPanel {
+                         Export::Draft => workflow.export_draft(&path),
+                     };
+                     if panel.command(sent, cx).is_some() {
+-                        panel.say(format!("Exporting to {}…", path.display()), cx);
++                        panel.say(format!("Exporting to {}…", studio_bootstrap::external_path(&path).display()), cx);
+                     }
+                 }
+                 Ok(Ok(None)) => (),
+diff --git a/desktop/crates/studio-ui/src/agent/controls.rs b/desktop/crates/studio-ui/src/agent/controls.rs
+index 6fb4d88..1a68c26 100644
+--- a/desktop/crates/studio-ui/src/agent/controls.rs
++++ b/desktop/crates/studio-ui/src/agent/controls.rs
+@@ -487,7 +487,12 @@ pub fn identity_lines(task: &TaskView) -> Vec<(&'static str, String)> {
+             ),
+         ),
+         ("Base", task.source_base.clone()),
+-        ("Working copy", task.draft.display().to_string()),
++        (
++            "Working copy",
++            studio_bootstrap::external_path(&task.draft)
++                .display()
++                .to_string(),
++        ),
+         (
+             "Review",
+             match task.review_policy {
+diff --git a/desktop/crates/studio-ui/src/agent/project_tab.rs b/desktop/crates/studio-ui/src/agent/project_tab.rs
+index 4f6ca76..01a9645 100644
+--- a/desktop/crates/studio-ui/src/agent/project_tab.rs
++++ b/desktop/crates/studio-ui/src/agent/project_tab.rs
+@@ -158,7 +158,13 @@ impl ConversationPanel {
+                     ),
+                     _ => "The agent's working copy is retained.".to_owned(),
+                 }));
+-                section = section.child(self.line(draft.draft.display().to_string()));
++                section = section.child(
++                    self.line(
++                        studio_bootstrap::external_path(&draft.draft)
++                            .display()
++                            .to_string(),
++                    ),
++                );
+                 if controls.acknowledge_writer_gone {
+                     section = section
+                         .child(self.line(
+diff --git a/desktop/crates/studio-ui/src/agent/provider_setup.rs b/desktop/crates/studio-ui/src/agent/provider_setup.rs
+index 143551e..2002ab9 100644
+--- a/desktop/crates/studio-ui/src/agent/provider_setup.rs
++++ b/desktop/crates/studio-ui/src/agent/provider_setup.rs
+@@ -836,13 +836,18 @@ impl ConversationPanel {
+             let state = setup.detected.state(found);
+             let location = match setup.detected.installed.get(&found.id) {
+                 Some(installed) => {
+-                    format!(" · installed by Studio · {}", installed.entry.display())
++                    format!(
++                        " · installed by Studio · {}",
++                        studio_bootstrap::external_path(&installed.entry).display()
++                    )
+                 }
+                 None => found
+                     .adapter
+                     .as_ref()
+                     .or(found.cli.as_ref())
+-                    .map_or_else(String::new, |path| format!(" · {}", path.display())),
++                    .map_or_else(String::new, |path| {
++                        format!(" · {}", studio_bootstrap::external_path(path).display())
++                    }),
+             };
+             let installable = profile.adapter.wire == studio_harness::AgentWire::Acp
+                 && adapter_install::package_for(&profile.id).is_some();
+diff --git a/desktop/crates/studio-ui/src/export/progress.rs b/desktop/crates/studio-ui/src/export/progress.rs
+index 1588250..2152f62 100644
+--- a/desktop/crates/studio-ui/src/export/progress.rs
++++ b/desktop/crates/studio-ui/src/export/progress.rs
+@@ -79,7 +79,10 @@ impl ExportPhase {
+             Self::Preparing => "Preparing the export".into(),
+             Self::Rendering { done, total } => format!("Rendering · {done}/{total} frames"),
+             Self::Finishing => "Writing and verifying the file".into(),
+-            Self::Complete { destination } => format!("Exported {}", destination.display()),
++            Self::Complete { destination } => format!(
++                "Exported {}",
++                studio_bootstrap::external_path(destination).display()
++            ),
+             Self::Failed(reason) => format!("Export failed · {reason}"),
+             Self::Cancelled => "Export cancelled · partial output removed".into(),
+         })
+diff --git a/desktop/crates/studio-ui/src/shell/engine_events.rs b/desktop/crates/studio-ui/src/shell/engine_events.rs
+index d801534..87cb427 100644
+--- a/desktop/crates/studio-ui/src/shell/engine_events.rs
++++ b/desktop/crates/studio-ui/src/shell/engine_events.rs
+@@ -754,7 +754,7 @@ impl StudioShell {
+                 files: matches!(kind, Picker::Asset | Picker::Import | Picker::PresetCss),
+                 directories: !matches!(kind, Picker::Asset | Picker::Import | Picker::PresetCss),
+                 multiple: false,
+-                prompt: Some(format!("{label}â€¦").into()),
++                prompt: Some(format!("{label}…").into()),
+             });
+             cx.spawn(async move |this, cx| {
+                 let result = picker.await;
+diff --git a/desktop/crates/studio-ui/src/shell/header.rs b/desktop/crates/studio-ui/src/shell/header.rs
+index 2072d1d..22b13e6 100644
+--- a/desktop/crates/studio-ui/src/shell/header.rs
++++ b/desktop/crates/studio-ui/src/shell/header.rs
+@@ -122,7 +122,9 @@ impl StudioShell {
+                 .child(selectable(title).over_drag_area()),
+         );
+         if let Some(p) = &project {
+-            let path = p.root.display().to_string();
++            let path = studio_bootstrap::external_path(&p.root)
++                .display()
++                .to_string();
+             // Selectable rather than a tooltip: the text blocks the hover a tooltip needs,
+             // and a triple click selects the whole path however it is truncated.
+             text = text.child(
+diff --git a/desktop/crates/studio-ui/src/shell/mod.rs b/desktop/crates/studio-ui/src/shell/mod.rs
+index 7572b97..6c20748 100644
+--- a/desktop/crates/studio-ui/src/shell/mod.rs
++++ b/desktop/crates/studio-ui/src/shell/mod.rs
+@@ -176,6 +176,12 @@ pub struct StudioShell {
+     onboarding_completed: Option<bool>,
+     /// How agent permission requests are answered, for every project.
+     permission_policy: studio_proto::PermissionPolicy,
++    /// Whether the launch check for a newer Studio is turned off.
++    update_check_disabled: bool,
++    /// The last check for a newer Studio and its answer.
++    update: settings::UpdateCheck,
++    /// The "update available" notice was closed for this launch.
++    update_dismissed: bool,
+     /// The appearance the cached header last rendered with, for the telemetry.
+     header_appearance: std::cell::Cell<Option<studio_theme::Appearance>>,
+     overflow_open: bool,
+@@ -480,6 +486,9 @@ impl StudioShell {
+             setup_checked: false,
+             onboarding_completed: None,
+             permission_policy: studio_proto::PermissionPolicy::default(),
++            update_check_disabled: false,
++            update: settings::UpdateCheck::NotChecked,
++            update_dismissed: false,
+             header_appearance: std::cell::Cell::new(None),
+             overflow_open: false,
+             overflow_menu: MenuState::new(gpui::Point::default(), &[]),
+diff --git a/desktop/crates/studio-ui/src/shell/onboarding.rs b/desktop/crates/studio-ui/src/shell/onboarding.rs
+index 31e361a..dc001b8 100644
+--- a/desktop/crates/studio-ui/src/shell/onboarding.rs
++++ b/desktop/crates/studio-ui/src/shell/onboarding.rs
+@@ -104,6 +104,7 @@ impl StudioShell {
+         let settings = AppSettings::load(&paths);
+         self.permission_policy = settings.permission_policy;
+         self.onboarding_completed = settings.onboarding_completed;
++        self.update_check_disabled = settings.update_check_disabled;
+         let agent_selected = studio_engine::providers::host::load_settings(&paths)
+             .ok()
+             .flatten()
+@@ -342,7 +343,11 @@ impl StudioShell {
+                         0,
+                         muted(
+                             &theme,
+-                            format!("Open: {} · {}", project.name, project.root.display()),
++                            format!(
++                                "Open: {} · {}",
++                                project.name,
++                                studio_bootstrap::external_path(&project.root).display()
++                            ),
+                         )
+                         .into_any_element(),
+                     );
+diff --git a/desktop/crates/studio-ui/src/shell/settings.rs b/desktop/crates/studio-ui/src/shell/settings.rs
+index be6e1a9..fccf323 100644
+--- a/desktop/crates/studio-ui/src/shell/settings.rs
++++ b/desktop/crates/studio-ui/src/shell/settings.rs
+@@ -6,16 +6,26 @@
+ use std::sync::atomic::{AtomicU64, Ordering};
+ 
+ use gpui::{Context, IntoElement, ParentElement, Styled, div, px};
+-use studio_engine::app_settings::AppSettings;
++use studio_engine::{app_settings::AppSettings, updates::AvailableUpdate};
+ use studio_proto::AppTheme;
+ 
+ use super::StudioShell;
+ use super::sections::box_probe;
+ use crate::kit::{
+     Card, Icon, Section, SegmentOption, SegmentedControl, SettingRow, SettingsFrame,
+-    SettingsNavItem,
++    SettingsNavItem, Toggle,
+ };
+ 
++/// The check for a newer Studio release.
++#[derive(Debug, Clone, PartialEq, Eq)]
++pub(super) enum UpdateCheck {
++    NotChecked,
++    Checking,
++    UpToDate,
++    Available(AvailableUpdate),
++    Failed(String),
++}
++
+ /// The choices in the order the control shows them; option `i` is `theme-i`.
+ const THEMES: [(AppTheme, &str); 3] = [
+     (AppTheme::System, "System"),
+@@ -53,6 +63,7 @@ pub(super) struct SettingsWriter {
+     latest: AtomicU64,
+     latest_export: AtomicU64,
+     latest_setup: AtomicU64,
++    latest_update_check: AtomicU64,
+     write: parking_lot::Mutex<()>,
+ }
+ 
+@@ -163,6 +174,144 @@ impl StudioShell {
+         .detach();
+     }
+ 
++    /// Asks GitHub for a newer Studio in the background; the answer shows on the
++    /// Appearance page and, when there is one, as a notice under the header.
++    pub fn check_for_update(&mut self, cx: &mut Context<Self>) {
++        if self.update == UpdateCheck::Checking {
++            return;
++        }
++        self.update = UpdateCheck::Checking;
++        self.update_dismissed = false;
++        cx.notify();
++        let version = self.app_version;
++        cx.spawn(async move |this, cx| {
++            let result = cx
++                .background_executor()
++                .spawn(async move { studio_engine::updates::check_for_update(version) })
++                .await;
++            let _ = this.update(cx, |shell, cx| {
++                shell.update = match result {
++                    Ok(Some(update)) => UpdateCheck::Available(update),
++                    Ok(None) => UpdateCheck::UpToDate,
++                    Err(error) => UpdateCheck::Failed(error),
++                };
++                cx.notify();
++            });
++        })
++        .detach();
++    }
++
++    /// Turns the launch check on or off and saves it in the background.
++    fn set_update_check(&mut self, enabled: bool, cx: &mut Context<Self>) {
++        self.update_check_disabled = !enabled;
++        cx.notify();
++        let Some(paths) = self.presentation.paths.clone() else {
++            self.error = Some("Cannot save the setting: the app's storage is unavailable".into());
++            return;
++        };
++        let disabled = self.update_check_disabled;
++        let writer = self.settings_writer.clone();
++        let generation = writer.latest_update_check.fetch_add(1, Ordering::AcqRel) + 1;
++        cx.spawn(async move |this, cx| {
++            let result = cx
++                .background_executor()
++                .spawn(async move {
++                    let _write = writer.write.lock();
++                    if writer.latest_update_check.load(Ordering::Acquire) != generation {
++                        return Ok(());
++                    }
++                    let mut settings = AppSettings::load(&paths);
++                    settings.update_check_disabled = disabled;
++                    settings.save(&paths)
++                })
++                .await;
++            if let Err(error) = result {
++                let _ = this.update(cx, |shell, cx| {
++                    shell.error = Some(error);
++                    cx.notify();
++                });
++            }
++        })
++        .detach();
++    }
++
++    /// The Updates section: the launch check, its answer, Check now and Download.
++    fn render_updates(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
++        let theme = self.theme;
++        let entity = cx.entity();
++        let toggle = Toggle::settings(&theme, "update-check", !self.update_check_disabled)
++            .label("Check for updates at launch")
++            .on_change(move |enabled, _, cx| {
++                entity.update(cx, |shell, cx| shell.set_update_check(enabled, cx))
++            });
++        let status = match &self.update {
++            UpdateCheck::NotChecked => "Not checked yet".to_owned(),
++            UpdateCheck::Checking => "Checking…".to_owned(),
++            UpdateCheck::UpToDate => format!("fframes Studio {} is the latest", self.app_version),
++            UpdateCheck::Available(update) => format!(
++                "fframes Studio {} is available (this is {})",
++                update.version, self.app_version
++            ),
++            UpdateCheck::Failed(error) => error.clone(),
++        };
++        let mut actions = div().flex().gap(px(8.)).child(
++            self.action_button(
++                "check-update",
++                "Check now",
++                self.update != UpdateCheck::Checking,
++                false,
++                None,
++                cx,
++                |shell, cx| shell.check_for_update(cx),
++            )
++            .outlined(&theme),
++        );
++        if let UpdateCheck::Available(update) = &self.update {
++            actions = actions.child(self.download_update_button(update.url.clone(), cx));
++        }
++        Section::settings(
++            &theme,
++            "Updates",
++            Some("Studio asks GitHub for a newer release. Nothing is downloaded or installed without you."),
++            None,
++            vec![
++                Card::settings_rows(
++                    &theme,
++                    vec![
++                        SettingRow::settings(
++                            &theme,
++                            "Check for updates at launch",
++                            None,
++                            toggle.into_any_element(),
++                        )
++                        .into_any_element(),
++                        SettingRow::settings(&theme, status, None, actions.into_any_element())
++                            .into_any_element(),
++                    ],
++                )
++                .into_any_element(),
++            ],
++        )
++        .into_any_element()
++    }
++
++    /// Opens the release page of `url`, where the installer and the notes are.
++    pub(super) fn download_update_button(
++        &self,
++        url: String,
++        cx: &mut Context<Self>,
++    ) -> crate::kit::EditorButton {
++        self.action_button(
++            "download-update",
++            "Download…",
++            true,
++            true,
++            None,
++            cx,
++            move |_, cx| cx.open_url(&url),
++        )
++    }
++
+     pub(super) fn render_settings(&self, cx: &mut Context<Self>) -> gpui::AnyElement {
+         let theme = self.theme;
+         let entity = cx.entity();
+@@ -190,6 +339,7 @@ impl StudioShell {
+                         .into_any_element(),
+                     ],
+                 ))
++                .child(self.render_updates(cx))
+                 .into_any_element(),
+             SettingsPage::Agent => div()
+                 .flex()
+diff --git a/desktop/crates/studio-ui/src/shell/status_strip.rs b/desktop/crates/studio-ui/src/shell/status_strip.rs
+index bccd6c9..fa7909a 100644
+--- a/desktop/crates/studio-ui/src/shell/status_strip.rs
++++ b/desktop/crates/studio-ui/src/shell/status_strip.rs
+@@ -44,6 +44,30 @@ impl StudioShell {
+             }
+             notices.push(notice.into_any_element());
+         }
++        if let super::settings::UpdateCheck::Available(update) = &self.update
++            && !self.update_dismissed
++        {
++            let entity = cx.entity();
++            notices.push(
++                Notice::new(
++                    "update",
++                    Tone::Info,
++                    format!("fframes Studio {} is available", update.version),
++                )
++                .body(format!(
++                    "You have {}. The release page has the installer and the notes.",
++                    self.app_version
++                ))
++                .action(self.download_update_button(update.url.clone(), cx))
++                .on_dismiss(move |_, cx| {
++                    entity.update(cx, |shell, cx| {
++                        shell.update_dismissed = true;
++                        cx.notify();
++                    })
++                })
++                .into_any_element(),
++            );
++        }
+         let Some(p) = &self.presentation.project else {
+             return notices;
+         };
+@@ -69,7 +93,11 @@ impl StudioShell {
+                     revision,
+                 } => (
+                     Tone::Success,
+-                    format!("Exported {} · revision {}", destination.display(), revision),
++                    format!(
++                        "Exported {} · revision {}",
++                        studio_bootstrap::external_path(destination).display(),
++                        revision
++                    ),
+                 ),
+                 ExportProgress::Failed(message) => {
+                     (Tone::Danger, format!("Export failed · {message}"))
+diff --git a/docs/desktop/README.md b/docs/desktop/README.md
+index eeb9c3d..88807c1 100644
+--- a/docs/desktop/README.md
++++ b/docs/desktop/README.md
+@@ -26,6 +26,12 @@ The app is the `fframes-studio` package in [`desktop/app`](../../desktop/app). T
+ 
+ Projects compile against a managed SDK. The setup screen installs it step by step and marks the failing step if setup fails. The SDK manifest comes from the packaged bundle or `FFRAMES_SDK_BUNDLE`, then from the built-in manifest when it targets this host; development builds also look for a bundle assembled into the desktop workspace's target folder, `phase-zero-sdk` ([`build-phase-zero-sdk.ps1`](../../desktop/scripts/build-phase-zero-sdk.ps1) on Windows, [`build-phase-zero-sdk.sh`](../../desktop/scripts/build-phase-zero-sdk.sh) elsewhere); otherwise Studio uses the installed SDK's receipt (`~/.fframes/sdk/active`) or asks you to import a bundle ([`sdk_setup.rs`](../../desktop/crates/studio-engine/src/sdk_setup.rs)). Host prerequisites are checked against the selected SDK's manifest. Opening a project never installs an SDK or runs Cargo.
+ 
++- **Where SDKs are found.** The SDK folder is `FFRAMES_SDK_HOME` when set, otherwise `.fframes/sdk` under `HOME` or `USERPROFILE`, whichever already holds an installed SDK. On Windows, libclang is found through `LIBCLANG_PATH`, `Program Files\LLVM`, a Scoop install or Visual Studio's bundled LLVM, and builds use the folder the doctor found.
++- **Which SDK a project builds with.** A project builds with the installed SDK its `studio.json` is pinned to: the active one, or the one the last install replaced (`previous`), so installing a newer SDK keeps older projects building. **Select installed SDK…** still overrides this.
++- **Projects whose SDK is missing.** When a project (often an imported one) is pinned to an SDK that is not installed, the Project drawer says which SDK it needs. **Use installed SDK** rewrites the pin in `studio.json` to the active SDK; source that does not compile with that SDK's framework reports it at the next build.
++- **SDK updates.** When the app ships a different SDK than the installed one, the SDK status says an update is available and **Install managed SDK** installs it.
++- **App updates.** At launch Studio asks GitHub for the latest release ([`updates.rs`](../../desktop/crates/studio-engine/src/updates.rs), using the system `curl`) and shows a notice with **Download…** when it is newer. Nothing is downloaded or installed automatically. **Settings → Appearance → Updates** turns the launch check off (`update_check_disabled` in `app-settings.json`) and has **Check now**.
++
+ App data lives in `%LOCALAPPDATA%/fframes-studio` on Windows, `~/Library/Application Support/fframes-studio` on macOS and `${XDG_DATA_HOME:-~/.local/share}/fframes-studio` on Linux ([`app_paths.rs`](../../desktop/crates/studio-engine/src/app_paths.rs)). It holds the SQLite metadata, per-project journals, checkpoint objects, the agent draft and stored agent sessions, build copies and `app-settings.json`. None of it travels with the project.
+ 
+ ## Projects
+@@ -36,6 +42,8 @@ Source and copied assets travel with the folder; local history does not. A check
+ 
+ **Projects made by an older Studio are refused.** There is no migration. A `studio.json` of an earlier schema or instruction version is refused with "made by an older Studio … The project is left as it is and cannot be opened" ([`manifest.rs`](../../desktop/crates/studio-project/src/manifest.rs)), and the same rule covers the history database, journals, checkpoint inventories, stored agent sessions and the provider registry: an old file is reported and left byte for byte, and nothing repairs or rewrites it. A file from a newer Studio asks you to update Studio. An `agent-adapter.json` or a single-session conversation log from an earlier build is simply ignored, and Setup is shown again.
+ 
++To open an existing fframes project, follow [Open an existing fframes project in Studio](open-fframes-project-in-studio.md).
++
+ ### Try real repository examples
+ 
+ After installing the managed SDK in Setup, run this from the repository root (PowerShell):
+diff --git a/examples/fframes-studio-intro/src/lib.rs b/examples/fframes-studio-intro/src/lib.rs
+index 7e474cb..b46dd6b 100644
+--- a/examples/fframes-studio-intro/src/lib.rs
++++ b/examples/fframes-studio-intro/src/lib.rs
+@@ -5,6 +5,8 @@
+ //! and where to get it, with real renders of other examples and real output of
+ //! the CLI tools. The 9:16 and short cuts keep their own story. Everything sits
+ //! on the beat grid of the soundtrack of `examples/fframes-intro` (see `beat.rs`).
++//! The 16:9 cut is drawn in the Editorial Engineering system of
++//! `docs/design/README.md` (`scenes/keynote/look.rs`).
+ //! `cargo run --release -p fframes-studio-intro -- timeline` lists the scenes.
+ 
+ pub mod beat;
+@@ -74,7 +76,7 @@ impl Video for StudioIntroVideo {
+     const FPS: usize = FPS;
+     const WIDTH: usize = WIDTH;
+     const HEIGHT: usize = HEIGHT;
+-    const BACKGROUND_COLOR: Color = Color::BLACK;
++    const BACKGROUND_COLOR: Color = Color::WHITE;
+ 
+     fn duration(&self) -> Duration<'_> {
+         Duration::Auto
+@@ -98,19 +100,13 @@ impl Video for StudioIntroVideo {
+     }
+ 
+     fn render_frame<'a>(&'a self, frame: Frame, ctx: &FFramesContext<'a, '_>) -> Svgr<'a> {
+-        let b = gbeat(&frame);
+-        let grain = SHADERS.grain.draw(
+-            &frame,
+-            ShaderUniforms::new()
+-                .float("uGrain", 0.05)
+-                .float("uVignette", 0.5),
+-        );
++        // a quiet paper canvas: no grain, vignette, flashes or glitches, the
++        // motion of the figures carries the beat
+         fframes::svgr!(
+             <svg xmlns="http://www.w3.org/2000/svg" width="1920" height="1080" viewBox="0 0 1920 1080">
+                 <rect width="1920" height="1080" fill={keynote::look::BG} />
+-                {energy_long(&frame, ctx, b)}
+-                <image href={grain.href()} x="0" y="0" width="1920" height="1080" />
+-                {hud_long(&frame, b)}
++                {ctx.render_scenes(&frame)}
++                {hud_long(&frame, gbeat(&frame))}
+             </svg>
+         )
+     }
+@@ -191,7 +187,7 @@ const DROPS: &[f32] = &[48.0, 96.0, 144.0, 208.0];
+ /// The HUD of the 16:9 cut: crop marks, the product, the act and a hairline of
+ /// progress.
+ fn hud_long(frame: &Frame, b: f32) -> Svgr<'static> {
+-    use keynote::look::{ACCENT, MUTED, SLATE};
++    use keynote::look::{ACTION, CONTROL, RULE, label};
+     let appear = prog(gsec(frame), 0.1, 0.5) * (1.0 - prog(b, LONG_END - 1.0, LONG_END - 0.5));
+     if appear <= 0.0 {
+         return Svgr::empty();
+@@ -204,59 +200,11 @@ fn hud_long(frame: &Frame, b: f32) -> Svgr<'static> {
+     let progress = (gsec(frame) / LONG_TOTAL_SECONDS * 1788.0).max(0.5);
+     fframes::svgr!(
+         <g opacity={appear}>
+-            {corners(36.0, 36.0, 1848.0, 1008.0, 26.0, MUTED, 2.0)}
+-            {label(66.0, 80.0, "FFRAMES STUDIO".to_owned(), SLATE, 20.0, "start")}
+-            {label(1854.0, 1016.0, act.to_owned(), SLATE, 20.0, "end")}
+-            <rect x="66" y="1034" width="1788" height="1" fill={MUTED} opacity="0.4" />
+-            <rect x="66" y="1033" width={progress} height="3" fill={ACCENT} />
+-        </g>
+-    )
+-}
+-
+-/// Act cuts of the 16:9 cut, which glitch for three frames.
+-const ACT_CUTS: &[f32] = &[48.0, 80.0, 128.0, 176.0, 208.0];
+-/// Drops of the 16:9 cut, which flash.
+-const LONG_DROPS: &[f32] = &[48.0, 96.0, 176.0, 240.0];
+-/// Where the full beat plays in the 16:9 cut and the picture pumps with the kick.
+-const LONG_PUMPING: &[(f32, f32)] = &[(48.0, 80.0), (96.0, 192.0), (240.0, 264.0)];
+-
+-fn energy_long<'a>(frame: &Frame, ctx: &FFramesContext<'a, '_>, b: f32) -> Svgr<'a> {
+-    let pumping = LONG_PUMPING.iter().any(|(s, e)| (*s..*e).contains(&b));
+-    let pump = if pumping { pulse(b, 9.0) } else { 0.0 };
+-    let s = 1.0 + pump * 0.004;
+-    let flash = LONG_DROPS
+-        .iter()
+-        .map(|d| if b >= *d { (-(b - d) * 8.0).exp() } else { 0.0 })
+-        .fold(0.0_f32, f32::max);
+-
+-    // a cut glitches for 3 frames: the picture splits in bands pushed sideways
+-    let since_cut = ACT_CUTS
+-        .iter()
+-        .map(|c| (b - c) * BEAT * FPS as f32)
+-        .find(|f| *f >= 0.0 && *f < 3.0);
+-    let scene = if let Some(f) = since_cut {
+-        let bands: Vec<Svgr> = (0..6)
+-            .map(|i| {
+-                let y = i as f32 * 180.0;
+-                let dx = (hash(i as f32 * 13.0 + f.floor() * 7.0) - 0.5) * 140.0 * (1.0 - f / 3.0);
+-                let id = format!("glitch-{i}");
+-                let url = format!("url(#{id})");
+-                fframes::svgr!(
+-                    <g>
+-                        <clipPath id={id.clone()}><rect x="0" y={y} width="1920" height="180" /></clipPath>
+-                        <g clip-path={url} transform={format!("translate({dx} 0)")}>{ctx.render_scenes(frame)}</g>
+-                    </g>
+-                )
+-            })
+-            .collect();
+-        fframes::svgr!(<g>{bands}</g>)
+-    } else {
+-        ctx.render_scenes(frame)
+-    };
+-    fframes::svgr!(
+-        <g>
+-            <g transform={format!("translate(960 540) scale({s}) translate(-960 -540)")}>{scene}</g>
+-            <rect width="1920" height="1080" fill={keynote::look::TEXT} opacity={flash * 0.16} />
++            {corners(36.0, 36.0, 1848.0, 1008.0, 26.0, CONTROL, 1.5)}
++            {label(66.0, 80.0, "FFRAMES STUDIO", "start")}
++            {label(1854.0, 1016.0, act, "end")}
++            <rect x="66" y="1034" width="1788" height="1.5" fill={RULE} />
++            <rect x="66" y="1033" width={progress} height="3" fill={ACTION} />
+         </g>
+     )
+ }
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/comp.rs b/examples/fframes-studio-intro/src/scenes/keynote/comp.rs
+index 456368b..cc04818 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/comp.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/comp.rs
+@@ -1,13 +1,14 @@
+ //! Draws fframes-components inside the 16:9 cut. A component is authored on its
+ //! own 30 fps clock and canvas; here it gets a box of the frame and the seconds
+-//! since it started, and measures text with the faces the video draws it in.
++//! since it started, and measures text with the faces the video draws it in:
++//! Geist at the display weight and Geist Mono.
+ 
+ use std::sync::LazyLock;
+ 
+ use fframes::{Frame, Svgr};
+ use fframes_components::{Component, ComponentFrame, Fonts, RenderCtx, TextMeter, TextMeters};
+ 
+-use super::look::{DISPLAY, MONO};
++use super::look::{DISPLAY_WEIGHT, MONO, SANS};
+ 
+ /// The clock components are written against.
+ const COMPONENT_FPS: f32 = 30.0;
+@@ -15,26 +16,26 @@ const COMPONENT_FPS: f32 = 30.0;
+ static METERS: LazyLock<TextMeters> = LazyLock::new(|| {
+     let mut meters = fframes_components::embedded_meters();
+     if let Some(display) = TextMeter::new(
+-        DISPLAY,
+-        include_bytes!("../../../media/ArchivoBlack-Regular.ttf").to_vec(),
++        SANS,
++        include_bytes!("../../../media/Geist-Book.ttf").to_vec(),
+     ) {
+         meters = meters.with_face(display);
+     }
+     meters.mono = TextMeter::new(
+         MONO,
+-        include_bytes!("../../../media/IBMPlexMono-Medium.ttf").to_vec(),
++        include_bytes!("../../../media/GeistMono-Regular.ttf").to_vec(),
+     );
+     meters
+ });
+ 
+-/// The faces components draw in: the display face for headlines, Plex Mono for code.
++/// The faces components draw in: Geist for headlines, Geist Mono for code.
+ pub fn fonts() -> Fonts {
+     Fonts {
+-        sans: DISPLAY.to_owned(),
++        sans: SANS.to_owned(),
+         mono: MONO.to_owned(),
+-        weight_medium: 400,
+-        weight_bold: 400,
+-        weight_black: 400,
++        weight_medium: DISPLAY_WEIGHT,
++        weight_bold: DISPLAY_WEIGHT,
++        weight_black: DISPLAY_WEIGHT,
+     }
+ }
+ 
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/finale.rs b/examples/fframes-studio-intro/src/scenes/keynote/finale.rs
+index a8f2938..692d310 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/finale.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/finale.rs
+@@ -38,7 +38,7 @@ static NAME: LazyLock<TrackingIn> = LazyLock::new(|| {
+         text: "FFrames Studio".to_owned(),
+         font_size: 88.0,
+         color: TEXT.to_owned(),
+-        font_weight: 400,
++        font_weight: DISPLAY_WEIGHT,
+         start_tracking: 0.22,
+         ..Default::default()
+     })
+@@ -128,8 +128,8 @@ fn wall(frame: &Frame, ctx: &FFramesContext<'_, '_>, lb: f32) -> Svgr<'static> {
+             let id = format!("wall-{i}");
+             fframes::svgr!(
+                 <g transform={transform} opacity={prog(lb, land, land + 0.25) * (1.0 - collapse)}>
+-                    {rounded(&id, rect, 10.0, body)}
+-                    <rect x={x} y={y} width={tw} height={th} rx="10" fill="none" stroke={LINE} stroke-width="2" />
++                    {rounded(&id, rect, RADIUS, body)}
++                    <rect x={x} y={y} width={tw} height={th} rx={RADIUS} fill="none" stroke={RULE} stroke-width={RULE_WIDTH} />
+                 </g>
+             )
+         })
+@@ -142,7 +142,7 @@ fn end_card(frame: &Frame, lb: f32) -> Svgr<'static> {
+     let local = lb - CARD;
+     let (to, td) = rise(lb, CARD + 1.2, 20.0);
+     let (ro, rd) = rise(lb, CARD + 2.6, 20.0);
+-    // an orange hairline traced around the whole card
++    // a hairline in the action colour traced around the whole card
+     let trace = cubic_in_out(prog(lb, CARD, CARD + 3.0));
+     let perimeter = 2.0 * (1680.0 + 840.0);
+     // the code springs up as a dark tile, digital rain falls through it and
+@@ -155,22 +155,22 @@ fn end_card(frame: &Frame, lb: f32) -> Svgr<'static> {
+     fframes::svgr!(
+         <g opacity={prog(lb, CARD - 0.5, CARD)}>
+             {rain(lb, land - 1.0, land + MATRIX_BEATS + 0.6)}
+-            <rect x="120" y="120" width="1680" height="840" rx="20" fill="none" stroke={ACCENT} stroke-width="2"
++            <rect x="120" y="120" width="1680" height="840" rx={RADIUS} fill="none" stroke={ACTION} stroke-width="1.5"
+                 stroke-dasharray={format!("{} {perimeter}", perimeter * trace)} />
+             <g transform={at(0.0, -190.0)}>{comp::show(&*NAME, frame, local * BEAT, (0.0, -60.0, 1920.0, 1080.0))}</g>
+             <g opacity={to} transform={at(0.0, td)}>
+-                <text x="960" y="490" text-anchor="middle" font-family={MONO} font-weight="500" font-size="28" fill={SLATE}>"Programmatic video, with a desktop studio."</text>
++                <text x="960" y="490" text-anchor="middle" font-family={SANS} font-weight="400" font-size="34" letter-spacing="-0.5" fill={SECONDARY}>"Programmatic video, with a desktop studio."</text>
+             </g>
+             <g opacity={qo} transform={zoom(qx + qs / 2.0, qy + qs / 2.0, pop)}>
+-                {rounded("qr-tile", (qx, qy, qs, qs), 18.0, matrix_code(lb - land, (qx, qy, qs)))}
+-                <rect x={qx} y={qy} width={qs} height={qs} rx="18" fill="none" stroke={ACCENT} stroke-width="2" opacity={1.0 - prog(lb, land + MATRIX_BEATS, land + MATRIX_BEATS + 0.5)} />
++                {rounded("qr-tile", (qx, qy, qs, qs), RADIUS, matrix_code(lb - land, (qx, qy, qs)))}
++                <rect x={qx} y={qy} width={qs} height={qs} rx={RADIUS} fill="none" stroke={RULE} stroke-width={RULE_WIDTH} />
+             </g>
+             <g opacity={ro} transform={at(0.0, rd)}>
+-                <text x={tx} y="625" font-family={DISPLAY} font-size="52" letter-spacing="-1.5" fill={TEXT}>"Scan to download."</text>
+-                <text x={tx} y="675" font-family={MONO} font-weight="500" font-size="24" fill={SLATE}>"Download for Windows, macOS and Linux."</text>
+-                <text x={tx} y="755" font-family={MONO} font-weight="500" font-size="21" fill={TEXT}>"dub.sh/fframes"</text>
+-                <text x={tx} y="830" font-family={MONO} font-weight="600" font-size="18" letter-spacing="4" fill={ACCENT}>"OPEN SOURCE · MIT · BUILT ON FFRAMES"</text>
+-                <text x={tx} y="905" font-family={MONO} font-weight="500" font-size="14" fill={MUTED}>"Lottie emoji: Noto Animated Emoji, CC BY 4.0 · lottie-ios samples, Apache 2.0"</text>
++                <text x={tx} y="625" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="56" letter-spacing="-2.2" fill={TEXT}>"Scan to download."</text>
++                <text x={tx} y="677" font-family={SANS} font-weight="400" font-size="28" fill={SECONDARY}>"Download for Windows, macOS and Linux."</text>
++                <text x={tx} y="755" font-family={MONO} font-weight="500" font-size="22" fill={TEXT}>"dub.sh/fframes"</text>
++                <text x={tx} y="830" font-family={MONO} font-weight="500" font-size="18" letter-spacing="3" fill={ACTION}>"OPEN SOURCE · MIT · BUILT ON FFRAMES"</text>
++                <text x={tx} y="905" font-family={MONO} font-weight="400" font-size="14" fill={SECONDARY}>"Lottie emoji: Noto Animated Emoji, CC BY 4.0 · lottie-ios samples, Apache 2.0"</text>
+             </g>
+         </g>
+     )
+@@ -232,15 +232,15 @@ fn matrix_code(t: f32, (qx, qy, qs): (f32, f32, f32)) -> Svgr<'static> {
+             let glyph = GLYPHS
+                 [(hash(c as f32 * 31.7 + row as f32 * 7.13 + tick * 1.31) * 16.0) as usize % 16];
+             let fill = match (k, on_module) {
+-                (0, _) => "#eaf2ff",
+-                (_, true) => SKY,
+-                _ => ACCENT,
++                (0, _) => INVERSE_TEXT,
++                (_, true) => COMMAND,
++                _ => INVERSE_SECONDARY,
+             };
+             let opacity = (1.0 - k as f32 / TRAIL as f32 * 0.85)
+                 * if on_module || k == 0 { 1.0 } else { 0.55 };
+             glyphs.push(fframes::svgr!(
+                 <text x={qx + (c as f32 + 0.5) * unit} y={qy + (row as f32 + 0.85) * unit} text-anchor="middle"
+-                    font-family={MONO} font-weight="600" font-size={unit * 1.15} fill={fill} opacity={opacity}>{glyph}</text>
++                    font-family={MONO} font-weight="500" font-size={unit * 1.15} fill={fill} opacity={opacity}>{glyph}</text>
+             ));
+         }
+     }
+@@ -256,7 +256,7 @@ fn matrix_code(t: f32, (qx, qy, qs): (f32, f32, f32)) -> Svgr<'static> {
+     };
+     fframes::svgr!(
+         <g>
+-            <rect x={qx} y={qy} width={qs} height={qs} fill="#050b16" />
++            <rect x={qx} y={qy} width={qs} height={qs} fill={INVERSE} />
+             {settled}
+             {glyphs}
+         </g>
+@@ -285,9 +285,9 @@ fn rain(lb: f32, start: f32, end: f32) -> Svgr<'static> {
+             let glyph =
+                 GLYPHS[(hash(c as f32 * 5.9 + row as f32 * 2.3 + tick) * 16.0) as usize % 16];
+             let (fill, alpha) = if k == 0 {
+-                (SKY, 0.5)
++                (CANDIDATE, 0.5)
+             } else {
+-                (ACCENT, 0.32 * (1.0 - k as f32 / 10.0))
++                (ACTION, 0.32 * (1.0 - k as f32 / 10.0))
+             };
+             let (x, y) = (135.0 + c as f32 * cell, 142.0 + row as f32 * cell);
+             // fainter behind the name, the tagline and the download lines
+@@ -296,7 +296,8 @@ fn rain(lb: f32, start: f32, end: f32) -> Svgr<'static> {
+             let alpha = alpha * if behind_text { 0.3 } else { 1.0 };
+             glyphs.push(fframes::svgr!(
+                 <text x={x} y={y} text-anchor="middle"
+-                    font-family={MONO} font-weight="500" font-size="20" fill={fill} opacity={alpha * o}>{glyph}</text>
++                    font-family={MONO} font-weight="400" font-size="20" fill={fill} opacity={alpha * o}>{glyph}</text>
++
+             ));
+         }
+     }
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/layers.rs b/examples/fframes-studio-intro/src/scenes/keynote/layers.rs
+index bff7d5f..c6ef25b 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/layers.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/layers.rs
+@@ -31,7 +31,6 @@ struct Layer {
+     number: &'static str,
+     name: &'static str,
+     lines: [&'static str; 2],
+-    color: &'static str,
+ }
+ 
+ const LAYERS: [Layer; 3] = [
+@@ -39,26 +38,25 @@ const LAYERS: [Layer; 3] = [
+         number: "01",
+         name: "SHADERS & 3D",
+         lines: ["Lit 3D scenes and SkSL", "or Shadertoy shaders."],
+-        color: SKY,
+     },
+     Layer {
+         number: "02",
+         name: "VECTOR SHAPES",
+         lines: ["svgr! trees and Lottie files,", "sharp at 1080p or 4K."],
+-        color: ACCENT,
+     },
+     Layer {
+         number: "03",
+         name: "TIMELINE",
+         lines: ["timeline! says when each", "thing moves, on the beat."],
+-        color: TEXT,
+     },
+ ];
+ 
+-/// The plane transform: flat at `tilt` 0, isometric at 1, raised by `lift` px.
++/// The plane transform: flat at `tilt` 0, at 1 the axonometric projection of
++/// the system's stacks, `matrix(.866 .5 -.866 .5)`, raised by `lift` px.
+ fn plane(tilt: f32, lift: f32) -> (f32, f32, f32, f32, f32, f32) {
+-    let k = 0.6;
+-    let iso = (0.707 * k, 0.389 * k, -0.707 * k, 0.389 * k);
++    let k = 0.5;
++    let iso = (0.866 * k, 0.5 * k, -0.866 * k, 0.5 * k);
++
+     let flat = (0.82, 0.0, 0.0, 0.82);
+     let a = lerp(flat.0, iso.0, tilt);
+     let b = lerp(flat.1, iso.1, tilt);
+@@ -106,11 +104,11 @@ impl Scene for LayersScene {
+                 1 => shapes_layer(lb),
+                 _ => timeline_layer(lb),
+             };
+-            let edge = if named == Some(i) { layer.color } else { LINE };
++            let edge = if named == Some(i) { ACTION } else { CONTROL };
+             planes.push(fframes::svgr!(
+                 <g transform={matrix(m)} opacity={dim}>
+                     {body}
+-                    <rect x="0" y="0" width={PW} height={PH} fill="none" stroke={edge} stroke-width="3" />
++                    <rect x="0" y="0" width={PW} height={PH} fill="none" stroke={edge} stroke-width="2.5" />
+                 </g>
+             ));
+ 
+@@ -127,11 +125,11 @@ impl Scene for LayersScene {
+                 };
+                 labels.push(fframes::svgr!(
+                     <g opacity={shown * o}>
+-                        <path d={format!("M{px} {py} L{} {ly} L{lx} {ly}", lx - 40.0)} fill="none" stroke={layer.color} stroke-width="1.5" />
+-                        <circle cx={px} cy={py} r="5" fill={layer.color} />
+-                        <text x={lx + 16.0} y={ly - 22.0} font-family={MONO} font-weight="600" font-size="18" letter-spacing="3" fill={layer.color}>{layer.number}" "{layer.name}</text>
+-                        <text x={lx + 16.0} y={ly + 12.0} font-family={MONO} font-weight="500" font-size="20" fill={TEXT}>{layer.lines[0]}</text>
+-                        <text x={lx + 16.0} y={ly + 40.0} font-family={MONO} font-weight="500" font-size="20" fill={SLATE}>{layer.lines[1]}</text>
++                        <path d={format!("M{px} {py} L{} {ly} L{lx} {ly}", lx - 40.0)} fill="none" stroke={ACTION} stroke-width="1.5" />
++                        <circle cx={px} cy={py} r="5" fill={ACTION} />
++                        <text x={lx + 16.0} y={ly - 22.0} font-family={MONO} font-weight="500" font-size="18" letter-spacing="3" fill={ACTION}>{layer.number}" "{layer.name}</text>
++                        <text x={lx + 16.0} y={ly + 14.0} font-family={SANS} font-weight="400" font-size="24" fill={TEXT}>{layer.lines[0]}</text>
++                        <text x={lx + 16.0} y={ly + 44.0} font-family={SANS} font-weight="400" font-size="24" fill={SECONDARY}>{layer.lines[1]}</text>
+                     </g>
+                 ));
+             }
+@@ -142,12 +140,12 @@ impl Scene for LayersScene {
+         let (ho, hd) = rise(lb, 0.4, 40.0);
+         fframes::svgr!(
+             <g opacity={leave(lb, 31.4)}>
+-                <g opacity={eo} transform={at(0.0, ed)}>{eyebrow(120.0, 168.0, "05 / HOW IT WORKS", ACCENT)}</g>
+-                <g opacity={ho} transform={at(0.0, hd)}>{headline(116.0, 250.0, "Three layers, one frame.", 64.0, TEXT)}</g>
++                <g opacity={eo} transform={at(0.0, ed)}>{act_eyebrow("05", "HOW IT WORKS")}</g>
++                <g opacity={ho} transform={at(0.0, hd)}>{headline(116.0, 252.0, "Three layers, one frame.", 72.0, TEXT)}</g>
+                 {planes}
+                 {labels}
+                 {loupe}
+-                {caption(lb, MERGE.1, 31.0, "Every frame:", "shaders, vector shapes and a timeline, drawn together.", ACCENT)}
++                {caption(lb, MERGE.1, 31.0, "Every frame:", "shaders, vector shapes and a timeline, drawn together.", ACTION)}
+             </g>
+         )
+     }
+@@ -161,12 +159,13 @@ fn shader_layer(frame: &Frame) -> Svgr<'static> {
+             .float("uDepth", 0.8)
+             .float("uDensity", 16.0)
+             .float("uBright", 0.9)
+-            .color("uInk", Color::hex("#3a3834"))
+-            .color("uHot", Color::hex(SKY)),
++            .color("uInk", Color::hex(CANDIDATE_SURFACE))
++            .color("uHot", Color::hex(COMMAND)),
+     );
++    // the shader draws on the inverse surface, like the code that makes it
+     fframes::svgr!(
+         <g>
+-            <rect x="0" y="0" width={PW} height={PH} fill={BG} />
++            <rect x="0" y="0" width={PW} height={PH} fill={INVERSE} />
+             <image href={layer.href()} x="0" y="0" width={PW} height={PH} />
+         </g>
+     )
+@@ -177,15 +176,15 @@ fn shapes_layer(lb: f32) -> Svgr<'static> {
+     let spin = lb * 12.0;
+     fframes::svgr!(
+         <g>
+-            <rect x="0" y="0" width={PW} height={PH} fill={PANEL} opacity="0.25" />
+-            <text x="70" y="250" font-family={DISPLAY} font-size="96" letter-spacing="-3" fill={TEXT}>"Launch day"</text>
+-            <text x="74" y="310" font-family={MONO} font-weight="500" font-size="26" fill={SLATE}>"FFrames Studio"</text>
+-            <circle cx="770" cy="200" r="90" fill="none" stroke={ACCENT} stroke-width="10" />
++            <rect x="0" y="0" width={PW} height={PH} fill={PANEL} opacity="0.88" />
++            <text x="70" y="250" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="104" letter-spacing="-4.2" fill={TEXT}>"Launch day"</text>
++            <text x="74" y="310" font-family={SANS} font-weight="400" font-size="30" fill={SECONDARY}>"FFrames Studio"</text>
++            <circle cx="770" cy="200" r="90" fill="none" stroke={CANDIDATE} stroke-width="10" />
+             <g transform={format!("rotate({spin} 770 200)")}>
+-                <rect x="730" y="160" width="80" height="80" fill={ACCENT} />
++                <rect x="730" y="160" width="80" height="80" fill={CANDIDATE} />
+             </g>
+-            <rect x="74" y="380" width="260" height="64" rx="32" fill={ACCENT} />
+-            <text x="204" y="421" text-anchor="middle" font-family={MONO} font-weight="600" font-size="24" fill={BG}>"Get it"</text>
++            <rect x="74" y="380" width="260" height="64" rx={RADIUS} fill={ACTION} />
++            <text x="204" y="421" text-anchor="middle" font-family={SANS} font-weight="500" font-size="26" fill={ON_ACTION}>"Get it"</text>
+         </g>
+     )
+ }
+@@ -208,12 +207,12 @@ fn timeline_layer(lb: f32) -> Svgr<'static> {
+                         x - 9.0,
+                         y
+                     );
+-                    fframes::svgr!(<path d={d} fill={ACCENT} />)
++                    fframes::svgr!(<path d={d} fill={TEXT} />)
+                 })
+                 .collect();
+             fframes::svgr!(
+                 <g>
+-                    <rect x="80" y={y - 2.0} width="800" height="4" fill={LINE} />
++                    <rect x="80" y={y - 2.0} width="800" height="4" fill={EMPHASIS} />
+                     {keys}
+                 </g>
+             )
+@@ -221,8 +220,9 @@ fn timeline_layer(lb: f32) -> Svgr<'static> {
+         .collect();
+     fframes::svgr!(
+         <g>
+-            <text x="80" y="90" font-family={MONO} font-weight="500" font-size="24" fill={TEXT}>"at 0.0, animate 80 => 0, Easing::Spring"</text>
+-            <text x="80" y="130" font-family={MONO} font-weight="500" font-size="24" fill={SLATE}>"at 2.0 => 2.6, animate 1 => 0, Easing::EaseIn"</text>
++            <rect x="0" y="0" width={PW} height={PH} fill={PANEL} opacity="0.88" />
++            <text x="80" y="90" font-family={MONO} font-weight="400" font-size="24" fill={TEXT}>"at 0.0, animate 80 => 0, Easing::Spring"</text>
++            <text x="80" y="130" font-family={MONO} font-weight="400" font-size="24" fill={SECONDARY}>"at 2.0 => 2.6, animate 1 => 0, Easing::EaseIn"</text>
+             {rows}
+             <rect x={head} y="340" width="3" height="150" fill={TEXT} />
+         </g>
+@@ -243,10 +243,11 @@ fn loupe(lb: f32) -> Svgr<'static> {
+             <clipPath id="loupe"><circle cx={cx} cy={cy} r={r} /></clipPath>
+             <circle cx={cx} cy={cy} r={r} fill={PANEL} />
+             <g clip-path="url(#loupe)">
+-                <text x={cx} y={cy + 72.0} text-anchor="middle" font-family={DISPLAY} font-size="260" fill={TEXT}>"a"</text>
++                <text x={cx} y={cy + 72.0} text-anchor="middle" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="280" fill={TEXT}>"a"</text>
+             </g>
+-            <circle cx={cx} cy={cy} r={r} fill="none" stroke={ACCENT} stroke-width="3" />
+-            <text x={cx} y={cy + r + 36.0} text-anchor="middle" font-family={MONO} font-weight="600" font-size="16" letter-spacing="3" fill={ACCENT}>"STILL SHARP"</text>
++            <circle cx={cx} cy={cy} r={r} fill="none" stroke={CANDIDATE} stroke-width="2.5" />
++            <text x={cx} y={cy + r + 36.0} text-anchor="middle" font-family={MONO} font-weight="500" font-size="16" letter-spacing="3" fill={CANDIDATE}>"STILL SHARP"</text>
++
+         </g>
+     )
+ }
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/look.rs b/examples/fframes-studio-intro/src/scenes/keynote/look.rs
+index 3554939..7ba882d 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/look.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/look.rs
+@@ -1,27 +1,65 @@
+-//! The look of the 16:9 cut: the type, HUD and palette of the other cuts. Colour
+-//! is an accent, never a fill: blue for fframes, a lighter blue for speed, red
+-//! for the old way.
++//! The look of the 16:9 cut: the Editorial Engineering system of
++//! `docs/design/README.md`, on the roles of `design-system/tokens.css` in a blue
++//! variant: the action colour and the inverse surface are blue and navy instead
++//! of green and forest, and the neutrals are cool. A quiet paper canvas, Geist
++//! for claims and explanations, Geist Mono only for commands, identifiers, stage
++//! numbers and metadata, 4 px corners and thin rules. Colours are roles, never
++//! decoration: the user's target is pink, work under consideration slate blue,
++//! an accepted result green, and every state also has a label or a shape.
+ 
+ use fframes::{FFramesContext, FFramesSyncedVideoFrame, Frame, Svgr, SyncVideoFrameInput};
+ 
+ use crate::beat::*;
+-pub use crate::ui::{DISPLAY, MONO, SERIF};
+-
+-pub const BG: &str = crate::ui::BG;
+-pub const TEXT: &str = crate::ui::BONE;
+-pub const ACCENT: &str = crate::ui::ACCENT;
+-/// The second accent, a lighter blue for speed and the GPU.
+-pub const SKY: &str = "#8fb8ff";
+-pub const RED: &str = "#ef4444";
+-pub const GREEN: &str = "#22c55e";
+-/// Secondary text.
+-pub const SLATE: &str = "#a8a39b";
+-/// Labels and inactive text.
+-pub const MUTED: &str = crate::ui::GREY;
+-/// Hairlines and borders.
+-pub const LINE: &str = crate::ui::DIM;
+-/// Surfaces on the page.
+-pub const PANEL: &str = "#141312";
++
++pub const SANS: &str = "Geist";
++pub const MONO: &str = "Geist Mono";
++/// Weight of display and section headings.
++pub const DISPLAY_WEIGHT: u16 = 450;
++
++// surfaces
++pub const BG: &str = "#fafbfd";
++pub const PANEL: &str = "#fafbfd";
++/// Inset areas inside a panel: tracks, wells, empty bars.
++pub const EMPHASIS: &str = "#e6ebf3";
++/// Code, terminals and other featured technical artifacts.
++pub const INVERSE: &str = "#14243f";
++
++// text
++pub const TEXT: &str = "#1f2633";
++pub const SECONDARY: &str = "#5f6878";
++pub const INVERSE_TEXT: &str = "#f3f6fb";
++pub const INVERSE_SECONDARY: &str = "#b4c2d8";
++/// The prompt and highlights of a command on the inverse surface.
++pub const COMMAND: &str = "#9cc7ff";
++
++// lines
++/// Decorative separators and panel edges.
++pub const RULE: &str = "#dde2ea";
++/// Boundaries that need to read as such: an empty node, a control.
++pub const CONTROL: &str = "#7d8796";
++
++// action and states
++/// A deliberate next step: buttons, the act numbers, progress.
++pub const ACTION: &str = "#2350b5";
++pub const ON_ACTION: &str = "#ffffff";
++/// The user's target or supplied context.
++pub const SELECTION: &str = "#a85070";
++pub const SELECTION_SURFACE: &str = "#f9e1e9";
++/// Work under consideration: a draft, a render in progress, the GPU lane.
++pub const CANDIDATE: &str = "#4a6f9c";
++pub const CANDIDATE_SURFACE: &str = "#e3eefb";
++/// An accepted state or a named check that passed.
++pub const ACCEPTED: &str = "#245e45";
++pub const ACCEPTED_SURFACE: &str = "#e4eddf";
++/// What goes wrong the old way. The system has no error role (selection pink is
++/// not one), so this muted brick is the cut's one documented exception, always
++/// paired with a label.
++pub const FAILURE: &str = "#a3402e";
++
++/// Corner radius of panels and controls.
++pub const RADIUS: f32 = 4.0;
++/// Width of rules and panel edges at 1080p.
++pub const RULE_WIDTH: f32 = 1.5;
+ 
+ /// Opacity and vertical offset of something that rises into place at beat `at`.
+ pub fn rise(lb: f32, at: f32, distance: f32) -> (f32, f32) {
+@@ -43,15 +81,24 @@ pub fn zoom(cx: f32, cy: f32, s: f32) -> String {
+     format!("translate({cx} {cy}) scale({s}) translate({} {})", -cx, -cy)
+ }
+ 
+-/// Small spaced-out mono caps, like the labels of an engineering drawing.
++/// Spaced-out mono caps: an eyebrow, a stage number or a piece of metadata.
+ pub fn eyebrow(x: f32, y: f32, text: impl Into<String>, color: &'static str) -> Svgr<'static> {
+     let text = text.into();
+     fframes::svgr!(
+-        <text x={x} y={y} font-family={MONO} font-weight="600" font-size="22" letter-spacing="4" fill={color}>{text}</text>
++        <text x={x} y={y} font-family={MONO} font-weight="500" font-size="22" letter-spacing="3" fill={color}>{text}</text>
+     )
+ }
+ 
+-/// A headline in the display face.
++/// A HUD label: small mono caps.
++pub fn label(x: f32, y: f32, text: impl Into<String>, anchor: &'static str) -> Svgr<'static> {
++    let text = text.into();
++    fframes::svgr!(
++        <text x={x} y={y} font-family={MONO} font-weight="500" font-size="18" letter-spacing="2.5"
++              fill={SECONDARY} text-anchor={anchor}>{text}</text>
++    )
++}
++
++/// A headline in the display weight with tight, relative tracking.
+ pub fn headline(
+     x: f32,
+     y: f32,
+@@ -61,7 +108,7 @@ pub fn headline(
+ ) -> Svgr<'static> {
+     let text = text.into();
+     fframes::svgr!(
+-        <text x={x} y={y} font-family={DISPLAY} font-size={size} letter-spacing={-size * 0.03} fill={fill}>{text}</text>
++        <text x={x} y={y} font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size={size} letter-spacing={-size * 0.04} fill={fill}>{text}</text>
+     )
+ }
+ 
+@@ -76,16 +123,21 @@ pub fn act_title(
+     let (o2, d2) = rise(lb, 0.5, 40.0);
+     fframes::svgr!(
+         <g>
+-            <g opacity={o1} transform={at(0.0, d1)}>
+-                <text x="120" y="168" font-family={MONO} font-weight="600" font-size="22" letter-spacing="4" fill={ACCENT}>{number}<tspan fill={MUTED}>" / "</tspan><tspan fill={SLATE}>{name}</tspan></text>
+-            </g>
+-            <g opacity={o2} transform={at(0.0, d2)}>{headline(116.0, 250.0, title, 64.0, TEXT)}</g>
++            <g opacity={o1} transform={at(0.0, d1)}>{act_eyebrow(number, name)}</g>
++            <g opacity={o2} transform={at(0.0, d2)}>{headline(116.0, 252.0, title, 72.0, TEXT)}</g>
+         </g>
+     )
+ }
+ 
+-/// The plain-English caption under the picture: a lead in an accent colour and
+-/// the rest in white, centred at the bottom of the frame.
++/// `01 / THE PROBLEM`: the act number in the action colour, its name secondary.
++pub fn act_eyebrow(number: &'static str, name: &'static str) -> Svgr<'static> {
++    fframes::svgr!(
++        <text x="120" y="168" font-family={MONO} font-weight="500" font-size="22" letter-spacing="3" fill={ACTION}>{number}<tspan fill={SECONDARY}>" / "{name}</tspan></text>
++    )
++}
++
++/// The plain-English caption under the picture: a lead in the colour of its
++/// role and the explanation in primary text, centred at the bottom of the frame.
+ pub fn caption(
+     lb: f32,
+     from: f32,
+@@ -101,33 +153,74 @@ pub fn caption(
+     let o = o * leave(lb, until);
+     fframes::svgr!(
+         <g opacity={o} transform={at(0.0, d)}>
+-            <text x="960" y="972" text-anchor="middle" font-family={MONO} font-weight="500" font-size="30" fill={TEXT}><tspan font-weight="600" fill={color}>{lead}</tspan>" "{rest}</text>
++            <text x="960" y="974" text-anchor="middle" font-family={SANS} font-weight="400" font-size="32" letter-spacing="-0.3" fill={TEXT}><tspan font-weight="500" fill={color}>{lead}</tspan>" "{rest}</text>
+         </g>
+     )
+ }
+ 
+-/// A surface with a hairline border.
++/// A surface with a thin rule for an edge.
+ pub fn panel(x: f32, y: f32, w: f32, h: f32) -> Svgr<'static> {
+     fframes::svgr!(
+-        <rect x={x} y={y} width={w} height={h} rx="14" fill={PANEL} stroke={LINE} stroke-width="2" />
++        <rect x={x} y={y} width={w} height={h} rx={RADIUS} fill={PANEL} stroke={RULE} stroke-width={RULE_WIDTH} />
+     )
+ }
+ 
++/// The inverse surface of a terminal or a code listing.
++pub fn terminal(x: f32, y: f32, w: f32, h: f32) -> Svgr<'static> {
++    fframes::svgr!(<rect x={x} y={y} width={w} height={h} rx={RADIUS} fill={INVERSE} />)
++}
++
+ /// An application window: a panel with a title bar.
+ pub fn window(x: f32, y: f32, w: f32, h: f32, title: impl Into<String>) -> Svgr<'static> {
+     let title = title.into();
+     fframes::svgr!(
+         <g>
+             {panel(x, y, w, h)}
+-            <path d={format!("M{} {} H{}", x + 1.0, y + 44.0, x + w - 1.0)} stroke={LINE} stroke-width="2" />
+-            <circle cx={x + 24.0} cy={y + 22.0} r="6" fill="#3a3834" />
+-            <circle cx={x + 44.0} cy={y + 22.0} r="6" fill="#3a3834" />
+-            <circle cx={x + 64.0} cy={y + 22.0} r="6" fill="#3a3834" />
+-            <text x={x + w / 2.0} y={y + 29.0} text-anchor="middle" font-family={MONO} font-weight="500" font-size="17" fill={MUTED}>{title}</text>
++            <path d={format!("M{} {} H{}", x, y + 44.0, x + w)} stroke={RULE} stroke-width={RULE_WIDTH} />
++            <circle cx={x + 22.0} cy={y + 22.0} r="5" fill="none" stroke={CONTROL} stroke-width="1.5" />
++            <circle cx={x + 40.0} cy={y + 22.0} r="5" fill="none" stroke={CONTROL} stroke-width="1.5" />
++            <circle cx={x + 58.0} cy={y + 22.0} r="5" fill="none" stroke={CONTROL} stroke-width="1.5" />
++            <text x={x + w / 2.0} y={y + 28.0} text-anchor="middle" font-family={MONO} font-weight="400" font-size="16" fill={SECONDARY}>{title}</text>
+         </g>
+     )
+ }
+ 
++/// A check mark of `size` px whose left end sits at (`x`, `y`).
++pub fn check(x: f32, y: f32, size: f32, color: &'static str) -> Svgr<'static> {
++    let d = format!(
++        "M{x} {y} L{} {} L{} {}",
++        x + size * 0.36,
++        y + size * 0.34,
++        x + size,
++        y - size * 0.42
++    );
++    fframes::svgr!(
++        <path d={d} fill="none" stroke={color} stroke-width={(size * 0.14).max(2.0)} stroke-linecap="round" stroke-linejoin="round" />
++    )
++}
++
++/// A horizontal arrow from `x1` to `x2` on the line `y`.
++pub fn arrow(x1: f32, x2: f32, y: f32, color: &'static str) -> Svgr<'static> {
++    let d = format!(
++        "M{x1} {y} H{x2} M{} {} L{x2} {y} L{} {}",
++        x2 - 6.0,
++        y - 5.0,
++        x2 - 6.0,
++        y + 5.0
++    );
++    fframes::svgr!(
++        <path d={d} fill="none" stroke={color} stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
++    )
++}
++
++/// A mouse pointer with its tip at (`x`, `y`).
++pub fn pointer(x: f32, y: f32) -> Svgr<'static> {
++    fframes::svgr!(
++        <path transform={at(x, y)} d="M0 0 L0 30 L8 23 L14 36 L20 33 L14 21 L24 21 Z"
++              fill={TEXT} stroke={BG} stroke-width="2" stroke-linejoin="round" />
++    )
++}
++
+ /// A frame of the clip `name` filling the box (cropped to it), playing from
+ /// `start_from` seconds of the scene. `poster` stands in before that and where
+ /// frames cannot be decoded (the web editor).
+@@ -162,7 +255,7 @@ pub fn still(
+     (x, y, w, h): (f32, f32, f32, f32),
+ ) -> Svgr<'static> {
+     let Some(image) = ctx.get_image(name) else {
+-        return fframes::svgr!(<rect x={x} y={y} width={w} height={h} fill={PANEL} />);
++        return fframes::svgr!(<rect x={x} y={y} width={w} height={h} fill={EMPHASIS} />);
+     };
+     fframes::svgr!(
+         <image href={image.href()} x={x} y={y} width={w} height={h} preserveAspectRatio="xMidYMid slice" />
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/problem.rs b/examples/fframes-studio-intro/src/scenes/keynote/problem.rs
+index 00ea9dd..1f8fede 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/problem.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/problem.rs
+@@ -41,9 +41,9 @@ static STRIKE: LazyLock<StrikeThrough> = LazyLock::new(|| {
+         struck: "slow".to_owned(),
+         after: "way.".to_owned(),
+         text_color: TEXT.to_owned(),
+-        strike_color: RED.to_owned(),
++        strike_color: FAILURE.to_owned(),
+         stroke_width: 7.0,
+-        font_family: Some(DISPLAY.to_owned()),
++        font_family: Some(SANS.to_owned()),
+         ..Default::default()
+     })
+ });
+@@ -112,9 +112,9 @@ impl Scene for ProblemScene {
+         let (eo, ed) = rise(lb, -4.2, 24.0);
+         let captions = fframes::svgr!(
+             <g>
+-                {caption(lb, 1.0, 15.0, "Traditional editors:", "every change means dragging keyframes by hand.", RED)}
+-                {caption(lb, 17.0, 31.0, "Browser frameworks:", "a web page is screenshotted for every frame.", RED)}
+-                {caption(lb, 33.0, RECAP - 1.0, "AI coding agents:", "great at code, blind to what they render.", RED)}
++                {caption(lb, 1.0, 15.0, "Traditional editors:", "every change means dragging keyframes by hand.", FAILURE)}
++                {caption(lb, 17.0, 31.0, "Browser frameworks:", "a web page is screenshotted for every frame.", FAILURE)}
++                {caption(lb, 33.0, RECAP - 1.0, "AI coding agents:", "great at code, blind to what they render.", FAILURE)}
+             </g>
+         );
+         let strike = comp::show(
+@@ -128,7 +128,7 @@ impl Scene for ProblemScene {
+                 <g opacity={1.0 - recap} transform={zoom(960.0, 600.0, 1.0 - 0.06 * recap)}>
+                     {smear}
+                     {screens}
+-                    <g opacity={eo} transform={at(0.0, ed)}>{eyebrow(120.0, 168.0, "01 / THE PROBLEM", ACCENT)}</g>
++                    <g opacity={eo} transform={at(0.0, ed)}>{act_eyebrow("01", "THE PROBLEM")}</g>
+                 </g>
+                 {captions}
+                 <g opacity={leave(lb, 47.4)}>{strike}</g>
+@@ -140,7 +140,7 @@ impl Scene for ProblemScene {
+ /// A screen's headline under the act label.
+ fn screen_title(lb: f32, from: f32, text: &'static str) -> Svgr<'static> {
+     let (o, d) = rise(lb, from, 40.0);
+-    fframes::svgr!(<g opacity={o} transform={at(0.0, d)}>{headline(116.0, 250.0, text, 64.0, TEXT)}</g>)
++    fframes::svgr!(<g opacity={o} transform={at(0.0, d)}>{headline(116.0, 252.0, text, 72.0, TEXT)}</g>)
+ }
+ 
+ /// A keyframe diamond.
+@@ -155,14 +155,6 @@ fn diamond(x: f32, y: f32, r: f32, fill: &'static str) -> Svgr<'static> {
+     fframes::svgr!(<path d={d} fill={fill} />)
+ }
+ 
+-/// A mouse pointer with its tip at (`x`, `y`).
+-fn pointer(x: f32, y: f32) -> Svgr<'static> {
+-    fframes::svgr!(
+-        <path transform={at(x, y)} d="M0 0 L0 30 L8 23 L14 36 L20 33 L14 21 L24 21 Z"
+-              fill={TEXT} stroke={BG} stroke-width="2" stroke-linejoin="round" />
+-    )
+-}
+-
+ // ---------------------------------------------------------------------------
+ // the editor: a timeline that fills up with keyframes
+ 
+@@ -204,7 +196,12 @@ fn editor(lb: f32) -> Svgr<'static> {
+             let dx = if i == 0 { drag } else { 0.0 };
+             let x = lane_x + 20.0 + hash(n * 1.3 + i as f32) * (lane_w - 40.0) + dx;
+             let s = snap(appear).min(1.2);
+-            let fill = if i == 0 && lb > 4.0 { RED } else { SLATE };
++            // the title track is the client's target, every one of its keys moves by hand
++            let fill = if i == 0 && lb > 4.0 {
++                SELECTION
++            } else {
++                SECONDARY
++            };
+             keys.push(diamond(x, row_y(i) + 17.0, 6.0 * s, fill));
+         }
+     }
+@@ -216,13 +213,13 @@ fn editor(lb: f32) -> Svgr<'static> {
+             let y = row_y(i);
+             let cx = lane_x + 10.0 + hash(i as f32 * 5.1) * 300.0 + if i == 0 { drag } else { 0.0 };
+             let cw = 500.0 + hash(i as f32 * 2.3) * 700.0;
+-            let fill = if i == 0 { "#2a1517" } else { "#1c1b19" };
+-            let stroke = if i == 0 { RED } else { LINE };
++            let fill = if i == 0 { SELECTION_SURFACE } else { PANEL };
++            let stroke = if i == 0 { SELECTION } else { RULE };
+             fframes::svgr!(
+                 <g>
+-                    <text x={x0 + 24.0} y={y + 23.0} font-family={MONO} font-weight="500" font-size="16" fill={MUTED}>{*name}</text>
+-                    <rect x={lane_x} y={y + 2.0} width={lane_w} height="30" fill="#100f0e" />
+-                    <rect x={cx} y={y + 4.0} width={cw} height="26" rx="4" fill={fill} stroke={stroke} stroke-width="1.5" />
++                    <text x={x0 + 24.0} y={y + 23.0} font-family={MONO} font-weight="500" font-size="16" fill={SECONDARY}>{*name}</text>
++                    <rect x={lane_x} y={y + 2.0} width={lane_w} height="30" fill={EMPHASIS} />
++                    <rect x={cx} y={y + 4.0} width={cw} height="26" rx={RADIUS} fill={fill} stroke={stroke} stroke-width="1.5" />
+                 </g>
+             )
+         })
+@@ -232,7 +229,7 @@ fn editor(lb: f32) -> Svgr<'static> {
+     let ticks: Vec<Svgr> = (0..=24)
+         .map(|k| {
+             let x = lane_x + k as f32 * lane_w / 24.0;
+-            fframes::svgr!(<rect x={x} y={y0 + 278.0} width="1" height={if k % 4 == 0 { 14.0 } else { 7.0 }} fill={MUTED} />)
++            fframes::svgr!(<rect x={x} y={y0 + 278.0} width="1" height={if k % 4 == 0 { 14.0 } else { 7.0 }} fill={SECONDARY} />)
+         })
+         .collect();
+ 
+@@ -251,18 +248,18 @@ fn editor(lb: f32) -> Svgr<'static> {
+             {screen_title(lb, -3.5, "Hours of keyframes.")}
+             {window(x0, y0, w, h, "Untitled Project – Edit")}
+             // the program monitor
+-            <rect x={x0 + 560.0} y={y0 + 66.0} width="560" height="200" fill="#070707" stroke={LINE} stroke-width="2" />
+-            <text x={x0 + 840.0} y={y0 + 182.0} text-anchor="middle" font-family={DISPLAY} font-size="46" fill={TEXT}>{word}</text>
+-            <text x={x0 + 24.0} y={y0 + 90.0} font-family={MONO} font-weight="500" font-size="16" fill={MUTED}>"00:00:12:24"</text>
+-            <text x={x0 + w - 24.0} y={y0 + 90.0} text-anchor="end" font-family={MONO} font-weight="600" font-size="16" letter-spacing="2" fill={RED}>{count}</text>
++            <rect x={x0 + 560.0} y={y0 + 66.0} width="560" height="200" fill={EMPHASIS} />
++            <text x={x0 + 840.0} y={y0 + 182.0} text-anchor="middle" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="46" fill={TEXT}>{word}</text>
++            <text x={x0 + 24.0} y={y0 + 90.0} font-family={MONO} font-weight="500" font-size="16" fill={SECONDARY}>"00:00:12:24"</text>
++            <text x={x0 + w - 24.0} y={y0 + 90.0} text-anchor="end" font-family={MONO} font-weight="500" font-size="16" letter-spacing="2" fill={FAILURE}>{count}</text>
+             {ticks}
+             {clips}
+             {keys}
+-            <rect x={playhead} y={y0 + 276.0} width="2" height="300" fill={ACCENT} />
++            <rect x={playhead} y={y0 + 276.0} width="2" height="300" fill={TEXT} />
+             <g opacity={note} transform={at(0.0, (1.0 - snap(lb - 3.0)) * 20.0)}>
+-                <rect x={x0 + 1250.0} y={y0 + 120.0} width="340" height="96" rx="8" fill="#1a0f12" stroke={RED} stroke-width="2" />
+-                <text x={x0 + 1272.0} y={y0 + 156.0} font-family={MONO} font-weight="600" font-size="16" letter-spacing="2" fill={RED}>"CLIENT NOTE"</text>
+-                <text x={x0 + 1272.0} y={y0 + 190.0} font-family={MONO} font-weight="500" font-size="19" fill={TEXT}>"Change one word, please."</text>
++                <rect x={x0 + 1250.0} y={y0 + 120.0} width="340" height="96" rx={RADIUS} fill={SELECTION_SURFACE} stroke={SELECTION} stroke-width="1.5" />
++                <text x={x0 + 1272.0} y={y0 + 156.0} font-family={MONO} font-weight="500" font-size="16" letter-spacing="2" fill={SELECTION}>"CLIENT NOTE"</text>
++                <text x={x0 + 1272.0} y={y0 + 190.0} font-family={SANS} font-weight="400" font-size="22" fill={TEXT}>"Change one word, please."</text>
+             </g>
+             {if lb > 3.6 { pointer(cursor_x, row_y(0) + 14.0) } else { Svgr::empty() }}
+         </g>
+@@ -285,17 +282,15 @@ fn browser(lb: f32) -> Svgr<'static> {
+     let total = BROWSER_FRAMES as usize;
+     let status = format!("RENDERING FRAME {frame_no} / {total}  ·  ONE SCREENSHOT PER FRAME");
+     let progress = frame_no as f32 / total as f32;
+-    let source = "HEADLESS BROWSER · SCREENSHOTS → PNG FILES → ENCODER";
+-
+     // the page being photographed: a title card whose circle moves a little per frame
+     let t = frame_no as f32 * 0.08;
+     let (px, py, pw, ph) = (150.0, 396.0, 940.0, 446.0);
+     let page = fframes::svgr!(
+         <g>
+-            <rect x={px} y={py} width={pw} height={ph} fill="#f1eee8" />
+-            <circle cx={px + 300.0 + t.sin() * 120.0} cy={py + 230.0} r="110" fill={ACCENT} />
+-            <text x={px + 480.0} y={py + 220.0} font-family={DISPLAY} font-size="58" fill="#0b0b0b">"Launch day"</text>
+-            <text x={px + 482.0} y={py + 268.0} font-family={MONO} font-weight="500" font-size="22" fill="#4a4743">"localhost:3000"</text>
++            <rect x={px} y={py} width={pw} height={ph} fill={EMPHASIS} />
++            <circle cx={px + 300.0 + t.sin() * 120.0} cy={py + 230.0} r="110" fill={CANDIDATE} />
++            <text x={px + 480.0} y={py + 220.0} font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="58" fill={TEXT}>"Launch day"</text>
++            <text x={px + 482.0} y={py + 268.0} font-family={MONO} font-weight="400" font-size="22" fill={SECONDARY}>"localhost:3000"</text>
+         </g>
+     );
+ 
+@@ -310,10 +305,10 @@ fn browser(lb: f32) -> Svgr<'static> {
+             let tt = (96 + k + 1) as f32 * 0.08;
+             fframes::svgr!(
+                 <g opacity={arrive} transform={at((1.0 - arrive) * -200.0, 0.0)}>
+-                    <rect x={x} y={y} width="180" height="100" fill="#e3dfd8" />
+-                    <circle cx={x + 60.0 + tt.sin() * 24.0} cy={y + 50.0} r="22" fill={ACCENT} />
+-                    <rect x={x + 96.0} y={y + 40.0} width="64" height="10" fill="#0b0b0b" />
+-                    <text x={x} y={y + 118.0} font-family={MONO} font-weight="500" font-size="13" fill={MUTED}>{format!("frame_{:04}.png", 96 + k + 1)}</text>
++                    <rect x={x} y={y} width="180" height="100" fill={EMPHASIS} stroke={RULE} stroke-width="1" />
++                    <circle cx={x + 60.0 + tt.sin() * 24.0} cy={y + 50.0} r="22" fill={CANDIDATE} />
++                    <rect x={x + 96.0} y={y + 40.0} width="64" height="10" fill={TEXT} />
++                    <text x={x} y={y + 118.0} font-family={MONO} font-weight="500" font-size="13" fill={SECONDARY}>{format!("frame_{:04}.png", 96 + k + 1)}</text>
+                 </g>
+             )
+         })
+@@ -324,20 +319,48 @@ fn browser(lb: f32) -> Svgr<'static> {
+         <g>
+             {screen_title(lb, 16.0, "One screenshot at a time.")}
+             {window(120.0, 300.0, 1000.0, 570.0, "Chromium – headless")}
+-            <rect x="150" y="354" width="940" height="30" rx="15" fill="#0f0e0d" stroke={LINE} stroke-width="1.5" />
+-            <text x="620" y="375" text-anchor="middle" font-family={MONO} font-weight="500" font-size="15" fill={SLATE}>{url}</text>
++            <rect x="150" y="354" width="940" height="30" rx={RADIUS} fill={EMPHASIS} />
++            <text x="620" y="375" text-anchor="middle" font-family={MONO} font-weight="400" font-size="15" fill={SECONDARY}>{url}</text>
+             {page}
+-            <rect x={px} y={py} width={pw} height={ph} fill="#ffffff" opacity={flash * 0.85} />
+-            <text x="1190" y="350" font-family={MONO} font-weight="600" font-size="16" letter-spacing="2" fill={MUTED}>"SCREENSHOTS"</text>
++            // the camera flash of the screenshot
++            <rect x={px} y={py} width={pw} height={ph} fill={BG} opacity={flash * 0.9} />
++            <text x="1190" y="350" font-family={MONO} font-weight="500" font-size="16" letter-spacing="2" fill={SECONDARY}>"SCREENSHOTS"</text>
+             {thumbs}
+-            <text x="120" y="904" font-family={MONO} font-weight="600" font-size="18" letter-spacing="2" fill={RED}>{status}</text>
+-            <rect x="120" y="918" width="1680" height="6" rx="3" fill={LINE} />
+-            <rect x="120" y="918" width={1680.0 * progress} height="6" rx="3" fill={RED} />
+-            <text x="1800" y="904" text-anchor="end" font-family={MONO} font-weight="500" font-size="15" letter-spacing="1" fill={MUTED}>{source}</text>
++            <text x="120" y="904" font-family={MONO} font-weight="500" font-size="18" letter-spacing="2" fill={FAILURE}>{status}</text>
++            <rect x="120" y="918" width="1680" height="6" rx="3" fill={EMPHASIS} />
++            <rect x="120" y="918" width={1680.0 * progress} height="6" rx="3" fill={FAILURE} />
++            {detour(1800.0, 904.0)}
+         </g>
+     )
+ }
+ 
++/// `HEADLESS BROWSER · SCREENSHOTS → PNG FILES → ENCODER`, right-aligned at
++/// `right`, with the arrows drawn (the Latin subset of Geist Mono has none).
++fn detour(right: f32, y: f32) -> Svgr<'static> {
++    // Geist Mono advances 0.6 em per character, plus the letter spacing
++    let advance = 15.0 * 0.6 + 1.0;
++    let gap = 4.0 * advance;
++    let parts = ["HEADLESS BROWSER · SCREENSHOTS", "PNG FILES", "ENCODER"];
++    let width = parts
++        .iter()
++        .map(|p| p.chars().count() as f32 * advance)
++        .sum::<f32>()
++        + gap * 2.0;
++    let mut x = right - width;
++    let mut out = Vec::new();
++    for (k, part) in parts.iter().enumerate() {
++        if k > 0 {
++            out.push(arrow(x + advance, x + gap - advance, y - 5.0, SECONDARY));
++            x += gap;
++        }
++        out.push(fframes::svgr!(
++            <text x={x} y={y} font-family={MONO} font-weight="400" font-size="15" letter-spacing="1" fill={SECONDARY}>{*part}</text>
++        ));
++        x += part.chars().count() as f32 * advance;
++    }
++    fframes::svgr!(<g>{out}</g>)
++}
++
+ // ---------------------------------------------------------------------------
+ // the blind agent: it reports success on a broken frame
+ 
+@@ -377,9 +400,9 @@ fn agent(lb: f32) -> Svgr<'static> {
+             let s = 1.0 + (1.0 - snap(lb - at_beat)) * 0.08;
+             fframes::svgr!(
+                 <g opacity={o} transform={zoom(x + w / 2.0, y + h / 2.0, s)}>
+-                    <rect x={*x} y={*y} width={*w} height={*h} fill="none" stroke={RED} stroke-width="3" stroke-dasharray="10 6" />
+-                    <rect x={*x} y={y - 30.0} width={text.len() as f32 * 12.0 + 20.0} height="28" fill={RED} />
+-                    <text x={x + 10.0} y={y - 10.0} font-family={MONO} font-weight="600" font-size="16" letter-spacing="1.5" fill={BG}>{*text}</text>
++                    <rect x={*x} y={*y} width={*w} height={*h} fill="none" stroke={FAILURE} stroke-width="3" stroke-dasharray="10 6" />
++                    <rect x={*x} y={y - 30.0} width={text.len() as f32 * 12.0 + 20.0} height="28" fill={FAILURE} />
++                    <text x={x + 10.0} y={y - 10.0} font-family={MONO} font-weight="500" font-size="16" letter-spacing="1.5" fill={ON_ACTION}>{*text}</text>
+                 </g>
+             )
+         })
+@@ -388,7 +411,7 @@ fn agent(lb: f32) -> Svgr<'static> {
+         .map(|k| {
+             let v = (hash(k as f32 * 2.7) * 0.7 + 0.35).min(1.0);
+             let hh = v * 54.0;
+-            let fill = if v > 0.92 { RED } else { SKY };
++            let fill = if v > 0.92 { FAILURE } else { INVERSE_SECONDARY };
+             fframes::svgr!(<rect x={fx + 70.0 + k as f32 * 17.0} y={fy + 492.0 - hh} width="10" height={hh} fill={fill} />)
+         })
+         .collect();
+@@ -398,29 +421,32 @@ fn agent(lb: f32) -> Svgr<'static> {
+             {screen_title(lb, 32.0, "The agent can’t see the video.")}
+             // the chat
+             {panel(120.0, 320.0, 680.0, 540.0)}
+-            <text x="148" y="364" font-family={MONO} font-weight="600" font-size="16" letter-spacing="2" fill={MUTED}>"AGENT"</text>
+-            <rect x="260" y="396" width="510" height="84" rx="12" fill="#1f1d1b" />
+-            <text x="284" y="446" font-family={MONO} font-weight="500" font-size="21" fill={TEXT}>{ask}</text>
++            <text x="148" y="364" font-family={MONO} font-weight="500" font-size="16" letter-spacing="2" fill={SECONDARY}>"AGENT"</text>
++            // the user's request is the selection pink of supplied context
++            <rect x="260" y="396" width="510" height="84" rx={RADIUS} fill={SELECTION_SURFACE} />
++            <text x="284" y="446" font-family={SANS} font-weight="400" font-size="24" fill={TEXT}>{ask}</text>
+             <g opacity={prog(lb, reply_at - 0.3, reply_at)}>
+-                <rect x="150" y="510" width="560" height="120" rx="12" fill="none" stroke={LINE} stroke-width="2" />
+-                <text x="174" y="556" font-family={MONO} font-weight="500" font-size="21" fill={TEXT}>{typed("Done! I wrote the scenes", reply_at, lb, 16.0)}</text>
+-                <text x="174" y="592" font-family={MONO} font-weight="500" font-size="21" fill={TEXT}>{if reply.len() > 24 { &reply[24..] } else { "" }}</text>
++                <rect x="150" y="510" width="560" height="120" rx={RADIUS} fill="none" stroke={RULE} stroke-width="1.5" />
++                <text x="174" y="556" font-family={SANS} font-weight="400" font-size="24" fill={TEXT}>{typed("Done! I wrote the scenes", reply_at, lb, 16.0)}</text>
++                <text x="174" y="592" font-family={SANS} font-weight="400" font-size="24" fill={TEXT}>{if reply.len() > 24 { reply[24..].trim_start() } else { "" }}</text>
+             </g>
++            // what the agent claims: a file, not a checked video
+             <g opacity={rendered}>
+-                <rect x="150" y="660" width="300" height="56" rx="10" fill="#0c1a12" stroke={GREEN} stroke-width="2" />
+-                <text x="174" y="696" font-family={MONO} font-weight="600" font-size="19" fill={GREEN}>"✓ launch.mp4"</text>
++                <rect x="150" y="660" width="300" height="56" rx={RADIUS} fill={ACCEPTED_SURFACE} />
++                {check(172.0, 690.0, 18.0, ACCEPTED)}
++                <text x="204" y="696" font-family={MONO} font-weight="500" font-size="19" fill={ACCEPTED}>"launch.mp4"</text>
+             </g>
+             // the frame it rendered
+             <g opacity={rendered} transform={at(shake, 0.0)}>
+                 <clipPath id="agent-frame"><rect x={fx} y={fy} width={fw} height={fh} /></clipPath>
+-                <rect x={fx} y={fy} width={fw} height={fh} fill="#151413" stroke={LINE} stroke-width="2" />
++                <rect x={fx} y={fy} width={fw} height={fh} rx={RADIUS} fill={INVERSE} />
+                 <g clip-path="url(#agent-frame)">
+-                    <text x={fx + 60.0} y={fy + 210.0} font-family={DISPLAY} font-size="112" letter-spacing="-3" fill={TEXT}>"LAUNCH DAY IS HERE"</text>
+-                    <rect x={fx + 70.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={SLATE} stroke-width="3" />
+-                    <rect x={fx + 122.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={SLATE} stroke-width="3" />
+-                    <rect x={fx + 174.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={SLATE} stroke-width="3" />
+-                    <rect x={fx + 250.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={SLATE} stroke-width="3" />
+-                    <rect x={fx + 302.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={SLATE} stroke-width="3" />
++                    <text x={fx + 60.0} y={fy + 210.0} font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="112" letter-spacing="-4" fill={INVERSE_TEXT}>"LAUNCH DAY IS HERE"</text>
++                    <rect x={fx + 70.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={INVERSE_SECONDARY} stroke-width="3" />
++                    <rect x={fx + 122.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={INVERSE_SECONDARY} stroke-width="3" />
++                    <rect x={fx + 174.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={INVERSE_SECONDARY} stroke-width="3" />
++                    <rect x={fx + 250.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={INVERSE_SECONDARY} stroke-width="3" />
++                    <rect x={fx + 302.0} y={fy + 312.0} width="40" height="46" fill="none" stroke={INVERSE_SECONDARY} stroke-width="3" />
+                     {meter}
+                 </g>
+                 {marks}
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/solution.rs b/examples/fframes-studio-intro/src/scenes/keynote/solution.rs
+index 2e74727..c8cce25 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/solution.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/solution.rs
+@@ -36,7 +36,7 @@ static TITLE: LazyLock<TrackingIn> = LazyLock::new(|| {
+         text: "FFrames Studio".to_owned(),
+         font_size: 116.0,
+         color: TEXT.to_owned(),
+-        font_weight: 400,
++        font_weight: DISPLAY_WEIGHT,
+         start_tracking: 0.16,
+         ..Default::default()
+     })
+@@ -55,16 +55,16 @@ static PROMPT_ZOOM: LazyLock<PromptZoom> = LazyLock::new(|| {
+         zoom: 1.55,
+         focus_x: 0.5,
+         focus_y: 0.47,
+-        accent_color: Some(ACCENT.to_owned()),
+-        mode: Mode::Dark,
++        accent_color: Some(ACTION.to_owned()),
++        mode: Mode::Light,
+         theme: Some(theme()),
+-        font_family: Some(MONO.to_owned()),
++        font_family: Some(SANS.to_owned()),
+         duration: 300,
+         ..Default::default()
+     })
+ });
+ 
+-/// The components' dark palette on the colours of this video.
++/// The components' light palette on the tokens of this cut.
+ fn theme() -> UiTheme {
+     UiTheme {
+         background: BG.to_owned(),
+@@ -73,41 +73,40 @@ fn theme() -> UiTheme {
+         card_foreground: TEXT.to_owned(),
+         popover: PANEL.to_owned(),
+         popover_foreground: TEXT.to_owned(),
+-        primary: ACCENT.to_owned(),
+-        primary_foreground: BG.to_owned(),
+-        secondary: "#1c1b19".to_owned(),
+-        muted: "#1c1b19".to_owned(),
+-        muted_foreground: SLATE.to_owned(),
+-        accent: "#1c1b19".to_owned(),
+-        border: LINE.to_owned(),
+-        input: LINE.to_owned(),
+-        ring: ACCENT.to_owned(),
+-        font_family: Some(MONO.to_owned()),
+-        ..UiTheme::dark()
++        primary: ACTION.to_owned(),
++        primary_foreground: ON_ACTION.to_owned(),
++        secondary: EMPHASIS.to_owned(),
++        secondary_foreground: TEXT.to_owned(),
++        muted: EMPHASIS.to_owned(),
++        muted_foreground: SECONDARY.to_owned(),
++        accent: EMPHASIS.to_owned(),
++        accent_foreground: TEXT.to_owned(),
++        border: RULE.to_owned(),
++        input: CONTROL.to_owned(),
++        ring: ACTION.to_owned(),
++        radius: RADIUS,
++        font_family: Some(SANS.to_owned()),
++        ..UiTheme::light()
+     }
+ }
+ 
+ struct Card {
+     title: &'static str,
+     lines: [&'static str; 2],
+-    accent: &'static str,
+ }
+ 
+ const CARDS: [Card; 3] = [
+     Card {
+         title: "Write or prompt",
+         lines: ["Scenes are plain Rust,", "or ask Codex or Claude Code."],
+-        accent: ACCENT,
+     },
+     Card {
+         title: "See it instantly",
+         lines: ["A native preview at 60 fps", "with a timeline to scrub."],
+-        accent: ACCENT,
+     },
+     Card {
+         title: "Render in seconds",
+         lines: ["Skia draws on the GPU and", "frames go straight to MP4."],
+-        accent: SKY,
+     },
+ ];
+ 
+@@ -124,10 +123,10 @@ impl Scene for SolutionScene {
+             let (so, sd) = rise(lb, 1.5, 20.0);
+             fframes::svgr!(
+                 <g opacity={leave(lb, PROMPT_AT - 0.5)}>
+-                    <g transform={at(0.0, -40.0)}>{eyebrow(960.0 - 140.0, 380.0, "02 / THE SOLUTION", ACCENT)}</g>
++                    <g transform={at(0.0, -40.0)}><text x="960" y="380" text-anchor="middle" font-family={MONO} font-weight="500" font-size="22" letter-spacing="3" fill={ACTION}>"02"<tspan fill={SECONDARY}>" / THE SOLUTION"</tspan></text></g>
+                     {comp::show(&*TITLE, &frame, lb * BEAT, (0.0, -110.0, 1920.0, 1080.0))}
+                     <g opacity={so} transform={at(0.0, sd)}>
+-                        <text x="960" y="680" text-anchor="middle" font-family={MONO} font-weight="500" font-size="28" fill={SLATE}>"Programmatic video, with a desktop studio."</text>
++                        <text x="960" y="680" text-anchor="middle" font-family={SANS} font-weight="400" font-size="34" letter-spacing="-0.5" fill={SECONDARY}>"Programmatic video, with a desktop studio."</text>
+                     </g>
+                 </g>
+             )
+@@ -166,7 +165,7 @@ impl Scene for SolutionScene {
+             fframes::svgr!(
+                 <g opacity={prog(lb, WINDOW_AT - 0.3, WINDOW_AT)} transform={zoom(960.0, y + h / 2.0, s)}>
+                     {window(x, y, w, h, "FFrames Studio — launch-video")}
+-                    {rounded("solution-player", (x + 2.0, y + 44.0, w - 4.0, h - 46.0), 12.0, player)}
++                    {rounded("solution-player", (x + 2.0, y + 44.0, w - 4.0, h - 46.0), RADIUS, player)}
+                 </g>
+             )
+         } else {
+@@ -187,7 +186,7 @@ impl Scene for SolutionScene {
+                     {window}
+                     {cards}
+                 </g>
+-                {caption(lb, WINDOW_AT + 1.0, CARDS_AT - 0.5, "FFrames Studio:", "describe the video, watch it play, export it.", ACCENT)}
++                {caption(lb, WINDOW_AT + 1.0, CARDS_AT - 0.5, "FFrames Studio:", "describe the video, watch it play, export it.", ACTION)}
+             </g>
+         )
+     }
+@@ -209,11 +208,11 @@ fn card(lb: f32, i: usize, c: &Card) -> Svgr<'static> {
+     fframes::svgr!(
+         <g opacity={o} transform={zoom(x + w / 2.0, y + h / 2.0, s)}>
+             {panel(x, y, w, h)}
+-            <rect x={x + 1.0} y={y} width={((w - 2.0) * trace).max(0.5)} height="3" fill={c.accent} opacity={if trace > 0.0 { 1.0 } else { 0.0 }} />
+-            <text x={x + 32.0} y={y + 52.0} font-family={MONO} font-weight="600" font-size="20" letter-spacing="3" fill={c.accent}>{number}</text>
+-            <text x={x + 32.0} y={y + 112.0} font-family={DISPLAY} font-size="40" letter-spacing="-1" fill={TEXT}>{c.title}</text>
+-            <text x={x + 32.0} y={y + 160.0} font-family={MONO} font-weight="500" font-size="21" fill={SLATE}>{c.lines[0]}</text>
+-            <text x={x + 32.0} y={y + 192.0} font-family={MONO} font-weight="500" font-size="21" fill={SLATE}>{c.lines[1]}</text>
++            <rect x={x} y={y} width={(w * trace).max(0.5)} height="2" fill={ACTION} opacity={if trace > 0.0 { 1.0 } else { 0.0 }} />
++            <text x={x + 32.0} y={y + 52.0} font-family={MONO} font-weight="500" font-size="20" letter-spacing="3" fill={ACTION}>{number}</text>
++            <text x={x + 32.0} y={y + 112.0} font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="42" letter-spacing="-1.6" fill={TEXT}>{c.title}</text>
++            <text x={x + 32.0} y={y + 160.0} font-family={SANS} font-weight="400" font-size="24" fill={SECONDARY}>{c.lines[0]}</text>
++            <text x={x + 32.0} y={y + 192.0} font-family={SANS} font-weight="400" font-size="24" fill={SECONDARY}>{c.lines[1]}</text>
+         </g>
+     )
+ }
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/speed.rs b/examples/fframes-studio-intro/src/scenes/keynote/speed.rs
+index ba772c3..54995ca 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/speed.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/speed.rs
+@@ -87,7 +87,7 @@ impl Scene for SpeedScene {
+             PROOF - 0.6,
+             "Under the hood:",
+             "less work per frame, and no detours.",
+-            ACCENT,
++            ACTION,
+         );
+         fframes::svgr!(
+             <g opacity={leave(lb, 31.4)}>
+@@ -119,11 +119,11 @@ fn engine_row(lb: f32, i: usize, e: &Engine, active: bool) -> Svgr<'static> {
+     let number = format!("0{}", i + 1);
+     fframes::svgr!(
+         <g opacity={o * dim} transform={at(0.0, d)}>
+-            <rect x="120" y={y - 34.0} width="4" height={(118.0 * bar).max(0.5)} fill={ACCENT} opacity={if bar > 0.0 { 1.0 } else { 0.0 }} />
+-            <text x="148" y={y} font-family={MONO} font-weight="600" font-size="20" letter-spacing="3" fill={ACCENT}>{number}</text>
+-            <text x="200" y={y + 2.0} font-family={DISPLAY} font-size="36" letter-spacing="-1" fill={TEXT}>{e.title}</text>
+-            <text x="148" y={y + 46.0} font-family={MONO} font-weight="500" font-size="20" fill={SLATE}>{e.lines[0]}</text>
+-            <text x="148" y={y + 74.0} font-family={MONO} font-weight="500" font-size="20" fill={SLATE}>{e.lines[1]}</text>
++            <rect x="120" y={y - 34.0} width="4" height={(118.0 * bar).max(0.5)} fill={ACTION} opacity={if bar > 0.0 { 1.0 } else { 0.0 }} />
++            <text x="148" y={y} font-family={MONO} font-weight="500" font-size="20" letter-spacing="3" fill={ACTION}>{number}</text>
++            <text x="200" y={y + 2.0} font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="40" letter-spacing="-1.6" fill={TEXT}>{e.title}</text>
++            <text x="148" y={y + 48.0} font-family={SANS} font-weight="400" font-size="24" fill={SECONDARY}>{e.lines[0]}</text>
++            <text x="148" y={y + 78.0} font-family={SANS} font-weight="400" font-size="24" fill={SECONDARY}>{e.lines[1]}</text>
+         </g>
+     )
+ }
+@@ -136,7 +136,7 @@ fn cached(lb: f32) -> Svgr<'static> {
+     let grid: Vec<Svgr> = (0..5)
+         .map(|k| {
+             let gy = cy + k as f32 * ch / 4.0;
+-            fframes::svgr!(<rect x={cx} y={gy} width={cw} height="1.5" fill={LINE} />)
++            fframes::svgr!(<rect x={cx} y={gy} width={cw} height="1.5" fill={RULE} />)
+         })
+         .collect();
+     // the moving part: a line that draws itself and keeps scrolling
+@@ -154,22 +154,23 @@ fn cached(lb: f32) -> Svgr<'static> {
+         .collect();
+     let line = if points.len() > 1 {
+         let d = format!("M{}", points.join(" L"));
+-        fframes::svgr!(<path d={d} fill="none" stroke={ACCENT} stroke-width="4" stroke-linejoin="round" />)
++        fframes::svgr!(<path d={d} fill="none" stroke={CANDIDATE} stroke-width="4" stroke-linejoin="round" />)
+     } else {
+         Svgr::empty()
+     };
+     let redrawn = ((lb - ENGINES_AT[0]) * BEAT * 60.0).max(0.0) as usize;
+     let tag_y = y + h - 70.0;
++    // what is cached stays put like an accepted state, the line is redrawn work
+     fframes::svgr!(
+         <g>
+-            <text x={cx} y={y + 54.0} font-family={MONO} font-weight="600" font-size="18" letter-spacing="3" fill={SLATE}>"REVENUE · LIVE"</text>
++            <text x={cx} y={y + 54.0} font-family={MONO} font-weight="500" font-size="18" letter-spacing="3" fill={SECONDARY}>"REVENUE · LIVE"</text>
+             {grid}
+-            <rect x={cx - 14.0} y={cy - 14.0} width={cw + 28.0} height={ch + 28.0} fill="none" stroke={SKY} stroke-width="2" stroke-dasharray="8 8" />
++            <rect x={cx - 14.0} y={cy - 14.0} width={cw + 28.0} height={ch + 28.0} rx={RADIUS} fill="none" stroke={ACCEPTED} stroke-width="1.5" />
+             {line}
+-            <rect x={cx} y={tag_y - 18.0} width="14" height="14" fill="none" stroke={SKY} stroke-width="2" />
+-            <text x={cx + 26.0} y={tag_y - 5.0} font-family={MONO} font-weight="500" font-size="19" fill={SKY}>"cached once"</text>
+-            <rect x={cx + 260.0} y={tag_y - 13.0} width="22" height="4" fill={ACCENT} />
+-            <text x={cx + 294.0} y={tag_y - 5.0} font-family={MONO} font-weight="500" font-size="19" fill={ACCENT}>{format!("redrawn: {redrawn} frames")}</text>
++            <rect x={cx} y={tag_y - 18.0} width="14" height="14" fill="none" stroke={ACCEPTED} stroke-width="1.5" />
++            <text x={cx + 26.0} y={tag_y - 5.0} font-family={MONO} font-weight="400" font-size="19" fill={ACCEPTED}>"cached once"</text>
++            <rect x={cx + 260.0} y={tag_y - 13.0} width="22" height="4" fill={CANDIDATE} />
++            <text x={cx + 294.0} y={tag_y - 5.0} font-family={MONO} font-weight="400" font-size="19" fill={CANDIDATE}>{format!("redrawn: {redrawn} frames")}</text>
+         </g>
+     )
+ }
+@@ -194,17 +195,17 @@ fn lanes(local: f32) -> Svgr<'static> {
+             .collect();
+         fframes::svgr!(
+             <g>
+-                <text x={tx} y={ly} font-family={MONO} font-weight="600" font-size="18" letter-spacing="3" fill={color}>{label}</text>
+-                <text x={tx + tw} y={ly} text-anchor="end" font-family={MONO} font-weight="500" font-size="19" fill={SLATE}>{format!("{made} frames")}</text>
+-                <rect x={tx} y={ly + 20.0} width={tw} height="96" rx="6" fill="none" stroke={LINE} stroke-width="2" />
++                <text x={tx} y={ly} font-family={MONO} font-weight="500" font-size="18" letter-spacing="3" fill={color}>{label}</text>
++                <text x={tx + tw} y={ly} text-anchor="end" font-family={MONO} font-weight="400" font-size="19" fill={SECONDARY}>{format!("{made} frames")}</text>
++                <rect x={tx} y={ly + 20.0} width={tw} height="96" rx={RADIUS} fill={EMPHASIS} />
+                 {tiles}
+             </g>
+         )
+     };
+     fframes::svgr!(
+         <g>
+-            {lane(0, "CPU BACKEND", SLATE, 2.0)}
+-            {lane(1, "SKIA ON THE GPU", SKY, 20.0)}
++            {lane(0, "CPU BACKEND", SECONDARY, 2.0)}
++            {lane(1, "SKIA ON THE GPU", CANDIDATE, 20.0)}
+         </g>
+     )
+ }
+@@ -221,11 +222,15 @@ fn encoder(local: f32) -> Svgr<'static> {
+         .enumerate()
+         .map(|(k, s)| {
+             let bx = x + 60.0 + k as f32 * (bw + gap);
+-            let color = if k == 3 { ACCENT } else { TEXT };
++            let (fill, color) = if k == 3 {
++                (ACCEPTED_SURFACE, ACCEPTED)
++            } else {
++                (PANEL, TEXT)
++            };
+             fframes::svgr!(
+                 <g>
+-                    <rect x={bx} y={by} width={bw} height="90" rx="10" fill={BG} stroke={LINE} stroke-width="2" />
+-                    <text x={bx + bw / 2.0} y={by + 53.0} text-anchor="middle" font-family={MONO} font-weight="600" font-size="22" fill={color}>{*s}</text>
++                    <rect x={bx} y={by} width={bw} height="90" rx={RADIUS} fill={fill} stroke={if k == 3 { ACCEPTED } else { CONTROL }} stroke-width="1.5" />
++                    <text x={bx + bw / 2.0} y={by + 53.0} text-anchor="middle" font-family={MONO} font-weight="500" font-size="22" fill={color}>{*s}</text>
+                 </g>
+             )
+         })
+@@ -238,7 +243,7 @@ fn encoder(local: f32) -> Svgr<'static> {
+             let u = t * 0.9 - k as f32 * 0.12;
+             (0.0..1.0).contains(&u).then(|| {
+                 let px = x + 60.0 + bw / 2.0 + u * span;
+-                fframes::svgr!(<rect x={px - 7.0} y={by + 112.0} width="14" height="14" rx="2" fill={ACCENT} />)
++                fframes::svgr!(<rect x={px - 7.0} y={by + 112.0} width="14" height="14" rx="2" fill={CANDIDATE} />)
+             })
+         })
+         .collect();
+@@ -248,22 +253,22 @@ fn encoder(local: f32) -> Svgr<'static> {
+     fframes::svgr!(
+         <g>
+             {boxes}
+-            <rect x={x + 60.0 + bw / 2.0} y={by + 118.0} width={span} height="2" fill={LINE} />
++            <rect x={x + 60.0 + bw / 2.0} y={by + 118.0} width={span} height="2" fill={CONTROL} opacity="0.6" />
+             {packets}
+             <g opacity="0.8">
+-                <rect x={dx} y={dy} width={w - 120.0} height="110" rx="10" fill="none" stroke={MUTED} stroke-width="2" stroke-dasharray="8 8" />
+-                <text x={dx + 30.0} y={dy + 48.0} font-family={MONO} font-weight="500" font-size="20" fill={MUTED}>"frame_0001.png  frame_0002.png  frame_0003.png  …"</text>
+-                <text x={dx + 30.0} y={dy + 84.0} font-family={MONO} font-weight="500" font-size="18" fill={MUTED}>"the usual detour: every frame written to disk, then read back"</text>
+-                <rect x={dx + 20.0} y={dy + 40.0} width={((w - 160.0) * strike).max(0.5)} height="3" opacity={if strike > 0.0 { 1.0 } else { 0.0 }} fill={RED} />
++                <rect x={dx} y={dy} width={w - 120.0} height="110" rx={RADIUS} fill="none" stroke={CONTROL} stroke-width="1.5" stroke-dasharray="8 8" />
++                <text x={dx + 30.0} y={dy + 48.0} font-family={MONO} font-weight="400" font-size="20" fill={SECONDARY}>"frame_0001.png  frame_0002.png  frame_0003.png  …"</text>
++                <text x={dx + 30.0} y={dy + 84.0} font-family={SANS} font-weight="400" font-size="22" fill={SECONDARY}>"the usual detour: every frame written to disk, then read back"</text>
++                <rect x={dx + 20.0} y={dy + 40.0} width={((w - 160.0) * strike).max(0.5)} height="3" opacity={if strike > 0.0 { 1.0 } else { 0.0 }} fill={FAILURE} />
+             </g>
+         </g>
+     )
+ }
+ 
+-/// Frames of this video, and the seconds its own render took on 8 CPU cores of an
+-/// Intel Xeon (Icelake) with no GPU: Skia on the CPU, encoded to H.264.
++/// Frames of this video, and the seconds its own render took on 32 CPU cores (four
++/// 8-core Intel Xeon Icelake sockets) with no GPU: Skia on the CPU, encoded to H.264.
+ const THIS_FRAMES: f32 = 7401.0;
+-const THIS_RENDER_S: f32 = 72.0;
++const THIS_RENDER_S: f32 = 26.0;
+ 
+ /// This very video, rendered on a CPU: the time, and the frames per second.
+ fn proof(lb: f32) -> Svgr<'static> {
+@@ -281,26 +286,27 @@ fn proof(lb: f32) -> Svgr<'static> {
+     let no = prog(lb, PROOF + 3.5, PROOF + 4.1);
+     fframes::svgr!(
+         <g>
+-            <g opacity={eo} transform={at(0.0, ed)}>{eyebrow(120.0, 168.0, "06 / MEASURED", ACCENT)}</g>
+-            <g opacity={ho} transform={at(0.0, hd)}>{headline(116.0, 250.0, "This video, rendered.", 64.0, TEXT)}</g>
++            <g opacity={eo} transform={at(0.0, ed)}>{act_eyebrow("06", "MEASURED")}</g>
++            <g opacity={ho} transform={at(0.0, hd)}>{headline(116.0, 252.0, "This video, rendered.", 72.0, TEXT)}</g>
+             <g opacity={ho}>
+-                <text x="120" y="320" font-family={MONO} font-weight="500" font-size="24" fill={SLATE}>"7,401 frames at 1920×1080, 60 fps, to an H.264 MP4. No GPU."</text>
++                <text x="120" y="326" font-family={SANS} font-weight="400" font-size="30" fill={SECONDARY}>"7,401 frames at 1920×1080, 60 fps, to an H.264 MP4. No GPU."</text>
+             </g>
+             <g opacity={so} transform={at(0.0, sd)}>
+-                <text x="120" y="560" font-family={DISPLAY} font-size="168" letter-spacing="-5" fill={ACCENT}>{format!("{seconds:.1} s")}</text>
+-                <text x="128" y="620" font-family={MONO} font-weight="600" font-size="20" letter-spacing="3" fill={SLATE}>"TO RENDER AND ENCODE ALL OF IT"</text>
++                <text x="112" y="560" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="180" letter-spacing="-7.2" fill={ACTION}>{format!("{seconds:.1} s")}</text>
++                <text x="124" y="620" font-family={MONO} font-weight="500" font-size="20" letter-spacing="3" fill={SECONDARY}>"TO RENDER AND ENCODE ALL OF IT"</text>
+             </g>
+             <g opacity={fo} transform={at(0.0, fd)}>
+-                <text x="1060" y="560" font-family={DISPLAY} font-size="168" letter-spacing="-5" fill={TEXT}>{format!("{:.0}", fps * count.min(1.0))}</text>
+-                <text x="1068" y="620" font-family={MONO} font-weight="600" font-size="20" letter-spacing="3" fill={SLATE}>"FRAMES EVERY SECOND"</text>
++                <text x="1052" y="560" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="180" letter-spacing="-7.2" fill={TEXT}>{format!("{:.0}", fps * count.min(1.0))}</text>
++                <text x="1064" y="620" font-family={MONO} font-weight="500" font-size="20" letter-spacing="3" fill={SECONDARY}>"FRAMES EVERY SECOND"</text>
+             </g>
+             <g opacity={so}>
+-                <rect x="120" y="700" width="1680" height="12" rx="6" fill={LINE} />
+-                <rect x="120" y="700" width={(1680.0 * count).max(0.5)} height="12" rx="6" fill={ACCENT} />
+-                <text x="120" y="756" font-family={MONO} font-weight="600" font-size="22" fill={TEXT}>{format!("{frames} / 7401 frames")}</text>
++                <rect x="120" y="700" width="1680" height="8" rx="4" fill={EMPHASIS} />
++                <rect x="120" y="700" width={(1680.0 * count).max(0.5)} height="8" rx="4" fill={ACTION} />
++                <text x="120" y="756" font-family={MONO} font-weight="500" font-size="22" fill={TEXT}>{format!("{frames} / 7401 frames")}</text>
+             </g>
+             <g opacity={no}>
+-                <text x="120" y="900" font-family={MONO} font-weight="500" font-size="17" letter-spacing="2" fill={MUTED}>"SKIA ON 8 CPU CORES · INTEL XEON (ICELAKE) · ONE RUN"</text>
++                <text x="120" y="900" font-family={MONO} font-weight="400" font-size="17" letter-spacing="2" fill={SECONDARY}>"SKIA ON 32 CPU CORES · INTEL XEON (ICELAKE) · ONE RUN"</text>
++
+             </g>
+         </g>
+     )
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/use_cases.rs b/examples/fframes-studio-intro/src/scenes/keynote/use_cases.rs
+index 8f2955d..cc57675 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/use_cases.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/use_cases.rs
+@@ -60,10 +60,11 @@ static FLIP: LazyLock<WordFlip> = LazyLock::new(|| {
+         pause: (first_flip - typing_end).max(0.0),
+         cycle: frames(SPOTLIGHTS[2] - SPOTLIGHTS[1]),
+         caret: false,
+-        font_size: 64.0,
+-        font_weight: 400,
++        font_size: 72.0,
++        font_weight: DISPLAY_WEIGHT,
++        tracking_em: -0.04,
+         color: TEXT.to_owned(),
+-        accent_color: ACCENT.to_owned(),
++        accent_color: ACTION.to_owned(),
+         ..Default::default()
+     })
+ });
+@@ -189,13 +190,13 @@ impl Scene for UseCasesScene {
+             .enumerate()
+             .map(|(i, c)| {
+                 let until = SPOTLIGHTS.get(i + 1).copied().unwrap_or(GRID_AGAIN) - 0.6;
+-                caption(lb, SPOTLIGHTS[i] + 0.4, until, c.lead, c.caption, ACCENT)
++                caption(lb, SPOTLIGHTS[i] + 0.4, until, c.lead, c.caption, ACTION)
+             })
+             .collect();
+         let (eo, ed) = rise(lb, 0.0, 24.0);
+         fframes::svgr!(
+             <g opacity={leave(lb, 47.4)}>
+-                <g opacity={eo} transform={at(0.0, ed)}><text x="960" y="150" text-anchor="middle" font-family={MONO} font-weight="600" font-size="22" letter-spacing="4" fill={ACCENT}>"04 / USE CASES"</text></g>
++                <g opacity={eo} transform={at(0.0, ed)}><text x="960" y="150" text-anchor="middle" font-family={MONO} font-weight="500" font-size="22" letter-spacing="3" fill={ACTION}>"04"<tspan fill={SECONDARY}>" / USE CASES"</tspan></text></g>
+                 {comp::show(&*FLIP, &frame, (lb - TYPE_FROM) * BEAT, (0.0, -320.0, 1920.0, 1080.0))}
+                 {cards}
+                 {captions}
+@@ -236,13 +237,15 @@ fn card(
+     let label_y = y + h - strip_h / 2.0 + title_size * 0.36;
+     fframes::svgr!(
+         <g opacity={o} transform={at(0.0, d)}>
+-            {rounded(&id, r, 14.0, body)}
+-            <rect x={x} y={y + h - strip_h} width={w} height={strip_h} fill={BG} opacity="0.82" />
+-            <text x={x + 20.0} y={label_y} font-family={MONO} font-weight="600" font-size={title_size * 0.75} fill={ACCENT}>{number}</text>
+-            <text x={x + 20.0 + title_size * 1.8} y={label_y} font-family={DISPLAY} font-size={title_size} fill={TEXT}>{c.title}</text>
+-            <text x={x + w - 20.0} y={label_y} text-anchor="end" font-family={MONO} font-weight="500" font-size={title_size * 0.7} fill={SLATE} opacity={if small { 0.0 } else { 1.0 }}>{c.source}</text>
+-            <text x={x + w - 20.0} y={y + 30.0} text-anchor="end" font-family={MONO} font-weight="500" font-size="14" fill={SLATE} opacity={if i == 1 && !small { 0.8 } else { 0.0 }}>"Emoji: Noto Animated Emoji, CC BY 4.0 · lottie-ios, Apache 2.0"</text>
+-            <rect x={x} y={y} width={w} height={h} rx="14" fill="none" stroke={if active { ACCENT } else { LINE }} stroke-width="2" />
++            {rounded(&id, r, RADIUS, body)}
++            <rect x={x} y={y + h - strip_h} width={w} height={strip_h} fill={BG} opacity="0.94" />
++            <rect x={x} y={y + h - strip_h} width={w} height="1.5" fill={RULE} />
++            <text x={x + 20.0} y={label_y} font-family={MONO} font-weight="500" font-size={title_size * 0.75} fill={ACTION}>{number}</text>
++            <text x={x + 20.0 + title_size * 1.8} y={label_y} font-family={SANS} font-weight="500" font-size={title_size} letter-spacing={-title_size * 0.02} fill={TEXT}>{c.title}</text>
++            <text x={x + w - 20.0} y={label_y} text-anchor="end" font-family={MONO} font-weight="400" font-size={title_size * 0.7} fill={SECONDARY} opacity={if small { 0.0 } else { 1.0 }}>{c.source}</text>
++            <text x={x + w - 20.0} y={y + 30.0} text-anchor="end" font-family={MONO} font-weight="400" font-size="14" fill={SECONDARY} opacity={if i == 1 && !small { 0.8 } else { 0.0 }}>"Emoji: Noto Animated Emoji, CC BY 4.0 · lottie-ios, Apache 2.0"</text>
++            <rect x={x} y={y} width={w} height={h} rx={RADIUS} fill="none" stroke={if active { ACTION } else { RULE }} stroke-width={if active { 2.0 } else { RULE_WIDTH }} />
++
+         </g>
+     )
+ }
+diff --git a/examples/fframes-studio-intro/src/scenes/keynote/workflow.rs b/examples/fframes-studio-intro/src/scenes/keynote/workflow.rs
+index 0760420..48cc207 100644
+--- a/examples/fframes-studio-intro/src/scenes/keynote/workflow.rs
++++ b/examples/fframes-studio-intro/src/scenes/keynote/workflow.rs
+@@ -32,7 +32,7 @@ static CODE: LazyLock<TypingCodeBlock> = LazyLock::new(|| {
+         code: "impl Video for Launch {\n    const FPS: usize = 60;\n\n    fn render_frame<'a>(&'a self, frame: Frame, ctx: &FFramesContext<'a, '_>) -> Svgr<'a> {\n        let y = frame.animate(&timeline!(\n            at 0.0, animate 80.0 => 0.0, Easing::Spring { .. },\n        ));\n        svgr!(<text y={540.0 + y}>\"Launch day\"</text>)\n    }\n}".to_owned(),
+         language: "rust".to_owned(),
+         typing_speed: 0.22,
+-        background: PANEL.to_owned(),
++        background: INVERSE.to_owned(),
+         font_size: Some(17.0),
+         ..Default::default()
+     })
+@@ -69,7 +69,7 @@ impl Scene for WorkflowScene {
+                     return Svgr::empty();
+                 }
+                 let (o, d) = rise(lb, from + 0.2, 40.0);
+-                fframes::svgr!(<g opacity={o * leave(lb, until)} transform={at(0.0, d)}>{headline(116.0, 250.0, *t, 64.0, TEXT)}</g>)
++                fframes::svgr!(<g opacity={o * leave(lb, until)} transform={at(0.0, d)}>{headline(116.0, 252.0, *t, 72.0, TEXT)}</g>)
+             })
+             .collect();
+ 
+@@ -82,14 +82,14 @@ impl Scene for WorkflowScene {
+ 
+         fframes::svgr!(
+             <g opacity={leave(lb, 47.4)}>
+-                <g opacity={eo} transform={at(0.0, ed)}>{eyebrow(120.0, 168.0, "03 / THE WORKFLOW", ACCENT)}</g>
++                <g opacity={eo} transform={at(0.0, ed)}>{act_eyebrow("03", "THE WORKFLOW")}</g>
+                 {headlines}
+                 {path(lb)}
+                 {body}
+-                {caption(lb, 1.0, 9.4, "Step 1:", "click New project, the studio sets up scenes and a timeline.", ACCENT)}
+-                {caption(lb, 11.0, 29.4, "Step 2:", "agents can’t watch video, so fframes turns it into images and numbers.", ACCENT)}
+-                {caption(lb, 31.0, 39.4, "Step 3:", "scrub every frame in the native player, in real time.", ACCENT)}
+-                {caption(lb, 41.0, 47.0, "Step 4:", "one click on Export, frames go straight into the encoder.", ACCENT)}
++                {caption(lb, 1.0, 9.4, "Step 1:", "click New project, the studio sets up scenes and a timeline.", ACTION)}
++                {caption(lb, 11.0, 29.4, "Step 2:", "agents can’t watch video, so fframes turns it into images and numbers.", ACTION)}
++                {caption(lb, 31.0, 39.4, "Step 3:", "scrub every frame in the native player, in real time.", ACTION)}
++                {caption(lb, 41.0, 47.0, "Step 4:", "one click on Export, frames go straight into the encoder.", ACTION)}
+             </g>
+         )
+     }
+@@ -109,15 +109,15 @@ fn path(lb: f32) -> Svgr<'static> {
+             let current = i + 1 == reached;
+             let pop = if on { snap(lb - STEPS[i]) } else { 1.0 };
+             let r = if current { 11.0 * pop } else { 8.0 };
+-            let fill = if on { ACCENT } else { BG };
+-            let stroke = if on { ACCENT } else { MUTED };
+-            let label_fill = if current { TEXT } else { MUTED };
++            let fill = if on { ACTION } else { BG };
++            let stroke = if on { ACTION } else { CONTROL };
++            let label_fill = if current { TEXT } else { SECONDARY };
+             let number = format!("{}", i + 1);
+             fframes::svgr!(
+                 <g>
+                     <circle cx={x} cy={y} r={r.max(8.0)} fill={fill} stroke={stroke} stroke-width="2" />
+-                    <text x={x} y={y + 5.5} text-anchor="middle" font-family={MONO} font-weight="600" font-size="14" fill={if on { BG } else { MUTED }}>{number}</text>
+-                    <text x={x} y={y + 44.0} text-anchor="middle" font-family={MONO} font-weight="600" font-size="16" letter-spacing="3" fill={label_fill}>{STEP_NAMES[i]}</text>
++                    <text x={x} y={y + 5.5} text-anchor="middle" font-family={MONO} font-weight="500" font-size="14" fill={if on { ON_ACTION } else { SECONDARY }}>{number}</text>
++                    <text x={x} y={y + 44.0} text-anchor="middle" font-family={MONO} font-weight="500" font-size="16" letter-spacing="3" fill={label_fill}>{STEP_NAMES[i]}</text>
+                 </g>
+             )
+         })
+@@ -125,8 +125,8 @@ fn path(lb: f32) -> Svgr<'static> {
+     let (o, _) = rise(lb, 0.5, 0.0);
+     fframes::svgr!(
+         <g opacity={o}>
+-            <rect x={x0} y={y - 1.0} width={gap * 3.0} height="2" fill={LINE} />
+-            <rect x={x0} y={y - 1.0} width={(gap * drawn).max(0.5)} height="2" fill={ACCENT} />
++            <rect x={x0} y={y - 1.0} width={gap * 3.0} height="2" fill={RULE} />
++            <rect x={x0} y={y - 1.0} width={(gap * drawn).max(0.5)} height="2" fill={ACTION} />
+             {nodes}
+         </g>
+     )
+@@ -156,17 +156,17 @@ fn start(frame: &Frame, lb: f32) -> Svgr<'static> {
+     let (bx, by, bw, bh) = (x + 40.0, y + 190.0, 260.0, 64.0);
+     let home = fframes::svgr!(
+         <g opacity={1.0 - opened}>
+-            <text x={x + 40.0} y={y + 112.0} font-family={DISPLAY} font-size="34" letter-spacing="-1" fill={TEXT}>"Welcome to FFrames Studio"</text>
+-            <text x={x + 40.0} y={y + 150.0} font-family={MONO} font-weight="500" font-size="19" fill={SLATE}>"Start a video, or open one you made."</text>
++            <text x={x + 40.0} y={y + 112.0} font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="38" letter-spacing="-1.5" fill={TEXT}>"Welcome to FFrames Studio"</text>
++            <text x={x + 40.0} y={y + 150.0} font-family={SANS} font-weight="400" font-size="22" fill={SECONDARY}>"Start a video, or open one you made."</text>
+             <g transform={zoom(bx + bw / 2.0, by + bh / 2.0, press)}>
+-                <rect x={bx} y={by} width={bw} height={bh} rx="12" fill={ACCENT} />
+-                <text x={bx + bw / 2.0} y={by + 40.0} text-anchor="middle" font-family={MONO} font-weight="600" font-size="22" fill={TEXT}>"+  New project"</text>
++                <rect x={bx} y={by} width={bw} height={bh} rx={RADIUS} fill={ACTION} />
++                <text x={bx + bw / 2.0} y={by + 40.0} text-anchor="middle" font-family={SANS} font-weight="500" font-size="23" fill={ON_ACTION}>"+  New project"</text>
+             </g>
+-            <rect x={bx + bw + 20.0} y={by} width="220" height={bh} rx="12" fill="none" stroke={LINE} stroke-width="2" />
+-            <text x={bx + bw + 130.0} y={by + 40.0} text-anchor="middle" font-family={MONO} font-weight="500" font-size="21" fill={SLATE}>"Open folder"</text>
+-            <text x={x + 40.0} y={y + 330.0} font-family={MONO} font-weight="600" font-size="15" letter-spacing="3" fill={MUTED}>"RECENT"</text>
+-            <rect x={x + 40.0} y={y + 350.0} width={w - 80.0} height="2" fill={LINE} />
+-            <text x={x + 40.0} y={y + 392.0} font-family={MONO} font-weight="500" font-size="18" fill={MUTED}>"No projects yet."</text>
++            <rect x={bx + bw + 20.0} y={by} width="220" height={bh} rx={RADIUS} fill="none" stroke={CONTROL} stroke-width="1.5" />
++            <text x={bx + bw + 130.0} y={by + 40.0} text-anchor="middle" font-family={SANS} font-weight="500" font-size="23" fill={TEXT}>"Open folder"</text>
++            <text x={x + 40.0} y={y + 330.0} font-family={MONO} font-weight="500" font-size="15" letter-spacing="3" fill={SECONDARY}>"RECENT"</text>
++            <rect x={x + 40.0} y={y + 350.0} width={w - 80.0} height="1.5" fill={RULE} />
++            <text x={x + 40.0} y={y + 392.0} font-family={SANS} font-weight="400" font-size="20" fill={SECONDARY}>"No projects yet."</text>
+         </g>
+     );
+ 
+@@ -183,9 +183,9 @@ fn start(frame: &Frame, lb: f32) -> Svgr<'static> {
+             let co = prog(lb, land, land + 0.3);
+             let clip = fframes::svgr!(
+                 <g opacity={co}>
+-                    <rect x={cx} y={y + 400.0} width={cw} height="64" rx="8" fill={PANEL} stroke={if i == 0 { ACCENT } else { LINE }} stroke-width="2" />
+-                    <text x={cx + 16.0} y={y + 439.0} font-family={MONO} font-weight="600" font-size="18" fill={TEXT}>{*name}</text>
+-                    <text x={cx + cw - 14.0} y={y + 439.0} text-anchor="end" font-family={MONO} font-weight="500" font-size="16" fill={MUTED}>{format!("{seconds:.0}s")}</text>
++                    <rect x={cx} y={y + 400.0} width={cw} height="64" rx={RADIUS} fill={if i == 0 { SELECTION_SURFACE } else { PANEL }} stroke={if i == 0 { SELECTION } else { RULE }} stroke-width="1.5" />
++                    <text x={cx + 16.0} y={y + 439.0} font-family={SANS} font-weight="500" font-size="20" fill={TEXT}>{*name}</text>
++                    <text x={cx + cw - 14.0} y={y + 439.0} text-anchor="end" font-family={MONO} font-weight="400" font-size="16" fill={SECONDARY}>{format!("{seconds:.0}s")}</text>
+                 </g>
+             );
+             cx += cw + 6.0;
+@@ -195,9 +195,9 @@ fn start(frame: &Frame, lb: f32) -> Svgr<'static> {
+     let head = tx + tw * prog(lb, CLICK + 1.5, 9.5);
+     let project = fframes::svgr!(
+         <g opacity={opened}>
+-            <rect x={x + 30.0} y={y + 70.0} width={w - 60.0} height="300" rx="10" fill={BG} stroke={LINE} stroke-width="2" />
+-            <text x={x + w / 2.0} y={y + 236.0} text-anchor="middle" font-family={DISPLAY} font-size="54" letter-spacing="-1.5" fill={TEXT}>"Launch day"</text>
+-            <text x={x + 30.0} y={y + 388.0} font-family={MONO} font-weight="600" font-size="14" letter-spacing="3" fill={MUTED}>"TIMELINE"</text>
++            <rect x={x + 30.0} y={y + 70.0} width={w - 60.0} height="300" rx={RADIUS} fill={EMPHASIS} />
++            <text x={x + w / 2.0} y={y + 236.0} text-anchor="middle" font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="58" letter-spacing="-2.3" fill={TEXT}>"Launch day"</text>
++            <text x={x + 30.0} y={y + 388.0} font-family={MONO} font-weight="500" font-size="14" letter-spacing="3" fill={SECONDARY}>"TIMELINE"</text>
+             {clips}
+             <rect x={head} y={y + 392.0} width="3" height="80" fill={TEXT} opacity={prog(lb, CLICK + 1.2, CLICK + 1.5)} />
+         </g>
+@@ -213,7 +213,7 @@ fn start(frame: &Frame, lb: f32) -> Svgr<'static> {
+     let cursor_o = 1.0 - prog(lb, CLICK + 0.6, CLICK + 0.9);
+     let cursor = fframes::svgr!(
+         <g opacity={cursor_o}>
+-            <circle cx={px} cy={py} r={8.0 + 30.0 * ring} fill="none" stroke={ACCENT} stroke-width="2" opacity={if ring > 0.0 { 1.0 - ring } else { 0.0 }} />
++            <circle cx={px} cy={py} r={8.0 + 30.0 * ring} fill="none" stroke={ACTION} stroke-width="2" opacity={if ring > 0.0 { 1.0 - ring } else { 0.0 }} />
+             <path d={format!("M{px} {py} l0 26 l7 -6 l5 11 l5 -2 l-5 -11 l9 0 z")} fill={TEXT} stroke={BG} stroke-width="1.5" />
+         </g>
+     );
+@@ -268,8 +268,8 @@ fn check(ctx: &FFramesContext<'_, '_>, lb: f32) -> Svgr<'static> {
+             fframes::svgr!(
+                 <g opacity={o} transform={at(0.0, d)}>
+                     {panel(x, y, pw, ph)}
+-                    <text x={x + 24.0} y={y + 40.0} font-family={MONO} font-weight="600" font-size="19" fill={ACCENT}>"$"<tspan fill={TEXT}>" "{cmd}</tspan></text>
+-                    <text x={x + pw - 24.0} y={y + 40.0} text-anchor="end" font-family={MONO} font-weight="600" font-size="14" letter-spacing="2" fill={MUTED}>{*what}</text>
++                    <text x={x + 24.0} y={y + 40.0} font-family={MONO} font-weight="500" font-size="19" fill={ACTION}>"$"<tspan fill={TEXT}>" "{cmd}</tspan></text>
++                    <text x={x + pw - 24.0} y={y + 40.0} text-anchor="end" font-family={MONO} font-weight="500" font-size="14" letter-spacing="2" fill={SECONDARY}>{*what}</text>
+                     <g opacity={pop} transform={zoom(x + pw / 2.0, y + ph / 2.0, s)}>{content}</g>
+                 </g>
+             )
+@@ -291,9 +291,9 @@ fn picture(
+     let tx = rect.0 + rect.2 + 28.0;
+     fframes::svgr!(
+         <g>
+-            {rounded(&id, rect, 8.0, still(ctx, name, rect))}
+-            <text x={tx} y={y + 120.0} font-family={MONO} font-weight="600" font-size="15" letter-spacing="2" fill={MUTED}>{line1}</text>
+-            <text x={tx} y={y + 148.0} font-family={MONO} font-weight="500" font-size="18" fill={SLATE}>{line2}</text>
++            {rounded(&id, rect, RADIUS, still(ctx, name, rect))}
++            <text x={tx} y={y + 120.0} font-family={MONO} font-weight="500" font-size="15" letter-spacing="2" fill={SECONDARY}>{line1}</text>
++            <text x={tx} y={y + 150.0} font-family={SANS} font-weight="400" font-size="20" fill={TEXT}>{line2}</text>
+         </g>
+     )
+ }
+@@ -304,7 +304,7 @@ fn inspect(ctx: &FFramesContext<'_, '_>, lb: f32, x: f32, y: f32) -> Svgr<'stati
+     let ok = lb >= FIXED;
+     let (fx, fy, fw, fh) = (x + 24.0, y + 64.0, 380.0, 214.0);
+     let text_x = lerp(fx + 150.0, fx + 40.0, fix);
+-    let color = if ok { GREEN } else { RED };
++    let color = if ok { ACCEPTED } else { FAILURE };
+     let box_w = if ok { 270.0 } else { fx + fw - text_x + 10.0 };
+     let line1 = if ok {
+         "checked 121 frames: 0 findings"
+@@ -318,15 +318,15 @@ fn inspect(ctx: &FFramesContext<'_, '_>, lb: f32, x: f32, y: f32) -> Svgr<'stati
+     };
+     fframes::svgr!(
+         <g>
+-            <clipPath id="inspect-frame"><rect x={fx} y={fy} width={fw} height={fh} rx="8" /></clipPath>
++            <clipPath id="inspect-frame"><rect x={fx} y={fy} width={fw} height={fh} rx={RADIUS} /></clipPath>
+             <g clip-path="url(#inspect-frame)">
+                 {still(ctx, "marketing_poster.jpg", (fx, fy, fw, fh))}
+                 <rect x={fx} y={fy} width={fw} height={fh} fill={BG} opacity="0.55" />
+-                <text x={text_x} y={fy + 120.0} font-family={DISPLAY} font-size="56" letter-spacing="-1" fill={TEXT}>"Launch day"</text>
++                <text x={text_x} y={fy + 120.0} font-family={SANS} font-weight={DISPLAY_WEIGHT} font-size="56" letter-spacing="-1" fill={TEXT}>"Launch day"</text>
+             </g>
+             <rect x={text_x - 10.0} y={fy + 66.0} width={box_w} height="74" fill="none" stroke={color} stroke-width="2.5" stroke-dasharray="8 5" />
+-            <text x={fx + fw + 28.0} y={y + 120.0} font-family={MONO} font-weight="600" font-size="17" fill={color}>{line1}</text>
+-            <text x={fx + fw + 28.0} y={y + 148.0} font-family={MONO} font-weight="500" font-size="17" fill={color}>{line2}</text>
++            <text x={fx + fw + 28.0} y={y + 120.0} font-family={MONO} font-weight="500" font-size="17" fill={color}>{line1}</text>
++            <text x={fx + fw + 28.0} y={y + 148.0} font-family={MONO} font-weight="400" font-size="17" fill={color}>{line2}</text>
+         </g>
+     )
+ }
+@@ -336,8 +336,8 @@ fn audio(ctx: &FFramesContext<'_, '_>, x: f32, y: f32) -> Svgr<'static> {
+     let rect = (x + 24.0, y + 64.0, 772.0, 170.0);
+     fframes::svgr!(
+         <g>
+-            {rounded("tool-waveform", rect, 8.0, still(ctx, "waveform.jpg", rect))}
+-            <text x={x + 24.0} y={y + 272.0} font-family={MONO} font-weight="500" font-size="17" fill={SLATE}>"integrated -16.0 LUFS · true peak -0.9 dBTP · clipped samples 0"</text>
++            {rounded("tool-waveform", rect, RADIUS, still(ctx, "waveform.jpg", rect))}
++            <text x={x + 24.0} y={y + 272.0} font-family={MONO} font-weight="400" font-size="17" fill={SECONDARY}>"integrated -16.0 LUFS · true peak -0.9 dBTP · clipped samples 0"</text>
+         </g>
+     )
+ }
+@@ -379,22 +379,19 @@ fn scrub(frame: &Frame, ctx: &FFramesContext<'_, '_>, lb: f32) -> Svgr<'static>
+     let px = x + (pos / length).clamp(0.0, 1.0) * w;
+     let dragging = lb - STEPS[2] > 2.5;
+     let cursor = if dragging {
+-        fframes::svgr!(
+-            <path transform={at(px - 4.0, bar_y + 4.0)} d="M0 0 L0 30 L8 23 L14 36 L20 33 L14 21 L24 21 Z"
+-                  fill={TEXT} stroke={BG} stroke-width="2" stroke-linejoin="round" />
+-        )
++        pointer(px - 4.0, bar_y + 4.0)
+     } else {
+         Svgr::empty()
+     };
+     let tc = crate::ui::timecode(pos);
+     fframes::svgr!(
+         <g opacity={o * leave(lb, 39.6)} transform={at(0.0, d)}>
+-            {rounded("scrub-player", (x, y, w, h), 12.0, player)}
+-            <rect x={x} y={y} width={w} height={h} rx="12" fill="none" stroke={LINE} stroke-width="2" />
+-            <rect x={x} y={bar_y - 2.0} width={w} height="4" rx="2" fill={LINE} />
+-            <rect x={x} y={bar_y - 2.0} width={(px - x).max(0.5)} height="4" rx="2" fill={ACCENT} />
+-            <circle cx={px} cy={bar_y} r="9" fill={ACCENT} />
+-            <text x={x + w} y={bar_y - 16.0} text-anchor="end" font-family={MONO} font-weight="600" font-size="18" fill={SLATE}>{tc}</text>
++            {rounded("scrub-player", (x, y, w, h), RADIUS, player)}
++            <rect x={x} y={y} width={w} height={h} rx={RADIUS} fill="none" stroke={RULE} stroke-width={RULE_WIDTH} />
++            <rect x={x} y={bar_y - 2.0} width={w} height="4" rx="2" fill={EMPHASIS} />
++            <rect x={x} y={bar_y - 2.0} width={(px - x).max(0.5)} height="4" rx="2" fill={ACTION} />
++            <circle cx={px} cy={bar_y} r="9" fill={ACTION} />
++            <text x={x + w} y={bar_y - 16.0} text-anchor="end" font-family={MONO} font-weight="400" font-size="18" fill={SECONDARY}>{tc}</text>
+             {cursor}
+         </g>
+     )
+@@ -427,24 +424,27 @@ fn export(lb: f32) -> Svgr<'static> {
+     fframes::svgr!(
+         <g opacity={o} transform={at(0.0, d)}>
+             {window(x, y, w, h, "FFrames Studio — launch-video")}
+-            <text x={x + 40.0} y={y + 108.0} font-family={MONO} font-weight="600" font-size="16" letter-spacing="3" fill={MUTED}>"EXPORT"</text>
+-            <text x={x + 40.0} y={y + 140.0} font-family={MONO} font-weight="500" font-size="20" fill={SLATE}>"launch.mp4 · 1920×1080 · 60 fps · H.264"</text>
++            <text x={x + 40.0} y={y + 108.0} font-family={MONO} font-weight="500" font-size="16" letter-spacing="3" fill={SECONDARY}>"EXPORT"</text>
++            <text x={x + 40.0} y={y + 140.0} font-family={MONO} font-weight="400" font-size="20" fill={SECONDARY}>"launch.mp4 · 1920×1080 · 60 fps · H.264"</text>
+             <g transform={zoom(bx + bw / 2.0, by + bh / 2.0, press)}>
+-                <rect x={bx} y={by} width={bw} height={bh} rx="12" fill={ACCENT} />
+-                <text x={bx + bw / 2.0} y={by + 36.0} text-anchor="middle" font-family={MONO} font-weight="600" font-size="21" fill={TEXT}>"Export MP4"</text>
++                <rect x={bx} y={by} width={bw} height={bh} rx={RADIUS} fill={ACTION} />
++                <text x={bx + bw / 2.0} y={by + 36.0} text-anchor="middle" font-family={SANS} font-weight="500" font-size="23" fill={ON_ACTION}>"Export MP4"</text>
+             </g>
++            // the render is a candidate until the file is written
+             <g opacity={prog(lb, go - 0.2, go)}>
+-                <rect x={x + 40.0} y={y + 200.0} width={w - 80.0} height="16" rx="8" fill={LINE} />
+-                <rect x={x + 40.0} y={y + 200.0} width={((w - 80.0) * p).max(0.5)} height="16" rx="8" fill={if done { GREEN } else { SKY }} />
+-                <text x={x + 40.0} y={y + 266.0} font-family={MONO} font-weight="600" font-size="22" fill={TEXT}>{status}</text>
++                <rect x={x + 40.0} y={y + 200.0} width={w - 80.0} height="12" rx="6" fill={EMPHASIS} />
++                <rect x={x + 40.0} y={y + 200.0} width={((w - 80.0) * p).max(0.5)} height="12" rx="6" fill={if done { ACCEPTED } else { CANDIDATE }} />
++                <text x={x + 40.0} y={y + 266.0} font-family={MONO} font-weight="500" font-size="22" fill={TEXT}>{status}</text>
+             </g>
+             <g opacity={1.0 - prog(lb, click + 0.6, click + 0.9)}>
+-                <circle cx={px} cy={py} r={8.0 + 30.0 * ring} fill="none" stroke={ACCENT} stroke-width="2" opacity={if ring > 0.0 { 1.0 - ring } else { 0.0 }} />
++                <circle cx={px} cy={py} r={8.0 + 30.0 * ring} fill="none" stroke={ACTION} stroke-width="2" opacity={if ring > 0.0 { 1.0 - ring } else { 0.0 }} />
+                 <path d={format!("M{px} {py} l0 26 l7 -6 l5 11 l5 -2 l-5 -11 l9 0 z")} fill={TEXT} stroke={BG} stroke-width="1.5" />
+             </g>
+             <g opacity={file} transform={zoom(960.0, 650.0, 0.9 + 0.1 * fs)}>
+-                <rect x="790" y="610" width="340" height="80" rx="12" fill="#0c1a12" stroke={GREEN} stroke-width="2" />
+-                <text x="960" y="662" text-anchor="middle" font-family={MONO} font-weight="600" font-size="26" fill={GREEN}>"✓ launch.mp4"</text>
++                <rect x="790" y="610" width="340" height="80" rx={RADIUS} fill={ACCEPTED_SURFACE} />
++                {super::look::check(866.0, 650.0, 24.0, ACCEPTED)}
++                <text x="906" y="660" font-family={MONO} font-weight="500" font-size="26" fill={ACCEPTED}>"launch.mp4"</text>
++
+             </g>
+         </g>
+     )
+diff --git a/landing/studio/studio.css b/landing/studio/studio.css
+index c1da333..1a81866 100644
+--- a/landing/studio/studio.css
++++ b/landing/studio/studio.css
+@@ -212,6 +212,78 @@ figcaption .hint { display: none; }
+ .muted { opacity: .38; }
+ .see-through { fill-opacity: .72; }
+ 
++/* ---------- scroll animation ----------
++   The generator wraps animated parts of a figure in .a groups: a kind (.a-*) that animates
++   FROM a start state to the drawing as it stands, and a window --s..--e on the figure's 0..100
++   clock. studio.js picks the clock by setting a class on <html>:
++   - motion-scrub (wide screens with scroll timelines): the scroll is the clock. A 1px
++     .fig-clock at the figure's centre runs it from 85% down the viewport to the middle, so a
++     figure is complete once centred; the hero, on screen at load, uses the first 500px instead.
++   - motion-play (anything else): each figure plays once over 1.4 s when a third of it shows.
++   Without a class, with reduced motion, or in print, nothing animates and nothing is hidden.
++   Fill mode is backwards so a finished animation leaves no trace on the drawing. */
++.fig { position: relative; }
++.fig-clock { position: absolute; top: 50%; left: 0; width: 1px; height: 1px; pointer-events: none; }
++.playhead { display: none; stroke: var(--accent); stroke-width: 1.5; }
++.a-pop, .a-grow-x, .a-grow-y { transform-box: fill-box; }
++.a-pop { transform-origin: 50% 50%; }
++.a-grow-x { transform-origin: 0 50%; }
++.a-grow-y { transform-origin: 50% 100%; }
++
++@keyframes a-fade { from { opacity: 0; } }
++@keyframes a-dim { from { opacity: .25; } }
++@keyframes a-ghost { from { opacity: .12; translate: 0 calc(var(--dy, 0) * 1px); } }
++@keyframes a-move { from { translate: calc(var(--dx, 0) * 1px) calc(var(--dy, 0) * 1px); } }
++@keyframes a-move-fade { from { opacity: 0; translate: calc(var(--dx, 0) * 1px) calc(var(--dy, 0) * 1px); } }
++@keyframes a-draw { from { stroke-dashoffset: 1; } }
++@keyframes a-pop { from { opacity: 0; scale: 0; } }
++@keyframes a-grow-x { from { scale: 0 1; } }
++@keyframes a-grow-y { from { scale: 1 0; } }
++@keyframes a-out { to { opacity: 0; } }
++
++@media screen and (prefers-reduced-motion: no-preference) {
++  :is(.motion-scrub, .motion-play) .a { animation-fill-mode: backwards; animation-timing-function: cubic-bezier(.2, .7, .2, 1); }
++  /* progress (a line drawing, a bar filling, a playhead) moves linearly so it tracks the clock */
++  :is(.motion-scrub, .motion-play) :is(.a-draw, .a-grow-x, .a-grow-y, .a-move:has(> .playhead)) { animation-timing-function: linear; }
++  :is(.motion-scrub, .motion-play) .a-draw { stroke-dasharray: 1 1; }
++  :is(.motion-scrub, .motion-play) .playhead { display: inline; }
++  :is(.motion-scrub, .motion-play) .a-fade { animation-name: a-fade; }
++  :is(.motion-scrub, .motion-play) .a-dim { animation-name: a-dim; }
++  :is(.motion-scrub, .motion-play) .a-ghost { animation-name: a-ghost; }
++  :is(.motion-scrub, .motion-play) .a-move { animation-name: a-move; }
++  :is(.motion-scrub, .motion-play) .a-move-fade { animation-name: a-move-fade; }
++  :is(.motion-scrub, .motion-play) .a-draw { animation-name: a-draw; }
++  :is(.motion-scrub, .motion-play) .a-pop { animation-name: a-pop; }
++  :is(.motion-scrub, .motion-play) .a-grow-x { animation-name: a-grow-x; }
++  :is(.motion-scrub, .motion-play) .a-grow-y { animation-name: a-grow-y; }
++  /* the one exit, for the playheads that are not part of the drawing */
++  :is(.motion-scrub, .motion-play) .a-out { animation-name: a-out; animation-fill-mode: both; }
++
++  .motion-play .a {
++    animation-duration: calc((var(--e) - var(--s)) * 14ms);
++    animation-delay: calc(var(--s) * 14ms);
++    animation-play-state: paused;
++  }
++  .motion-play .fig.is-visible .a { animation-play-state: running; }
++  /* a figure scrolled sideways would animate out of sight, so it stays still */
++  .motion-play .fig.overflows .a { animation: none; }
++  .motion-play .fig.overflows .playhead { display: none; }
++
++  @supports (animation-timeline: view()) and (timeline-scope: --a) {
++    .motion-scrub .fig { timeline-scope: --fig; }
++    .motion-scrub .fig-clock { view-timeline: --fig block; }
++    .motion-scrub .a {
++      animation-duration: auto;
++      animation-timeline: --fig;
++      animation-range: cover calc(15% + var(--s) * .35%) cover calc(15% + var(--e) * .35%);
++    }
++    .motion-scrub .fig[data-clock="page"] .a {
++      animation-timeline: scroll(root);
++      animation-range: calc(var(--s) * 5px) calc(var(--e) * 5px);
++    }
++  }
++}
++
+ /* ---------- small pieces ---------- */
+ .note {
+   margin: 16px 0 0;
+diff --git a/scripts/build-studio-figures.mjs b/scripts/build-studio-figures.mjs
+index 2efe4a1..1445bf4 100644
+--- a/scripts/build-studio-figures.mjs
++++ b/scripts/build-studio-figures.mjs
+@@ -23,6 +23,21 @@ const text = (x, y, s, cls = 'f-label', anchor = 'start') =>
+   `<text x="${r(x)}" y="${r(y)}" class="${cls}"${anchor === 'start' ? '' : ` text-anchor="${anchor}"`}>${esc(s)}</text>`;
+ const rect = (x, y, w, h, cls) => `<rect x="${r(x)}" y="${r(y)}" width="${r(w)}" height="${r(h)}" class="${cls}"/>`;
+ 
++/**
++ * Scroll animation: wraps markup in a group that animates FROM a start state to the drawing
++ * as it stands, so the drawing is always the last frame. `kind` is one of the a-* animations
++ * in studio.css; `s`..`e` is its window on the figure's 0..100 clock; `vars` sets --dx/--dy.
++ * A drawn line or path gets pathLength="1" so the dash animation needs no measuring.
++ */
++function anim(kind, s, e, inner, vars = {}) {
++  const style = Object.entries({ s, e, ...vars }).map(([k, v]) => `--${k}:${r(v)}`).join(';');
++  const body = kind === 'draw' ? inner.replace(/^<(path|line) /, '<$1 pathLength="1" ') : inner;
++  return `<g class="a a-${kind}" style="${style}">${body}</g>`;
++}
++
++/** A playhead that is not part of the drawing: it sweeps on [s, e] from dx, then fades out. */
++const playhead = (x, y1, y2, [s, e], dx, out) => anim('out', out, out + 6, anim('move', s, e, line(x, y1, x, y2, 'playhead'), { dx }));
++
+ /** A slab of width w (x), depth d (y) and thickness t whose bottom sits at z. */
+ function slab(P, x, y, z, w, d, t, tone, extra = '') {
+   const top = [P(x, y, z + t), P(x + w, y, z + t), P(x + w, y + d, z + t), P(x, y + d, z + t)];
+@@ -59,8 +74,11 @@ const STUDIO = [
+   { key: 'window', label: 'Studio window', sub: 'preview · timeline · chat', tone: 'blue' },
+ ];
+ 
+-/** An exploded stack of layers, bottom first. `focus` dims every other layer. */
+-function stack(P, layers, { size = 150, t = 9, gap = 30, side = 'right', labelX, focus, muteLibrary = false }) {
++/**
++ * An exploded stack of layers, bottom first. `focus` dims every other layer. `motion(i)` may
++ * return `[kind, s, e, vars]` to animate layer i, slab and label together.
++ */
++function stack(P, layers, { size = 150, t = 9, gap = 30, side = 'right', labelX, focus, muteLibrary = false, motion }) {
+   const out = [];
+   const zTop = (layers.length - 1) * (t + gap);
+   for (const [cx, cy] of [[0, size], [size, size], [size, 0]]) {
+@@ -71,10 +89,13 @@ function stack(P, layers, { size = 150, t = 9, gap = 30, side = 'right', labelX,
+   layers.forEach((layer, i) => {
+     const z = i * (t + gap);
+     const dim = (focus && layer.key !== focus) || (muteLibrary && !layer.key) ? 'muted' : '';
+-    out.push(slab(P, 0, 0, z, size, size, t, focus && layer.key === focus ? 'blue' : layer.tone, dim));
+     const [ax, ay] = side === 'right' ? P(size, 0, z + t) : P(0, size, z + t);
+     const [lx] = [labelX];
+-    out.push(`<g${dim ? ' class="muted"' : ''}>${leader(ax + (side === 'right' ? 6 : -6), ay, lx, layer.label, layer.sub, side)}</g>`);
++    const body =
++      slab(P, 0, 0, z, size, size, t, focus && layer.key === focus ? 'blue' : layer.tone, dim) +
++      `<g${dim ? ' class="muted"' : ''}>${leader(ax + (side === 'right' ? 6 : -6), ay, lx, layer.label, layer.sub, side)}</g>`;
++    const m = motion?.(i);
++    out.push(m ? anim(m[0], m[1], m[2], body, m[3]) : body);
+   });
+   return out.join('');
+ }
+@@ -84,7 +105,8 @@ function heroStacks() {
+   const right = iso(720, 310);
+   const body =
+     stack(left, LIBRARY, { side: 'left', labelX: 180 }) +
+-    stack(right, STUDIO, { side: 'right', labelX: 880, muteLibrary: true }) +
++    // Studio's five layers settle onto the library's three from faint ghosts above
++    stack(right, STUDIO, { side: 'right', labelX: 880, muteLibrary: true, motion: (i) => i >= 3 && ['ghost', (i - 3) * 16, (i - 3) * 16 + 24, { dy: -36 }] }) +
+     text(330, 500, 'fframes library', 'f-title', 'middle') +
+     text(720, 500, 'fframes Studio', 'f-title', 'middle');
+   return svg('fig-hero', 1100, 520, 'The fframes library and the Studio stack',
+@@ -102,40 +124,39 @@ function focusStack(name, key, caption) {
+ function selection() {
+   const P = iso(260, 150);
+   const W = 220, D = 124, t = 4, gap = 46;
++  // in motion: the planes start flat and separate, the pointer clicks the title, then the lead
++  // line carries it to the card and the rows fill in
+   const parts = [];
+   parts.push(slab(P, 0, 0, 0, W, D, t, 'grey'));
+-  parts.push(slab(P, 0, 0, t + gap, W, D, t, 'paper'));
+   // shapes on the middle plane
+   const z1 = t + gap + t;
+-  parts.push(poly([P(30, 70, z1), P(90, 70, z1), P(90, 110, z1), P(30, 110, z1)], 't-green f-line'));
+-  parts.push(poly([P(140, 20, z1), P(200, 20, z1), P(200, 60, z1), P(140, 60, z1)], 't-red f-line'));
+-  parts.push(slab(P, 0, 0, 2 * (t + gap), W, D, t, 'paper'));
++  parts.push(anim('move', 0, 40,
++    slab(P, 0, 0, t + gap, W, D, t, 'paper') +
++    poly([P(30, 70, z1), P(90, 70, z1), P(90, 110, z1), P(30, 110, z1)], 't-green f-line') +
++    poly([P(140, 20, z1), P(200, 20, z1), P(200, 60, z1), P(140, 60, z1)], 't-red f-line'), { dy: t + gap }));
+   const z2 = 2 * (t + gap) + t;
+   const title = [P(40, 30, z2), P(170, 30, z2), P(170, 52, z2), P(40, 52, z2)];
+-  parts.push(poly(title, 't-blue f-line k-blue'));
+-  for (const [cx, cy] of [[0, D], [W, D], [W, 0]]) {
++  parts.push(anim('move', 0, 40, slab(P, 0, 0, 2 * (t + gap), W, D, t, 'paper') + poly(title, 't-blue f-line k-blue'), { dy: 2 * (t + gap) }));
++  const guides = [[0, D], [W, D], [W, 0]].map(([cx, cy]) => {
+     const [x1, y1] = P(cx, cy, t);
+     const [, y2] = P(cx, cy, z2);
+-    parts.push(line(x1, y1, x1, y2, 'f-faint'));
+-  }
++    return line(x1, y1, x1, y2, 'f-faint');
++  });
++  parts.push(anim('fade', 25, 45, guides.join('')));
+   // labels on the left
+   const lab = (z, label, sub) => { const [x, y] = P(0, D, z); return leader(x - 6, y, 130, label, sub, 'left'); };
+-  parts.push(lab(t, 'Background', ''));
+-  parts.push(lab(t + gap + t, 'Shapes', ''));
+-  parts.push(lab(z2, 'Title', 'id intro.title'));
++  parts.push(anim('fade', 25, 45, lab(t, 'Background', '') + lab(t + gap + t, 'Shapes', '') + lab(z2, 'Title', 'id intro.title')));
+   // the pointer, on the title
+   const [px, py] = P(105, 41, z2);
+-  parts.push(`<path d="M${px} ${py} l0 16 l4 -4 l3 7 l3 -1 l-3 -7 l6 0 z" class="t-dark f-line"/>`);
++  parts.push(anim('pop', 42, 50, `<path d="M${px} ${py} l0 16 l4 -4 l3 7 l3 -1 l-3 -7 l6 0 z" class="t-dark f-line"/>`));
+   // packet card
+   const cx = 520, cy = 92;
+-  parts.push(rect(cx, cy, 250, 150, 't-paper f-line'));
+-  parts.push(text(cx + 14, cy + 22, 'Task context', 'f-title'));
++  parts.push(anim('fade', 52, 62, rect(cx, cy, 250, 150, 't-paper f-line') + text(cx + 14, cy + 22, 'Task context', 'f-title')));
+   const rows = [['element', 'intro.title'], ['frame', '126 @ 30 fps'], ['bounds', '160 220 1200 180'], ['source', 'src/lib.rs'], ['symbol', 'render_frame'], ['request', 'slide it in from the left']];
+   rows.forEach(([k, v], i) => {
+-    parts.push(text(cx + 14, cy + 46 + i * 17, k, 'f-small'));
+-    parts.push(text(cx + 86, cy + 46 + i * 17, v, 'f-code'));
++    parts.push(anim('move-fade', 60 + i * 6, 70 + i * 6, text(cx + 14, cy + 46 + i * 17, k, 'f-small') + text(cx + 86, cy + 46 + i * 17, v, 'f-code'), { dx: -8 }));
+   });
+-  parts.push(path(`M${px + 14} ${py - 6} C ${px + 120} ${py - 40}, ${cx - 80} ${cy + 40}, ${cx} ${cy + 40}`, 'f-lead k-blue'));
++  parts.push(anim('draw', 50, 70, path(`M${px + 14} ${py - 6} C ${px + 120} ${py - 40}, ${cx - 80} ${cy + 40}, ${cx} ${cy + 40}`, 'f-lead k-blue')));
+   return svg('fig-select', 800, 350, 'A click on the preview becomes task context',
+     'A frame exploded into three planes, background, shapes and a title. A pointer clicks the title, and a line leads to a card listing the element id, the frame, its bounds, the source file, the symbol and the request.', parts.join(''), 600);
+ }
+@@ -145,22 +166,20 @@ function selection() {
+ function loop() {
+   const steps = [['Brief', 'or selection'], ['Ground', 'freeze context'], ['Edit', 'draft copy'], ['Build', 'pinned SDK'], ['Inspect', 'frames, audio'], ['Preview', 'at playhead'], ['Accept', 'atomic write'], ['Export', 'accepted only']];
+   const x0 = 46, dx = 106, y = 70;
+-  const parts = [line(x0, y, x0 + dx * 7, y)];
++  // in motion the line draws on 0..70 and step i lights up as it passes, at 10 * i
++  const parts = [anim('draw', 0, 70, line(x0, y, x0 + dx * 7, y))];
+   steps.forEach(([a, b], i) => {
+     const x = x0 + dx * i;
+     const tone = i === 2 ? 't-red' : i >= 6 ? 't-blue' : 't-paper';
+-    parts.push(`<circle cx="${x}" cy="${y}" r="9" class="${tone} f-line"/>`);
+-    parts.push(text(x, y + 32, a, 'f-label', 'middle'));
+-    parts.push(text(x, y + 47, b, 'f-small', 'middle'));
++    parts.push(anim('pop', i * 10, i * 10 + 6, `<circle cx="${x}" cy="${y}" r="9" class="${tone} f-line"/>`));
++    parts.push(anim('fade', i * 10, i * 10 + 8, text(x, y + 32, a, 'f-label', 'middle') + text(x, y + 47, b, 'f-small', 'middle')));
+   });
+   // where the agent stops vs where the video is ready
+-  parts.push(path(`M${x0 + dx * 2} ${y - 14} V ${y - 34}`, 'f-lead k-red'));
+-  parts.push(text(x0 + dx * 2, y - 40, 'agent finished', 'f-label c-red', 'middle'));
+-  parts.push(path(`M${x0 + dx * 5} ${y - 14} V ${y - 34}`, 'f-lead k-blue'));
+-  parts.push(text(x0 + dx * 5, y - 40, 'video ready', 'f-label c-blue', 'middle'));
+-  // the one repair turn
+-  parts.push(path(`M${x0 + dx * 4} ${y + 58} C ${x0 + dx * 4} ${y + 92}, ${x0 + dx * 2} ${y + 92}, ${x0 + dx * 2} ${y + 58}`, 'f-lead k-red'));
+-  parts.push(text(x0 + dx * 3, y + 104, 'fails: one repair turn', 'f-small', 'middle'));
++  parts.push(anim('move-fade', 22, 30, path(`M${x0 + dx * 2} ${y - 14} V ${y - 34}`, 'f-lead k-red') + text(x0 + dx * 2, y - 40, 'agent finished', 'f-label c-red', 'middle'), { dy: 8 }));
++  parts.push(anim('move-fade', 52, 60, path(`M${x0 + dx * 5} ${y - 14} V ${y - 34}`, 'f-lead k-blue') + text(x0 + dx * 5, y - 40, 'video ready', 'f-label c-blue', 'middle'), { dy: 8 }));
++  // the one repair turn: inspect fails, the arc goes back to edit before the line moves on
++  parts.push(anim('draw', 42, 52, path(`M${x0 + dx * 4} ${y + 58} C ${x0 + dx * 4} ${y + 92}, ${x0 + dx * 2} ${y + 92}, ${x0 + dx * 2} ${y + 58}`, 'f-lead k-red')));
++  parts.push(anim('fade', 48, 56, text(x0 + dx * 3, y + 104, 'fails: one repair turn', 'f-small', 'middle')));
+   return svg('fig-loop', 836, 190, 'From a request to an exported video',
+     'Eight steps on a line: brief, ground, edit, build, inspect, preview, accept, export. The agent is finished after edit; the video is ready only after preview. A failed inspection loops back to edit once.', parts.join(''), 640);
+ }
+@@ -170,26 +189,26 @@ function loop() {
+ function timing() {
+   const parts = [];
+   const x0 = 40, y0 = 40, w = 460;
+-  parts.push(line(x0, y0, x0 + w, y0));
+-  for (let i = 0; i <= 23; i++) parts.push(line(x0 + i * 20, y0, x0 + i * 20, y0 + (i % 5 === 0 ? 8 : 4), 'f-lead'));
++  // in motion a playhead sweeps the timeline on 10..70; `at` is when it reaches an x
++  const at = (x) => 10 + 60 * ((x - x0) / w);
++  const ruler = [line(x0, y0, x0 + w, y0)];
++  for (let i = 0; i <= 23; i++) ruler.push(line(x0 + i * 20, y0, x0 + i * 20, y0 + (i % 5 === 0 ? 8 : 4), 'f-lead'));
++  parts.push(anim('fade', 0, 12, ruler.join('')));
+   const clips = [['Intro', 0, 130, 't-blue'], ['Main', 130, 170, 't-paper'], ['Main #2', 300, 90, 't-paper'], ['Outro', 390, 70, 't-paper']];
+   for (const [label, x, cw, tone] of clips) {
+-    parts.push(rect(x0 + x + 2, y0 + 20, cw - 4, 34, `${tone} f-line`));
+-    parts.push(text(x0 + x + 10, y0 + 41, label, 'f-label'));
++    parts.push(anim('dim', at(x0 + x + 2), at(x0 + x + 2) + 6, rect(x0 + x + 2, y0 + 20, cw - 4, 34, `${tone} f-line`) + text(x0 + x + 10, y0 + 41, label, 'f-label')));
+   }
+   // split and trim marks
+-  parts.push(line(x0 + 300, y0 + 10, x0 + 300, y0 + 70, 'f-lead k-red'));
+-  parts.push(text(x0 + 300, y0 + 84, 'split', 'f-small c-red', 'middle'));
+-  parts.push(path(`M${x0 + 128} ${y0 + 26} v22`, 'f-line k-blue'));
+-  parts.push(text(x0 + 128, y0 + 84, 'trim', 'f-small c-blue', 'middle'));
++  parts.push(anim('pop', at(x0 + 300), at(x0 + 300) + 5, line(x0 + 300, y0 + 10, x0 + 300, y0 + 70, 'f-lead k-red') + text(x0 + 300, y0 + 84, 'split', 'f-small c-red', 'middle')));
++  parts.push(anim('pop', at(x0 + 128), at(x0 + 128) + 5, path(`M${x0 + 128} ${y0 + 26} v22`, 'f-line k-blue') + text(x0 + 128, y0 + 84, 'trim', 'f-small c-blue', 'middle')));
+   // what changes
+-  parts.push(path(`M${x0 + w + 10} ${y0 + 37} H 560`, 'f-lead'));
+-  parts.push(rect(560, 22, 170, 34, 't-blue f-line'));
+-  parts.push(text(574, 43, 'timeline.json', 'f-label'));
+-  parts.push(text(745, 43, 'written', 'f-small'));
++  parts.push(anim('draw', 72, 80, path(`M${x0 + w + 10} ${y0 + 37} H 560`, 'f-lead')));
++  parts.push(anim('dim', 78, 88, rect(560, 22, 170, 34, 't-blue f-line') + text(574, 43, 'timeline.json', 'f-label')));
++  parts.push(anim('fade', 82, 90, text(745, 43, 'written', 'f-small')));
+   parts.push(rect(560, 72, 170, 34, 't-grey f-line'));
+   parts.push(text(574, 93, 'build', 'f-label'));
+-  parts.push(text(745, 93, 'untouched', 'f-small'));
++  parts.push(anim('fade', 88, 96, text(745, 93, 'untouched', 'f-small')));
++  parts.push(playhead(x0 + w, y0 - 10, y0 + 64, [10, 70], -w, 90));
+   return svg('fig-timing', 820, 140, 'Timing edits write timeline.json, not a new build',
+     'A timeline with four clips, a split and a trimmed edge. An arrow points to timeline.json, which is written, and to the build, which is untouched.', parts.join(''), 640);
+ }
+@@ -244,25 +263,25 @@ function filters() {
+     const [, y2] = P(cx, cy, zTop + t);
+     parts.push(line(x1, y1, x1, y2, 'f-faint'));
+   }
++  // in motion the draft bar grows on 0..86 and plane i lights up as it reaches it
+   layers.forEach(([label, sub, tone], i) => {
+     const z = i * (t + gap);
+-    parts.push(slab(P, 0, 0, z, size, size, t, tone, 'see-through'));
+     const [ax, ay] = P(size, 0, z + t);
+-    parts.push(leader(ax + 6, ay, 520, label, sub, 'right'));
++    parts.push(anim('dim', 7 + i * 13, 13 + i * 13, slab(P, 0, 0, z, size, size, t, tone, 'see-through') + leader(ax + 6, ay, 520, label, sub, 'right')));
+   });
+   // the draft, travelling up through every plane
+   const [bx, yStart] = P(size / 2, size / 2, -36);
+   const [, yEnd] = P(size / 2, size / 2, zTop + 92);
+-  parts.push(`<rect x="${bx - 6}" y="${yEnd}" width="12" height="${r(yStart - yEnd)}" class="c-blue" opacity=".45"/>`);
+-  parts.push(`<path d="M${bx - 13} ${r(yEnd + 12)} L${bx} ${r(yEnd - 4)} L${bx + 13} ${r(yEnd + 12)}" class="f-line k-blue"/>`);
+-  parts.push(text(bx, yEnd - 14, 'accepted revision', 'f-label c-blue', 'middle'));
++  parts.push(anim('grow-y', 0, 86, `<rect x="${bx - 6}" y="${yEnd}" width="12" height="${r(yStart - yEnd)}" class="c-blue" opacity=".45"/>`));
++  parts.push(anim('move-fade', 84, 96,
++    `<path d="M${bx - 13} ${r(yEnd + 12)} L${bx} ${r(yEnd - 4)} L${bx + 13} ${r(yEnd + 12)}" class="f-line k-blue"/>` +
++    text(bx, yEnd - 14, 'accepted revision', 'f-label c-blue', 'middle'), { dy: 10 }));
+   const [, yBottom] = P(size, size, 0);
+   parts.push(text(bx, yBottom + 24, 'agent draft', 'f-label', 'middle'));
+-  // the failure path, out of inspect
++  // the failure path, out of inspect, when the bar passes it
+   const [fx, fy] = P(0, size, 2 * (t + gap) + t);
+-  parts.push(path(`M${fx - 6} ${fy} H 160`, 'f-lead k-red'));
+-  parts.push(text(152, fy + 4, 'fail', 'f-label c-red', 'end'));
+-  parts.push(text(152, fy + 18, 'one repair turn', 'f-small', 'end'));
++  parts.push(anim('draw', 36, 46, path(`M${fx - 6} ${fy} H 160`, 'f-lead k-red')));
++  parts.push(anim('fade', 40, 50, text(152, fy + 4, 'fail', 'f-label c-red', 'end') + text(152, fy + 18, 'one repair turn', 'f-small', 'end')));
+   return svg('fig-filters', 760, 480, 'Every edit passes five filters',
+     'The agent’s draft travels up through five planes: capture twice, build, inspect, optional review and publish. It comes out on top as the accepted revision. A failure at inspect goes back for one repair turn.', parts.join(''), 600);
+ }
+@@ -298,14 +317,22 @@ function swap() {
+   p.push(text(20, 114, 'new build', 'f-label'));
+   p.push(rect(x0, 40, swapX - x0, 22, 't-paper f-line'));
+   p.push(text(x0 + 10, 55, 'playing', 'f-small'));
++  // in motion a playhead runs to the swap on 0..70 while the new build fills in under it
++  const at = (px) => 70 * ((px - x0) / (swapX - x0));
+   const phases = [['compile', 186, 't-grey'], ['stage', 112, 't-yellow'], ['ready', 62, 't-green']];
+   let x = x0 + 60;
+-  for (const [label, w, tone] of phases) { p.push(rect(x, 100, w, 22, `${tone} f-line`)); p.push(text(x + 8, 115, label, 'f-small')); x += w; }
+-  p.push(rect(swapX, 100, x1 - swapX, 22, 't-blue f-line'));
+-  p.push(text(swapX + 10, 115, 'playing', 'f-small'));
+-  p.push(line(swapX, 24, swapX, 140, 'f-line k-blue'));
+-  p.push(text(swapX, 160, 'swap at the playhead', 'f-label c-blue', 'middle'));
+-  p.push(text(swapX, 175, 'worker · frame · audio together', 'f-small', 'middle'));
++  for (const [label, w, tone] of phases) {
++    p.push(anim('grow-x', at(x), at(x + w), rect(x, 100, w, 22, `${tone} f-line`)));
++    p.push(anim('fade', at(x + w) - 2, at(x + w) + 4, text(x + 8, 115, label, 'f-small')));
++    x += w;
++  }
++  p.push(anim('grow-x', 72, 90, rect(swapX, 100, x1 - swapX, 22, 't-blue f-line')));
++  p.push(anim('fade', 88, 94, text(swapX + 10, 115, 'playing', 'f-small')));
++  p.push(anim('fade', 68, 78,
++    line(swapX, 24, swapX, 140, 'f-line k-blue') +
++    text(swapX, 160, 'swap at the playhead', 'f-label c-blue', 'middle') +
++    text(swapX, 175, 'worker · frame · audio together', 'f-small', 'middle')));
++  p.push(playhead(swapX, 24, 140, [0, 70], x0 - swapX, 74));
+   return svg('fig-swap', 800, 190, 'A new build replaces the old one only when it is ready',
+     'Two lanes. The old build keeps playing while the new one compiles, stages and becomes ready. At that moment both swap at the playhead, worker, frame and audio together.', p.join(''), 640);
+ }
