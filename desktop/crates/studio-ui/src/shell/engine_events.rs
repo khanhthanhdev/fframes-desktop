@@ -152,6 +152,23 @@ impl StudioShell {
         cx.notify();
     }
 
+    /// Installs the SDK an updated app ships, once per launch, unless that is turned off
+    /// in Settings → Help & About. Only while no project is open, so no build or agent
+    /// task uses the SDK it replaces.
+    fn install_sdk_update(&mut self, cx: &mut Context<Self>) {
+        if self.sdk_auto_update_tried
+            || self.sdk_auto_update_disabled
+            || !self.setup_checked
+            || self.busy
+            || self.presentation.project.is_some()
+            || self.presentation.sdk_update.is_none()
+        {
+            return;
+        }
+        self.sdk_auto_update_tried = true;
+        self.dispatch(Command::InstallSdk, cx);
+    }
+
     /// Whether `command` closes or replaces the open project.
     fn leaves_session(&self, command: &Command) -> bool {
         let current = self.presentation.project.as_ref().map(|p| &p.root);
@@ -174,6 +191,7 @@ impl StudioShell {
                 self.refresh_if_wanted();
                 // Preview news held back while the command ran.
                 self.drain_preview(cx);
+                self.install_sdk_update(cx);
             }
             EngineEvent::PreviewGated(gated) => {
                 self.preview_gated(*gated, cx);

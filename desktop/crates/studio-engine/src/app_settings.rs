@@ -37,6 +37,10 @@ pub struct AppSettings {
     /// Whether the check for a newer Studio at launch is turned off (it is on by default).
     #[serde(deserialize_with = "lenient")]
     pub update_check_disabled: bool,
+    /// Whether installing the SDK an updated app ships waits for **Install managed SDK**
+    /// (by default Studio installs it by itself when it finds one).
+    #[serde(deserialize_with = "lenient")]
+    pub sdk_auto_update_disabled: bool,
     /// The user's own MCP servers and the project tools they turned off.
     #[serde(deserialize_with = "lenient")]
     pub agent: AgentToolSettings,

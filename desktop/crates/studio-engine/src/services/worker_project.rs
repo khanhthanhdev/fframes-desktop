@@ -214,8 +214,20 @@ pub fn check_sdk_build(
         &manifest.runtime_version,
     )
     .map_err(|e| e.to_string())?;
+    check_project_build(&project, sdk, manifest, builds, manager)
+}
+
+/// Compiles `project` against `sdk` into the shared target under `builds` and renders its
+/// timeline and first frame with a preview worker. The project must be pinned to `sdk`.
+pub fn check_project_build(
+    project: &studio_project::OpenProject,
+    sdk: &Path,
+    manifest: &CompatibilityManifest,
+    builds: &Path,
+    manager: &ProcessTreeManager,
+) -> Result<(), String> {
     let environment = CompileEnvironment::resolve(sdk, manifest, builds)?;
-    let build = compile_with_cargo(&project, &environment, manager)?;
+    let build = compile_with_cargo(project, &environment, manager)?;
     let identity = fframes_studio_protocol::PreviewIdentity {
         project_id: project.manifest.project_id.clone().into(),
         open_session: uuid::Uuid::new_v4().to_string(),

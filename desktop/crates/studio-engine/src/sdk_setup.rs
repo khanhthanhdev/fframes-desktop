@@ -69,6 +69,54 @@ pub fn installed_sdk_for(
         .map(|(dir, _)| dir)
 }
 
+/// The framework releases the SDK described by `manifest` provides.
+pub fn framework_versions(
+    manifest: &CompatibilityManifest,
+) -> studio_project::lifecycle::FrameworkVersions<'_> {
+    studio_project::lifecycle::FrameworkVersions {
+        fframes: &manifest.fframes_version,
+        runtime: &manifest.runtime_version,
+        kit: manifest.kit_version.as_deref(),
+    }
+}
+
+/// Whether `project` builds and renders with the installed SDK `sdk` once upgraded to it.
+/// Upgrades a copy of the project's source under `builds`, then compiles it and renders
+/// its first frame like a preview; the project itself is not touched. Blocks for as long
+/// as the build takes.
+pub fn check_project_upgrade(
+    project: &studio_project::OpenProject,
+    sdk: &Path,
+    manifest: &CompatibilityManifest,
+    builds: &Path,
+    processes: &ProcessTreeManager,
+) -> Result<(), String> {
+    fs::create_dir_all(builds).map_err(|e| e.to_string())?;
+    let scratch = tempfile::Builder::new()
+        .prefix("upgrade-check-")
+        .tempdir_in(builds)
+        .map_err(|e| e.to_string())?;
+    let copy = scratch.path().join("project");
+    for file in &project.inventory.files {
+        let to = copy.join(file.path.as_str());
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        fs::copy(project.root.join(file.path.as_str()), &to)
+            .map_err(|e| format!("Copying {}: {e}", file.path.as_str()))?;
+    }
+    studio_project::lifecycle::upgrade_framework(
+        &copy,
+        crate::build_materialization::sdk_pin(manifest),
+        framework_versions(manifest),
+    )
+    .map_err(|e| e.to_string())?;
+    let upgraded = studio_project::open(&copy).map_err(|e| e.to_string())?;
+    crate::services::worker_project::check_project_build(
+        &upgraded, sdk, manifest, builds, processes,
+    )
+}
+
 /// What to do when no SDK bundle targets this host.
 pub fn missing_sdk_bundle_message(host: &str) -> String {
     let assemble = if cfg!(windows) {

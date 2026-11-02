@@ -555,11 +555,16 @@ impl Controller {
         record.sdk_path = Some(path);
         self.persist(record)
     }
-    /// Pins the project to another SDK by rewriting `studio.json`'s SDK pin, the way the
-    /// preset reference is written. The project then builds against that SDK's framework
-    /// crates; source that does not compile with them reports it at the next build. A
-    /// manual SDK selection is dropped, so the build picks the installed SDK of the pin.
-    pub fn repin_sdk(&mut self, sdk: studio_project::manifest::SdkPin) -> Result<(), EngineError> {
+    /// Moves the project to another SDK: rewrites `studio.json`'s SDK pin and the exact
+    /// framework versions in its Cargo manifests. The source before the change is saved as
+    /// a checkpoint first, so it can be restored as a copy. Source that does not compile
+    /// with the new framework reports it at the next build. A manual SDK selection is
+    /// dropped, so the build picks the installed SDK of the pin.
+    pub fn upgrade_sdk(
+        &mut self,
+        sdk: studio_project::manifest::SdkPin,
+        versions: studio_project::lifecycle::FrameworkVersions<'_>,
+    ) -> Result<(), EngineError> {
         self.ensure_mutable()?;
         if self.state().active_tag().is_some() {
             return Err(EngineError::Diagnostic(
@@ -568,9 +573,8 @@ impl Controller {
         }
         self.reconcile()?;
         if self.project.manifest.sdk != sdk {
-            let mut next = self.project.manifest.clone();
-            next.sdk = sdk;
-            studio_project::lifecycle::write_manifest(&self.project.root, &next)?;
+            self.checkpoint()?;
+            studio_project::lifecycle::upgrade_framework(&self.project.root, sdk, versions)?;
             self.reconcile()?;
         }
         let mut record = self.record.clone();

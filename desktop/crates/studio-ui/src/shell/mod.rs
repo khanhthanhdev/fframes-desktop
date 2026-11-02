@@ -215,6 +215,11 @@ pub struct StudioShell {
     approvals_fixture: Option<Vec<studio_engine::agent::ApprovalRule>>,
     /// Whether the launch check for a newer Studio is turned off.
     update_check_disabled: bool,
+    /// Whether the SDK an updated app ships waits for **Install managed SDK**.
+    sdk_auto_update_disabled: bool,
+    /// Whether this launch already installed (or tried to install) a shipped SDK update
+    /// by itself; a failed install is not retried until the next launch.
+    sdk_auto_update_tried: bool,
     /// The last check for a newer Studio and its answer.
     update: settings::UpdateCheck,
     /// The "update available" notice was closed for this launch.
@@ -636,6 +641,8 @@ impl StudioShell {
             permission_policy: studio_proto::PermissionPolicy::default(),
             approvals_fixture: None,
             update_check_disabled: false,
+            sdk_auto_update_disabled: false,
+            sdk_auto_update_tried: false,
             update: settings::UpdateCheck::NotChecked,
             update_dismissed: false,
             header_appearance: std::cell::Cell::new(None),

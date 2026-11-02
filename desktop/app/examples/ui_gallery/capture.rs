@@ -149,6 +149,7 @@ impl Page {
                 "agent-mcp-linked",
                 "agent-permissions-attaching",
                 "agent-cli-linked",
+                "sdk-upgrade",
             ],
             Page::Agent => &[
                 "empty",

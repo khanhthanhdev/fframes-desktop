@@ -435,21 +435,39 @@ impl StudioShell {
                     |s, cx| s.pick(Picker::SdkBundle, cx),
                 ),
             ))
-            .when(self.presentation.sdk_repin.is_some(), |controls| {
-                controls.child(FormField::row(
-                    &theme,
-                    "Installed SDK",
-                    self.action_button(
-                        "use-installed-sdk",
-                        "Use installed SDK",
-                        enabled,
-                        false,
-                        None,
-                        cx,
-                        |s, cx| s.dispatch(Command::UseInstalledSdk, cx),
-                    ),
-                ))
-            })
+            .when_some(
+                self.presentation.sdk_upgrade.as_ref(),
+                |controls, upgrade| {
+                    // After a passing check the upgrade is the suggested action.
+                    let checked = upgrade.check == Some(Ok(()));
+                    controls.child(FormField::row(
+                        &theme,
+                        "Project SDK",
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .gap(px(METRICS.space_2))
+                            .child(self.action_button(
+                                "check-sdk-upgrade",
+                                "Check project",
+                                enabled,
+                                false,
+                                None,
+                                cx,
+                                |s, cx| s.dispatch(Command::CheckSdkUpgrade, cx),
+                            ))
+                            .child(self.action_button(
+                                "upgrade-project-sdk",
+                                "Upgrade project",
+                                enabled,
+                                checked,
+                                None,
+                                cx,
+                                |s, cx| s.dispatch(Command::UpgradeProjectSdk, cx),
+                            )),
+                    ))
+                },
+            )
             .child(FormField::row(
                 &theme,
                 "This project",

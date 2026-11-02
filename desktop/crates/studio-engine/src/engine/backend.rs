@@ -45,8 +45,10 @@ pub struct Presentation {
     /// The installed SDK agent tasks compile and preview against (set only while it
     /// verifies and supports the preview contract). Separate from agent readiness.
     pub agent_sdk: Option<AgentSdk>,
-    /// See [`Backend::sdk_repin`].
-    pub sdk_repin: Option<String>,
+    /// See [`Backend::sdk_upgrade`].
+    pub sdk_upgrade: Option<SdkUpgrade>,
+    /// See [`Backend::sdk_update`].
+    pub sdk_update: Option<String>,
     /// Style-preset controls state of the open project (`None` when none is open).
     pub preset: Option<PresetView>,
     /// The open project's timing document, its clips and what can be edited now.
@@ -55,6 +57,25 @@ pub struct Presentation {
     pub props: Option<crate::props::PropsSnapshot>,
     /// The open project's slide stops, resolved against the timeline the person sees.
     pub slides: Option<crate::slides::SlidesSnapshot>,
+}
+
+/// The installed SDK the open project can be upgraded to, and what checking the
+/// project's current source against it found.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SdkUpgrade {
+    pub sdk_id: String,
+    pub fframes_version: String,
+    /// The result of [`Command::CheckSdkUpgrade`] for the current source, if it ran.
+    pub check: Option<Result<(), String>>,
+}
+
+/// A finished [`Command::CheckSdkUpgrade`]: it holds while the project's build source and
+/// the target SDK stay the same.
+pub(super) struct UpgradeCheck {
+    project: ProjectId,
+    revision: studio_project::SourceRevision,
+    sdk_digest: String,
+    result: Result<(), String>,
 }
 
 #[derive(Clone)]
@@ -78,8 +99,12 @@ pub enum Command {
     Close,
     RemoveRecent(ProjectId),
     SelectSdk(PathBuf),
-    /// Pins the open project to the active installed SDK (its own is not installed).
-    UseInstalledSdk,
+    /// Builds and renders an upgraded copy of the open project with the active installed
+    /// SDK, leaving the project as it is ([`SdkUpgrade::check`]).
+    CheckSdkUpgrade,
+    /// Upgrades the open project to the active installed SDK: its SDK pin and the exact
+    /// framework versions in its Cargo manifests, after a checkpoint.
+    UpgradeProjectSdk,
     InstallSdk,
     ImportSdkBundle(PathBuf),
     Restore(PathBuf, studio_project::SourceRevision),
@@ -109,9 +134,13 @@ pub struct Backend {
     pub sdk_home: Option<PathBuf>,
     pub sdk: String,
     pub agent_sdk: Option<AgentSdk>,
-    /// The installed SDK the open project can be moved to with
-    /// [`Command::UseInstalledSdk`]; set while the SDK it is pinned to is not installed.
-    pub sdk_repin: Option<String>,
+    /// The active installed SDK the open project can be upgraded to with
+    /// [`Command::UpgradeProjectSdk`]; set while the project is pinned to another SDK.
+    pub sdk_upgrade: Option<SdkUpgrade>,
+    /// The SDK the app ships when it differs from the active installed one (an app update
+    /// brought it); [`Command::InstallSdk`] installs it.
+    pub sdk_update: Option<String>,
+    pub(super) upgrade_check: Option<UpgradeCheck>,
     /// The manifest of the SDK the open project builds with (the project's selection or
     /// the active installation), whether or not it verified.
     pub selected_sdk: Option<CompatibilityManifest>,
@@ -333,15 +362,45 @@ impl Backend {
                     .map_err(|e| e.to_string())?;
                 self.check_sdk();
             }
-            Command::UseInstalledSdk => {
-                let home = self.sdk_home.as_deref().ok_or("SDK home unavailable")?;
-                let (_, active) = crate::sdk_setup::installed_sdks(home)
-                    .into_iter()
-                    .next()
-                    .ok_or("No SDK is installed; install the managed SDK first")?;
+            Command::CheckSdkUpgrade => {
+                let (sdk, active) = self.upgrade_target()?;
+                let root = {
+                    let controller = self.current()?;
+                    let mut controller = controller.lock();
+                    // The check is keyed to the source the presentation shows.
+                    controller.reconcile().map_err(|e| e.to_string())?;
+                    controller.project.root.clone()
+                };
+                let project = studio_project::open(&root).map_err(|e| e.to_string())?;
+                let result = crate::sdk_setup::check_project_upgrade(
+                    &project,
+                    &sdk,
+                    &active,
+                    &paths.builds(),
+                    &self.processes,
+                );
+                self.upgrade_check = Some(UpgradeCheck {
+                    project: project.manifest.project_id.clone(),
+                    revision: project.inventory.build_revision(),
+                    sdk_digest: active.digest(),
+                    result: result.clone(),
+                });
+                self.check_sdk();
+                result.map_err(|error| {
+                    format!(
+                        "The project does not build with SDK {} yet: {error}",
+                        active.sdk_id
+                    )
+                })?;
+            }
+            Command::UpgradeProjectSdk => {
+                let (_, active) = self.upgrade_target()?;
                 self.current()?
                     .lock()
-                    .repin_sdk(sdk_pin(&active))
+                    .upgrade_sdk(
+                        sdk_pin(&active),
+                        crate::sdk_setup::framework_versions(&active),
+                    )
                     .map_err(|e| e.to_string())?;
                 self.check_sdk();
             }
@@ -499,10 +558,74 @@ impl Backend {
             .or_else(|| home.map(|h| h.join("active")))
             .filter(|path| path.exists())
     }
+    /// The active installed SDK, which a project pinned to another SDK upgrades to.
+    fn upgrade_target(&self) -> Result<(PathBuf, CompatibilityManifest), String> {
+        let home = self.sdk_home.as_deref().ok_or("SDK home unavailable")?;
+        let (dir, manifest) = crate::sdk_setup::installed_sdks(home)
+            .into_iter()
+            .next()
+            .filter(|(dir, _)| *dir == home.join("active"))
+            .ok_or("No SDK is installed; install the managed SDK first")?;
+        manifest
+            .validate_for_current_app_version(self.app_version)
+            .map_err(|error| format!("The installed SDK cannot be used: {error}"))?;
+        Ok((dir, manifest))
+    }
+    /// The upgrade on offer while the open project is pinned to another SDK than the
+    /// active one, with the check that holds for its current source.
+    fn upgrade_offer(&self) -> Option<SdkUpgrade> {
+        let (_, active) = self.upgrade_target().ok()?;
+        let controller = self.controller.as_ref()?.lock();
+        let project = &controller.project;
+        if project.manifest.sdk == sdk_pin(&active) {
+            return None;
+        }
+        let revision = project.inventory.build_revision();
+        let check = self
+            .upgrade_check
+            .as_ref()
+            .filter(|check| {
+                check.project == project.manifest.project_id
+                    && check.revision == revision
+                    && check.sdk_digest == active.digest()
+            })
+            .map(|check| check.result.clone());
+        Some(SdkUpgrade {
+            sdk_id: active.sdk_id,
+            fframes_version: active.fframes_version,
+            check,
+        })
+    }
+    /// How the status line describes the upgrade on offer.
+    fn upgrade_status(&self) -> String {
+        let Some(upgrade) = &self.sdk_upgrade else {
+            return String::new();
+        };
+        let found = match &upgrade.check {
+            None => "Check project to try it on a copy".to_owned(),
+            Some(Ok(())) => "the project builds and renders with it".to_owned(),
+            Some(Err(error)) => {
+                // Cargo's output starts with progress; the first error line says why.
+                let reason = error
+                    .lines()
+                    .map(str::trim)
+                    .find(|line| line.starts_with("error"))
+                    .or_else(|| error.lines().next())
+                    .unwrap_or_default();
+                let short: String = reason.chars().take(200).collect();
+                format!("the project does not build with it yet: {short}")
+            }
+        };
+        format!(
+            "Upgrade project to SDK {} (fframes {}) · {found}",
+            upgrade.sdk_id, upgrade.fframes_version
+        )
+    }
     pub fn check_sdk(&mut self) {
         self.agent_sdk = None;
         self.selected_sdk = None;
-        self.sdk_repin = None;
+        self.sdk_update = None;
+        self.sdk_upgrade = self.upgrade_offer();
         let sdk = self.project_sdk();
         // Host prerequisites come from the SDK that is actually selected, which may be the
         // only manifest this host has; the app default stands in while none is installed.
@@ -563,11 +686,16 @@ impl Backend {
                             "This project uses SDK {}, which is not installed yet · Install managed SDK",
                             pin.release
                         )
-                    } else {
-                        self.sdk_repin = Some(selected.sdk_id.clone());
+                    } else if self.sdk_upgrade.is_some() {
                         format!(
-                            "This project is pinned to SDK {}, which is not installed · Use installed SDK {} (rewrites studio.json's SDK pin) or import the project's SDK bundle",
-                            pin.release, selected.sdk_id
+                            "This project is pinned to SDK {}, which is not installed · {} · or import the project's SDK bundle",
+                            pin.release,
+                            self.upgrade_status()
+                        )
+                    } else {
+                        format!(
+                            "This project is pinned to SDK {}, which is not installed · Import the project's SDK bundle",
+                            pin.release
                         )
                     };
                     return;
@@ -598,11 +726,16 @@ impl Backend {
                             if active.as_ref() == Some(&path)
                                 && available.digest() != selected.digest() =>
                         {
+                            self.sdk_update = Some(available.sdk_id.clone());
                             format!(
                                 "Available · {} · SDK update {} available · Install managed SDK",
                                 path.display(),
                                 available.sdk_id
                             )
+                        }
+                        // The project builds with an older installed SDK (`previous`).
+                        _ if self.sdk_upgrade.is_some() => {
+                            format!("Available · {} · {}", path.display(), self.upgrade_status())
                         }
                         _ => format!("Available · {}", path.display()),
                     }
@@ -664,7 +797,8 @@ impl Backend {
             owner: open.map(|(_, _, owner, ..)| owner),
             paths: self.paths.clone(),
             agent_sdk: self.agent_sdk.clone(),
-            sdk_repin: self.sdk_repin.clone(),
+            sdk_upgrade: self.sdk_upgrade.clone(),
+            sdk_update: self.sdk_update.clone(),
         })
     }
 }
@@ -744,12 +878,14 @@ mod tests {
     }
 
     #[test]
-    fn use_installed_sdk_repins_a_project_whose_sdk_is_not_installed() {
+    fn upgrade_moves_a_project_whose_sdk_is_not_installed_to_the_active_sdk() {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path().join("video");
         let paths = AppPaths::new(temp.path().join("history")).unwrap();
         let mut old = CompatibilityManifest::default_linux_x64();
         old.sdk_id = "studio-sdk-old".into();
+        old.fframes_version = "1.2.0".into();
+        old.runtime_version = "0.1.0".into();
         studio_project::create(
             &root,
             "Video",
@@ -761,6 +897,7 @@ mod tests {
         let sdk_home = temp.path().join("sdk");
         let mut installed = CompatibilityManifest::default_linux_x64();
         installed.target_triple = CompatibilityManifest::host_target().unwrap().into();
+        assert_ne!(installed.fframes_version, old.fframes_version);
         fs::create_dir_all(sdk_home.join("active")).unwrap();
         fs::write(
             sdk_home.join("active/compatibility.json"),
@@ -778,7 +915,9 @@ mod tests {
             sdk_home: Some(sdk_home),
             sdk: String::new(),
             agent_sdk: None,
-            sdk_repin: None,
+            sdk_upgrade: None,
+            sdk_update: None,
+            upgrade_check: None,
             selected_sdk: None,
             closed: Arc::new(AtomicBool::new(false)),
             processes: studio_bootstrap::ProcessTreeManager::new(),
@@ -786,15 +925,60 @@ mod tests {
             catalog: Catalog::default(),
             preset_report: None,
             environment: StudioEnvironment::system(),
-            app_version: "0.0.0",
+            app_version: "0.2.0",
         };
         let source = fs::read(root.join("src/lib.rs")).unwrap();
+        let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+        fs::write(
+            root.join("Cargo.toml"),
+            format!("# Kept by the upgrade\n{cargo}"),
+        )
+        .unwrap();
+        backend.check_sdk();
+        assert_eq!(
+            backend.sdk_upgrade,
+            Some(SdkUpgrade {
+                sdk_id: installed.sdk_id.clone(),
+                fframes_version: installed.fframes_version.clone(),
+                check: None,
+            })
+        );
 
-        backend.command(Command::UseInstalledSdk).unwrap();
+        backend.command(Command::UpgradeProjectSdk).unwrap();
 
         let reopened = studio_project::open(&root).unwrap().manifest;
         assert_eq!(reopened.sdk, sdk_pin(&installed));
         assert_eq!(fs::read(root.join("src/lib.rs")).unwrap(), source);
+        let cargo: toml::Value = fs::read_to_string(root.join("Cargo.toml"))
+            .unwrap()
+            .parse()
+            .unwrap();
+        let version = |name: &str| cargo["dependencies"][name]["version"].as_str().unwrap();
+        assert_eq!(
+            version("fframes"),
+            format!("={}", installed.fframes_version)
+        );
+        assert_eq!(
+            version("fframes-studio-runtime"),
+            format!("={}", installed.runtime_version)
+        );
+        assert!(
+            fs::read_to_string(root.join("Cargo.toml"))
+                .unwrap()
+                .starts_with("# Kept by the upgrade\n")
+        );
+        // The source before the upgrade is a checkpoint, and nothing is left to offer.
+        assert_eq!(backend.sdk_upgrade, None);
+        let controller = backend.controller.as_ref().unwrap().lock();
+        let before = temp.path().join("before");
+        controller
+            .export_checkpoint(controller.state().accepted(), &before)
+            .unwrap();
+        assert_eq!(
+            studio_project::open(&before).unwrap().manifest.sdk,
+            sdk_pin(&old)
+        );
+        drop(controller);
         assert_eq!(
             crate::sdk_setup::installed_sdk_for(&reopened, backend.sdk_home.as_ref().unwrap()),
             backend.sdk_home.as_ref().map(|home| home.join("active"))
@@ -832,7 +1016,9 @@ mod tests {
             sdk_home: None,
             sdk: String::new(),
             agent_sdk: None,
-            sdk_repin: None,
+            sdk_upgrade: None,
+            sdk_update: None,
+            upgrade_check: None,
             selected_sdk: None,
             closed: Arc::new(AtomicBool::new(false)),
             processes: studio_bootstrap::ProcessTreeManager::new(),

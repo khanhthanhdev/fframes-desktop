@@ -337,6 +337,7 @@ pub(super) struct SettingsWriter {
     latest_export: AtomicU64,
     latest_setup: AtomicU64,
     latest_update_check: AtomicU64,
+    latest_sdk_auto_update: AtomicU64,
     latest_agent_tools: AtomicU64,
     write: parking_lot::Mutex<()>,
 }
@@ -620,24 +621,48 @@ impl StudioShell {
     /// Turns the launch check on or off and saves it in the background.
     fn set_update_check(&mut self, enabled: bool, cx: &mut Context<Self>) {
         self.update_check_disabled = !enabled;
+        self.save_update_setting(
+            |writer| &writer.latest_update_check,
+            move |settings| settings.update_check_disabled = !enabled,
+            cx,
+        );
+    }
+
+    /// Turns installing the SDK an updated app ships by itself on or off, and saves it.
+    fn set_sdk_auto_update(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.sdk_auto_update_disabled = !enabled;
+        self.save_update_setting(
+            |writer| &writer.latest_sdk_auto_update,
+            move |settings| settings.sdk_auto_update_disabled = !enabled,
+            cx,
+        );
+    }
+
+    /// Saves one Updates setting in the background with `apply`; a save that a later
+    /// choice of the same setting (counted by `latest`) overtook is skipped.
+    fn save_update_setting(
+        &mut self,
+        latest: fn(&SettingsWriter) -> &AtomicU64,
+        apply: impl FnOnce(&mut AppSettings) + Send + 'static,
+        cx: &mut Context<Self>,
+    ) {
         cx.notify();
         let Some(paths) = self.presentation.paths.clone() else {
             self.error = Some("Cannot save the setting: the app's storage is unavailable".into());
             return;
         };
-        let disabled = self.update_check_disabled;
         let writer = self.settings_writer.clone();
-        let generation = writer.latest_update_check.fetch_add(1, Ordering::AcqRel) + 1;
+        let generation = latest(&writer).fetch_add(1, Ordering::AcqRel) + 1;
         cx.spawn(async move |this, cx| {
             let result = cx
                 .background_executor()
                 .spawn(async move {
                     let _write = writer.write.lock();
-                    if writer.latest_update_check.load(Ordering::Acquire) != generation {
+                    if latest(&writer).load(Ordering::Acquire) != generation {
                         return Ok(());
                     }
                     let mut settings = AppSettings::load(&paths);
-                    settings.update_check_disabled = disabled;
+                    apply(&mut settings);
                     settings.save(&paths)
                 })
                 .await;
@@ -657,10 +682,16 @@ impl StudioShell {
         let theme = self.theme;
         let colors = theme.colors;
         let entity = cx.entity();
+        let toggle_entity = entity.clone();
         let toggle = Toggle::new(&theme, "update-check", !self.update_check_disabled)
             .label("Check for updates at launch")
             .on_change(move |enabled, _, cx| {
-                entity.update(cx, |shell, cx| shell.set_update_check(enabled, cx))
+                toggle_entity.update(cx, |shell, cx| shell.set_update_check(enabled, cx))
+            });
+        let sdk_toggle = Toggle::new(&theme, "sdk-auto-update", !self.sdk_auto_update_disabled)
+            .label("Install SDK updates automatically")
+            .on_change(move |enabled, _, cx| {
+                entity.update(cx, |shell, cx| shell.set_sdk_auto_update(enabled, cx))
             });
         let status = match &self.update {
             UpdateCheck::NotChecked => "Not checked yet".to_owned(),
@@ -747,6 +778,14 @@ impl StudioShell {
                              installed without you.",
                         )
                         .control(toggle)
+                        .into_any_element(),
+                    SettingRow::new(&theme, "Install SDK updates automatically")
+                        .description(
+                            "When an updated Studio brings a newer managed SDK, Studio installs \
+                             it at launch. The SDK it replaces stays installed, so projects \
+                             pinned to it keep building until you upgrade them.",
+                        )
+                        .control(sdk_toggle)
                         .into_any_element(),
                     SettingRow::new(&theme, "Latest version")
                         .description(status)
@@ -943,9 +982,25 @@ impl StudioShell {
         });
         let mut agent_tab = AgentTab::Review;
         self.approvals_fixture = None;
-        // Only the attaching Permissions state has a project open.
-        self.presentation.project = (state == 26).then(|| super::fixture::sample_project(1));
+        // Only the attaching Permissions state and the SDK upgrade have a project open.
+        self.presentation.project =
+            matches!(state, 26 | 28).then(|| super::fixture::sample_project(1));
+        self.presentation.sdk = String::new();
+        self.presentation.sdk_upgrade = None;
         match state {
+            // 28 the SDK page of a project pinned to an older SDK, after a passing check.
+            28 => {
+                self.settings_page = SettingsPage::Sdk;
+                self.presentation.sdk = "Available · C:\\Users\\you\\.fframes\\sdk\\previous · \
+                    Upgrade project to SDK studio-sdk-x86_64-pc-windows-msvc-v5 (fframes 1.4.0) · \
+                    the project builds and renders with it"
+                    .into();
+                self.presentation.sdk_upgrade = Some(studio_engine::engine::backend::SdkUpgrade {
+                    sdk_id: "studio-sdk-x86_64-pc-windows-msvc-v5".into(),
+                    fframes_version: "1.4.0".into(),
+                    check: Some(Ok(())),
+                });
+            }
             26 => {
                 self.settings_page = SettingsPage::Agent;
                 agent_tab = AgentTab::Permissions;

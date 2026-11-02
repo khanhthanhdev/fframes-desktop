@@ -225,6 +225,117 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<(), ProjectError> {
     sync_directory(parent)
 }
 
+/// The exact framework releases an SDK provides, which a project's Cargo manifests name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameworkVersions<'a> {
+    pub fframes: &'a str,
+    /// `fframes-studio-runtime`, `fframes-studio-protocol` and `fframes-studio-kit`.
+    pub runtime: &'a str,
+    /// The crates.io `fframes-kit`, when the SDK vendors one.
+    pub kit: Option<&'a str>,
+}
+
+impl FrameworkVersions<'_> {
+    fn for_crate(&self, name: &str) -> Option<&str> {
+        match name {
+            "fframes" => Some(self.fframes),
+            "fframes-studio-runtime" | "fframes-studio-protocol" | "fframes-studio-kit" => {
+                Some(self.runtime)
+            }
+            "fframes-kit" => self.kit,
+            _ => None,
+        }
+    }
+}
+
+/// Moves the project at `root` to another SDK: every exact framework version in its Cargo
+/// manifests becomes `versions`' release and `studio.json` is pinned to `sdk`. Comments and
+/// formatting of the manifests are kept, and dependencies inherited from a workspace, or
+/// given without a version, are left alone. Every manifest is parsed before anything is
+/// written, so a manifest that does not parse changes nothing.
+pub fn upgrade_framework(
+    root: &Path,
+    sdk: SdkPin,
+    versions: FrameworkVersions<'_>,
+) -> Result<(), ProjectError> {
+    let project = open(root)?;
+    let mut rewritten = Vec::new();
+    for file in &project.inventory.files {
+        let path = &file.path;
+        if Path::new(path.as_str()).file_name() != Some("Cargo.toml".as_ref()) {
+            continue;
+        }
+        let mut text = String::new();
+        path.open_file(&project.root)?
+            .take(1024 * 1024 + 1)
+            .read_to_string(&mut text)
+            .map_err(|e| io_error(&project.root, e))?;
+        let native = project.root.join(path.as_str());
+        if text.len() > 1024 * 1024 {
+            return Err(io_error(&native, "Cargo manifest exceeds 1 MiB"));
+        }
+        let mut document: toml_edit::DocumentMut = text
+            .parse()
+            .map_err(|e| ProjectError::new(&native, "Cargo", e, "Correct Cargo.toml"))?;
+        if set_framework_versions(document.as_item_mut(), versions) {
+            rewritten.push((native, document.to_string()));
+        }
+    }
+    for (path, text) in rewritten {
+        atomic_write(&path, text.as_bytes())?;
+    }
+    let mut manifest = project.manifest;
+    manifest.sdk = sdk;
+    write_manifest(&project.root, &manifest)
+}
+
+/// Sets the framework dependencies in every dependency table under `item` (including
+/// `[workspace.dependencies]` and `[target.*.dependencies]`); whether one changed.
+fn set_framework_versions(item: &mut toml_edit::Item, versions: FrameworkVersions<'_>) -> bool {
+    let Some(table) = item.as_table_like_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for (key, value) in table.iter_mut() {
+        if !matches!(
+            key.get(),
+            "dependencies" | "dev-dependencies" | "build-dependencies"
+        ) {
+            changed |= set_framework_versions(value, versions);
+            continue;
+        }
+        let Some(dependencies) = value.as_table_like_mut() else {
+            continue;
+        };
+        for (name, dependency) in dependencies.iter_mut() {
+            let crate_name = dependency
+                .get("package")
+                .and_then(toml_edit::Item::as_str)
+                .unwrap_or(name.get())
+                .to_owned();
+            let Some(release) = versions.for_crate(&crate_name) else {
+                continue;
+            };
+            let version = if dependency.is_str() {
+                dependency.as_value_mut()
+            } else {
+                dependency
+                    .as_table_like_mut()
+                    .and_then(|table| table.get_mut("version"))
+                    .and_then(toml_edit::Item::as_value_mut)
+            };
+            let wanted = format!("={release}");
+            if let Some(version) = version.filter(|v| v.as_str() != Some(&wanted)) {
+                let decor = version.decor().clone();
+                *version = toml_edit::Value::from(wanted);
+                *version.decor_mut() = decor;
+                changed = true;
+            }
+        }
+    }
+    changed
+}
+
 /// What a new project starts from.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
 pub enum ProjectTemplate {

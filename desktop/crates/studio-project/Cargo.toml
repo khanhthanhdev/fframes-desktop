@@ -13,6 +13,7 @@ thiserror = { workspace = true }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 syn = { version = "2.0.119", features = ["full", "visit"] }
 toml = "0.8"
+toml_edit = "0.22"
 icu_normalizer = { version = "2.3", default-features = false, features = ["compiled_data"] }
 tempfile = { workspace = true }
 uuid = { workspace = true }

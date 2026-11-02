@@ -308,3 +308,94 @@ fn the_slide_deck_kit_is_the_sdk_kit() {
         Some(kit)
     );
 }
+
+#[test]
+fn upgrade_rewrites_every_framework_version_and_nothing_else() {
+    use studio_project::lifecycle::{FrameworkVersions, upgrade_framework};
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("video");
+    create(&root, "Video", pin(), "1.1.0", "0.1.0").unwrap();
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "studio-video"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+fframes = { version = "=1.1.0", default-features = false } # framework
+fframes-studio-runtime = "=0.1.0"
+fframes-kit = { version = "=0.1.0", features = ["studio"] }
+studio-protocol = { package = "fframes-studio-protocol", version = "=0.1.0" }
+helper = { path = "helper" }
+serde = "1"
+
+[target.'cfg(windows)'.dev-dependencies.fframes-studio-kit]
+version = "=0.1.0"
+
+[workspace]
+members = ["helper"]
+
+[workspace.dependencies]
+fframes = "=1.1.0"
+"#,
+    )
+    .unwrap();
+    fs::create_dir_all(root.join("helper/src")).unwrap();
+    fs::write(root.join("helper/src/lib.rs"), "").unwrap();
+    let helper = "[package]\nname = \"helper\"\nversion = \"0.1.0\"\n\n[dependencies]\nfframes = { workspace = true }\nfframes-studio-runtime = { path = \"../vendor\" }\n";
+    fs::write(root.join("helper/Cargo.toml"), helper).unwrap();
+    let next = SdkPin {
+        release: "sdk-v2".into(),
+        compatibility_sha256: "b".repeat(64),
+    };
+
+    // An SDK without the kit leaves the kit's line for the build to report.
+    upgrade_framework(
+        &root,
+        next.clone(),
+        FrameworkVersions {
+            fframes: "1.3.0",
+            runtime: "0.2.0",
+            kit: None,
+        },
+    )
+    .unwrap();
+
+    let cargo = fs::read_to_string(root.join("Cargo.toml")).unwrap();
+    assert!(
+        cargo.contains(r#"fframes = { version = "=1.3.0", default-features = false } # framework"#),
+        "{cargo}"
+    );
+    assert!(
+        cargo.contains(r#"fframes-studio-runtime = "=0.2.0""#),
+        "{cargo}"
+    );
+    assert!(
+        cargo.contains(r#"fframes-kit = { version = "=0.1.0", features = ["studio"] }"#),
+        "{cargo}"
+    );
+    assert!(
+        cargo.contains(
+            r#"studio-protocol = { package = "fframes-studio-protocol", version = "=0.2.0" }"#
+        ),
+        "{cargo}"
+    );
+    assert!(
+        cargo.contains(
+            "[target.'cfg(windows)'.dev-dependencies.fframes-studio-kit]\nversion = \"=0.2.0\""
+        ),
+        "{cargo}"
+    );
+    assert!(
+        cargo.contains("[workspace.dependencies]\nfframes = \"=1.3.0\""),
+        "{cargo}"
+    );
+    assert!(cargo.contains(r#"serde = "1""#), "{cargo}");
+    // Inherited and versionless dependencies keep their lines byte for byte.
+    assert_eq!(
+        fs::read_to_string(root.join("helper/Cargo.toml")).unwrap(),
+        helper
+    );
+    assert_eq!(open(&root).unwrap().manifest.sdk, next);
+}
