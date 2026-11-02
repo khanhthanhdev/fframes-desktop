@@ -39,7 +39,13 @@ pub(super) enum UpdateCheck {
     NotChecked,
     Checking,
     UpToDate,
+    /// Newer, and this install updates through the release page (a ZIP, Scoop or a
+    /// development build), or downloading it failed.
     Available(AvailableUpdate),
+    /// Newer, and its Setup.exe is downloading for this Setup install.
+    Downloading(AvailableUpdate),
+    /// Its Setup.exe is downloaded and verified; it installs when Studio quits.
+    Ready(AvailableUpdate, std::path::PathBuf),
     Failed(String),
 }
 
@@ -594,7 +600,10 @@ impl StudioShell {
     /// Asks GitHub for a newer Studio in the background; the answer shows on the
     /// General page and, when there is one, as a notice under the header.
     pub fn check_for_update(&mut self, cx: &mut Context<Self>) {
-        if self.update == UpdateCheck::Checking {
+        if matches!(
+            self.update,
+            UpdateCheck::Checking | UpdateCheck::Downloading(_) | UpdateCheck::Ready(..)
+        ) {
             return;
         }
         self.update = UpdateCheck::Checking;
@@ -612,10 +621,85 @@ impl StudioShell {
                     Ok(None) => UpdateCheck::UpToDate,
                     Err(error) => UpdateCheck::Failed(error),
                 };
+                shell.download_update(cx);
                 cx.notify();
             });
         })
         .detach();
+    }
+
+    /// Downloads the available update in the background when Setup.exe installed this
+    /// Studio; it then installs when Studio quits (or on **Restart to update**). Other
+    /// installs keep the release page link.
+    fn download_update(&mut self, cx: &mut Context<Self>) {
+        let UpdateCheck::Available(update) = &self.update else {
+            return;
+        };
+        let (Some(_), Some(paths)) = (
+            studio_engine::updates::setup_install_dir(),
+            self.presentation.paths.clone(),
+        ) else {
+            return;
+        };
+        let update = update.clone();
+        self.update = UpdateCheck::Downloading(update.clone());
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let download = update.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    studio_engine::updates::download_update(&download, &paths.data.join("updates"))
+                })
+                .await;
+            let _ = this.update(cx, |shell, cx| {
+                shell.update = match result {
+                    Ok(setup) => UpdateCheck::Ready(update, setup),
+                    Err(error) => {
+                        shell.error = Some(error);
+                        UpdateCheck::Available(update)
+                    }
+                };
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    /// Quits Studio and installs the downloaded update, then opens the new version.
+    fn restart_to_update(&mut self, cx: &mut Context<Self>) {
+        if matches!(self.update, UpdateCheck::Ready(..)) {
+            self.relaunch_after_update = true;
+            cx.quit();
+        }
+    }
+
+    /// Starts installing a downloaded update once Studio has exited; called while quitting.
+    pub(super) fn install_update_on_quit(&self) {
+        if let UpdateCheck::Ready(_, setup) = &self.update {
+            // A failure leaves the downloaded file for the next quit to try again.
+            let _ = studio_engine::updates::install_after_exit(setup, self.relaunch_after_update);
+        }
+    }
+
+    /// The update action for the notice and Help & About: install a downloaded update, or
+    /// open the release page when this install cannot update itself.
+    pub(super) fn update_action(&self, cx: &mut Context<Self>) -> Option<crate::kit::Button> {
+        match &self.update {
+            UpdateCheck::Available(update) => {
+                Some(self.download_update_button(update.url.clone(), cx))
+            }
+            UpdateCheck::Ready(..) => Some(self.action_button(
+                "restart-to-update",
+                "Restart to update",
+                true,
+                true,
+                None,
+                cx,
+                |shell, cx| shell.restart_to_update(cx),
+            )),
+            _ => None,
+        }
     }
 
     /// Turns the launch check on or off and saves it in the background.
@@ -701,6 +785,13 @@ impl StudioShell {
                 "fframes Studio {} is available (this is {})",
                 update.version, self.app_version
             ),
+            UpdateCheck::Downloading(update) => {
+                format!("Downloading fframes Studio {}…", update.version)
+            }
+            UpdateCheck::Ready(update, _) => format!(
+                "fframes Studio {} is downloaded and installs when you quit (this is {})",
+                update.version, self.app_version
+            ),
             UpdateCheck::Failed(error) => error.clone(),
         };
         let mut actions =
@@ -711,14 +802,19 @@ impl StudioShell {
                 .child(self.action_button(
                     "check-update",
                     "Check now",
-                    self.update != UpdateCheck::Checking,
+                    !matches!(
+                        self.update,
+                        UpdateCheck::Checking
+                            | UpdateCheck::Downloading(_)
+                            | UpdateCheck::Ready(..)
+                    ),
                     false,
                     Some(Icon::RefreshCw),
                     cx,
                     |shell, cx| shell.check_for_update(cx),
                 ));
-        if let UpdateCheck::Available(update) = &self.update {
-            actions = actions.child(self.download_update_button(update.url.clone(), cx));
+        if let Some(action) = self.update_action(cx) {
+            actions = actions.child(action);
         }
         // Oleafly's About card: the name and version, a line on what the app is, and the
         // update actions under them.
@@ -774,8 +870,9 @@ impl StudioShell {
                 PanelSection::new(&theme, "Updates").children([
                     SettingRow::new(&theme, "Check for updates at launch")
                         .description(
-                            "Studio asks GitHub for a newer release. Nothing is downloaded or \
-                             installed without you.",
+                            "Studio asks GitHub for a newer release. Installed with Setup, it \
+                             downloads the update in the background, checks its checksum and \
+                             installs it when you quit; otherwise it links the release page.",
                         )
                         .control(toggle)
                         .into_any_element(),
@@ -987,7 +1084,19 @@ impl StudioShell {
             matches!(state, 26 | 28).then(|| super::fixture::sample_project(1));
         self.presentation.sdk = String::new();
         self.presentation.sdk_upgrade = None;
+        self.update = UpdateCheck::NotChecked;
         match state {
+            // 29 Help & About with a downloaded update waiting to install.
+            29 => {
+                self.settings_page = SettingsPage::About;
+                self.update = UpdateCheck::Ready(
+                    AvailableUpdate {
+                        version: "0.2.3".into(),
+                        url: String::new(),
+                    },
+                    "fframes-studio-0.2.3-setup.exe".into(),
+                );
+            }
             // 28 the SDK page of a project pinned to an older SDK, after a passing check.
             28 => {
                 self.settings_page = SettingsPage::Sdk;

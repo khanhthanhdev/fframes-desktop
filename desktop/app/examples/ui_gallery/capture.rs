@@ -150,6 +150,7 @@ impl Page {
                 "agent-permissions-attaching",
                 "agent-cli-linked",
                 "sdk-upgrade",
+                "about-update-ready",
             ],
             Page::Agent => &[
                 "empty",

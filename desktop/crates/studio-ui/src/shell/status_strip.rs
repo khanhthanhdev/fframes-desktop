@@ -44,28 +44,39 @@ impl StudioShell {
             }
             notices.push(notice.into_any_element());
         }
-        if let super::settings::UpdateCheck::Available(update) = &self.update
+        let update_notice = match &self.update {
+            super::settings::UpdateCheck::Available(update) => Some((
+                format!("fframes Studio {} is available", update.version),
+                format!(
+                    "You have {}. The release page has the installer and the notes.",
+                    self.app_version
+                ),
+            )),
+            super::settings::UpdateCheck::Ready(update, _) => Some((
+                format!("fframes Studio {} is ready to install", update.version),
+                format!(
+                    "You have {}. It installs when you quit Studio, or restart now.",
+                    self.app_version
+                ),
+            )),
+            _ => None,
+        };
+        if let Some((title, body)) = update_notice
+            && let Some(action) = self.update_action(cx)
             && !self.update_dismissed
         {
             let entity = cx.entity();
             notices.push(
-                Notice::new(
-                    "update",
-                    Tone::Info,
-                    format!("fframes Studio {} is available", update.version),
-                )
-                .body(format!(
-                    "You have {}. The release page has the installer and the notes.",
-                    self.app_version
-                ))
-                .action(self.download_update_button(update.url.clone(), cx))
-                .on_dismiss(move |_, cx| {
-                    entity.update(cx, |shell, cx| {
-                        shell.update_dismissed = true;
-                        cx.notify();
+                Notice::new("update", Tone::Info, title)
+                    .body(body)
+                    .action(action)
+                    .on_dismiss(move |_, cx| {
+                        entity.update(cx, |shell, cx| {
+                            shell.update_dismissed = true;
+                            cx.notify();
+                        })
                     })
-                })
-                .into_any_element(),
+                    .into_any_element(),
             );
         }
         let Some(p) = &self.presentation.project else {

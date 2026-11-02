@@ -224,6 +224,8 @@ pub struct StudioShell {
     update: settings::UpdateCheck,
     /// The "update available" notice was closed for this launch.
     update_dismissed: bool,
+    /// Quitting for **Restart to update**: Studio opens again once the update installs.
+    relaunch_after_update: bool,
     /// The appearance the cached header last rendered with, for the telemetry.
     header_appearance: std::cell::Cell<Option<studio_theme::Appearance>>,
     /// The canvas message's toast at the foot of the stage; the player renders it.
@@ -474,6 +476,8 @@ impl StudioShell {
         let quit_audio = audio.clone();
         let builds = environment.builds.clone();
         cx.on_app_quit(move |shell, cx| {
+            // The installer waits for this process to exit, so it runs after the cleanup below.
+            shell.install_update_on_quit();
             shutdown.store(true, Ordering::Release);
             shell.cancel_export(cx);
             quit_audio.shutdown();
@@ -645,6 +649,7 @@ impl StudioShell {
             sdk_auto_update_tried: false,
             update: settings::UpdateCheck::NotChecked,
             update_dismissed: false,
+            relaunch_after_update: false,
             header_appearance: std::cell::Cell::new(None),
             canvas_toast: Default::default(),
             create_choice: None,
