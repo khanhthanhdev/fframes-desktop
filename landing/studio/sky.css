@@ -18,14 +18,26 @@
 }
 
 :root {
-  /* The sky mixes dawn into noon by --a and noon into dusk by --b; sky.js sets both from the
-     scroll position. Without it the sky stays at noon. Every stop stays blue and white. */
-  --sky-top: color-mix(in oklab, color-mix(in oklab, #a9d3f6, #6db8f7 var(--a, 100%)), #5a86d8 var(--b, 0%));
-  --sky-high: color-mix(in oklab, color-mix(in oklab, #c6e3fb, #93cdfb var(--a, 100%)), #7ba3e8 var(--b, 0%));
-  --sky-mid: color-mix(in oklab, color-mix(in oklab, #def0fd, #b8defd var(--a, 100%)), #a6c2f1 var(--b, 0%));
-  --sky-low: color-mix(in oklab, color-mix(in oklab, #eff7fe, #d9edfd var(--a, 100%)), #ccdcf7 var(--b, 0%));
-  --sky-horizon: color-mix(in oklab, color-mix(in oklab, #fdfbf7, #eef6fd var(--a, 100%)), #ecf0fc var(--b, 0%));
-  --sky-haze: color-mix(in oklab, color-mix(in oklab, rgb(255 238 220 / 0.7), rgb(255 244 225 / 0.45) var(--a, 100%)), rgb(226 222 255 / 0.5) var(--b, 0%));
+  /* Noon is the base sky; the dawn and dusk layers fade over it as the page scrolls (sky.js
+     sets their opacity). Without scripts the sky stays at noon. */
+  --sky-top: #6db8f7;
+  --sky-high: #93cdfb;
+  --sky-mid: #b8defd;
+  --sky-low: #d9edfd;
+  --sky-horizon: #eef6fd;
+  --sky-haze: rgb(255 244 225 / 0.45);
+  --dawn-top: #a9d3f6;
+  --dawn-high: #c6e3fb;
+  --dawn-mid: #def0fd;
+  --dawn-low: #eff7fe;
+  --dawn-horizon: #fdfbf7;
+  --dawn-haze: rgb(255 238 220 / 0.7);
+  --dusk-top: #5a86d8;
+  --dusk-high: #7ba3e8;
+  --dusk-mid: #a6c2f1;
+  --dusk-low: #ccdcf7;
+  --dusk-horizon: #ecf0fc;
+  --dusk-haze: rgb(226 222 255 / 0.5);
   --sky-ray: rgb(255 250 232 / 0.16);
   --sun-core: #fffdf0;
   --sun-glow: rgb(255 248 214 / 0.55);
@@ -46,19 +58,25 @@
   --warn: #b45309;
   --warn-soft: #fff6dc;
   --bad: #b91c1c;
-  --gradient-text: linear-gradient(100deg, #2f74f2 0%, #4f8cff 40%, #8ab8ff 100%);
+  --gradient-text: linear-gradient(100deg, #1d5fe0 0%, #2f74f2 50%, #5b9bff 100%);
+  /* Controls: one flat surface with a hairline border. */
+  --surface: #fff;
+  --surface-hover: #f3f7fd;
+  --line: rgb(10 35 66 / 0.1);
+  --line-strong: rgb(10 35 66 / 0.2);
+  --control-shadow: 0 1px 2px rgb(10 35 66 / 0.06);
 
   --glass: linear-gradient(160deg, rgb(255 255 255 / 0.78), rgb(255 255 255 / 0.44));
   --glass-solid: rgb(255 255 255 / 0.6);
   --glass-strong: rgb(255 255 255 / 0.92);
   --glass-border: rgb(255 255 255 / 0.85);
   --glass-rule: rgb(20 70 140 / 0.1);
-  --glass-shadow: inset 0 1px 0 #fffcf0, inset 0 -1px 0 rgb(255 255 255 / 0.3),
-    0 22px 48px -22px rgb(20 70 140 / 0.38), 0 2px 6px rgb(20 70 140 / 0.06);
-  --glass-shadow-hover: inset 0 1px 0 #fffcf0, inset 0 -1px 0 rgb(255 255 255 / 0.4),
-    0 34px 64px -26px rgb(20 70 140 / 0.48), 0 4px 10px rgb(20 70 140 / 0.08);
+  --glass-shadow: inset 0 1px 0 rgb(255 255 255 / 0.7), 0 16px 40px -22px rgb(20 70 140 / 0.3),
+    0 1px 2px rgb(20 70 140 / 0.05);
+  --glass-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.8), 0 24px 52px -24px rgb(20 70 140 / 0.38),
+    0 2px 6px rgb(20 70 140 / 0.06);
   --glass-blur: blur(22px) saturate(1.6);
-  --action-shadow: inset 0 1px 0 rgb(255 255 255 / 0.25), 0 10px 24px -10px rgb(37 99 235 / 0.7);
+  --action-shadow: 0 1px 2px rgb(16 40 90 / 0.2), 0 8px 18px -10px rgb(37 99 235 / 0.6);
 
   --font-sans: "Geist", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
@@ -183,18 +201,38 @@ button {
 }
 
 /* Sky ------------------------------------------------------------------------------------ */
-/* The gradient and near clouds stay with the viewport; the far clouds scroll with the page,
-   repeat every 2200px and drift at their own speed (--sy, set by sky.js). Each cloud is a few
-   soft ellipses over a flat shadow. */
-body::before,
-body::after {
-  content: "";
+/* Fixed layers behind the page. Scrolling only changes the opacity of the dawn and dusk layers
+   and the transform of the sun, its rays and the far clouds (sky.js), so the sky is painted
+   once and then moved by the compositor. Each cloud is a few soft ellipses over a flat shadow. */
+.sky {
   position: fixed;
   inset: 0;
-  z-index: -3;
+  z-index: -1;
+  overflow: hidden;
   pointer-events: none;
+  background:
+    radial-gradient(90% 40% at 50% 100%, var(--sky-haze), transparent 70%),
+    linear-gradient(var(--sky-top) 0%, var(--sky-high) 28%, var(--sky-mid) 58%, var(--sky-low) 82%, var(--sky-horizon) 100%);
 }
-body::before {
+.sky > i {
+  position: absolute;
+  inset: 0;
+}
+.sky-dawn,
+.sky-dusk {
+  opacity: 0;
+}
+.sky-dawn {
+  background:
+    radial-gradient(90% 40% at 50% 100%, var(--dawn-haze), transparent 70%),
+    linear-gradient(var(--dawn-top) 0%, var(--dawn-high) 28%, var(--dawn-mid) 58%, var(--dawn-low) 82%, var(--dawn-horizon) 100%);
+}
+.sky-dusk {
+  background:
+    radial-gradient(90% 40% at 50% 100%, var(--dusk-haze), transparent 70%),
+    linear-gradient(var(--dusk-top) 0%, var(--dusk-high) 28%, var(--dusk-mid) 58%, var(--dusk-low) 82%, var(--dusk-horizon) 100%);
+}
+.sky-near {
   background:
     radial-gradient(62px 42px at calc(9% - 28px) 16%, var(--cloud) 0%, var(--cloud-edge) 45%, transparent 72%),
     radial-gradient(69px 51px at calc(9% + 28px) calc(16% - 6px), var(--cloud) 0%, var(--cloud-edge) 45%, transparent 72%),
@@ -215,13 +253,12 @@ body::before {
     radial-gradient(132px 22px at calc(4% + 2px) calc(66% + 24px), var(--cloud-shade) 0%, transparent 72%),
     radial-gradient(46px 31px at calc(80% - 20px) 82%, var(--cloud) 0%, var(--cloud-edge) 45%, transparent 72%),
     radial-gradient(51px 37px at calc(80% + 20px) calc(82% - 4px), var(--cloud) 0%, var(--cloud-edge) 45%, transparent 72%),
-    radial-gradient(112px 19px at calc(80% + 2px) calc(82% + 20px), var(--cloud-shade) 0%, transparent 72%),
-    radial-gradient(90% 40% at 50% 100%, var(--sky-haze), transparent 70%),
-    linear-gradient(var(--sky-top) 0%, var(--sky-high) 28%, var(--sky-mid) 58%, var(--sky-low) 82%, var(--sky-horizon) 100%);
+    radial-gradient(112px 19px at calc(80% + 2px) calc(82% + 20px), var(--cloud-shade) 0%, transparent 72%);
 }
-body::after {
-  position: absolute;
-  z-index: -1;
+/* Repeats every 2200px; sky.js slides it up at a third of the scroll speed. */
+.sky > .sky-far {
+  bottom: auto;
+  height: calc(100% + 2200px);
   background-image:
     radial-gradient(162px 110px at calc(-2% - 72px) 18%, var(--cloud-far) 0%, var(--cloud-far-edge) 45%, transparent 72%),
     radial-gradient(180px 132px at calc(72px - 2%) calc(18% - 14px), var(--cloud-far) 0%, var(--cloud-far-edge) 45%, transparent 72%),
@@ -236,30 +273,39 @@ body::after {
     radial-gradient(330px 55px at calc(5px - 4%) calc(86% + 60px), var(--cloud-shade) 0%, transparent 72%);
   background-repeat: repeat-y;
   background-size: 100% 2200px;
-  background-position: 0 calc(var(--sy, 0) * 1px);
 }
-.sky-rays,
-.sky-sun {
-  position: fixed;
-  z-index: -2;
-  pointer-events: none;
-}
-.sky-rays {
-  inset: 0;
+/* The rays are a large square centred on the sun, so both move together by transform. */
+.sky > .sky-rays {
+  inset: auto;
+  left: calc(84% - 100vmax);
+  top: calc(7% - 100vmax);
+  width: 200vmax;
+  height: 200vmax;
   opacity: 0.6;
-  filter: blur(1.5px);
-  background: repeating-conic-gradient(from 200deg at var(--sun-x, 84%) var(--sun-y, 7%), transparent 0deg, var(--sky-ray) 2.5deg, transparent 5deg 12deg);
-  mask-image: radial-gradient(circle at var(--sun-x, 84%) var(--sun-y, 7%), #000 0%, rgb(0 0 0 / 0.45) 20%, transparent 46%);
+  background: repeating-conic-gradient(from 200deg at 50% 50%, transparent 0deg, var(--sky-ray) 2.5deg, transparent 5deg 12deg);
+  mask-image: radial-gradient(circle closest-side, #000 0%, rgb(0 0 0 / 0.45) 22%, transparent 50%);
 }
-.sky-sun {
-  top: var(--sun-y, 7%);
-  left: var(--sun-x, 84%);
+.sky > .sky-sun {
+  inset: auto;
+  top: 7%;
+  left: 84%;
   width: 72px;
   height: 72px;
+  margin: -36px 0 0 -36px;
   border-radius: 50%;
   background: radial-gradient(circle, var(--sun-core) 0%, var(--sun-core) 40%, var(--sun-glow) 70%, transparent 100%);
   box-shadow: 0 0 80px 40px var(--sun-glow), 0 0 220px 120px var(--sky-ray);
-  transform: translate(-50%, -50%);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .js-enabled .sky-dawn,
+  .js-enabled .sky-dusk {
+    will-change: opacity;
+  }
+  .js-enabled .sky-far,
+  .js-enabled .sky-rays,
+  .js-enabled .sky-sun {
+    will-change: transform;
+  }
 }
 
 /* Glass ---------------------------------------------------------------------------------- */
@@ -353,10 +399,9 @@ h3 {
   gap: 8px;
   min-height: 34px;
   padding: 4px 14px 4px 4px;
-  border: 1px solid var(--glass-border);
+  border: 1px solid var(--line);
   border-radius: var(--radius-pill);
-  background: var(--glass-solid);
-  box-shadow: var(--glass-shadow);
+  background: var(--surface);
   font-size: 0.875rem;
   font-weight: 500;
   text-decoration: none;
@@ -367,7 +412,8 @@ h3 {
   font-weight: 600;
 }
 a.badge:hover {
-  background: var(--glass-strong);
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
 }
 .badge-new {
   padding: 2px 10px;
@@ -399,8 +445,8 @@ a.badge:hover {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  min-height: 52px;
-  padding: 0 28px;
+  min-height: 48px;
+  padding: 0 24px;
   border: 1px solid transparent;
   border-radius: var(--radius-pill);
   background: var(--action);
@@ -408,11 +454,13 @@ a.badge:hover {
   box-shadow: var(--action-shadow);
   font-size: 1rem;
   font-weight: 600;
+  letter-spacing: -0.005em;
   text-decoration: none;
   cursor: pointer;
   transition:
-    background-color 150ms,
-    transform 150ms var(--ease);
+    background-color 160ms,
+    border-color 160ms,
+    transform 160ms var(--ease);
 }
 .button svg {
   width: 18px;
@@ -422,13 +470,14 @@ a.badge:hover {
   background: var(--action-hover);
 }
 .button.secondary {
-  background: var(--glass-strong);
+  background: var(--surface);
   color: var(--ink);
-  border-color: var(--glass-border);
-  box-shadow: var(--glass-shadow);
+  border-color: var(--line);
+  box-shadow: var(--control-shadow);
 }
 .button.secondary:hover {
-  background: #fff;
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
 }
 .actions {
   display: flex;
@@ -439,22 +488,27 @@ a.badge:hover {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 44px;
-  padding: 0 20px;
-  border: 1px solid var(--glass-border);
+  min-height: 42px;
+  padding: 0 18px;
+  border: 1px solid var(--line);
   border-radius: var(--radius-pill);
-  background: var(--glass-solid);
-  box-shadow: var(--glass-shadow);
+  background: var(--surface);
+  box-shadow: var(--control-shadow);
   font-size: 0.9375rem;
   font-weight: 600;
   text-decoration: none;
+  transition:
+    background-color 160ms,
+    border-color 160ms,
+    transform 160ms var(--ease);
 }
 .pill svg {
   width: 18px;
   height: 18px;
 }
 .pill:hover {
-  background: var(--glass-strong);
+  background: var(--surface-hover);
+  border-color: var(--line-strong);
 }
 .pill-blue {
   background: var(--action);
@@ -466,9 +520,9 @@ a.badge:hover {
   background: var(--action-hover);
 }
 @media (prefers-reduced-motion: no-preference) {
-  .button:hover,
-  .pill:hover {
-    transform: translateY(-1px);
+  .button:active,
+  .pill:active {
+    transform: scale(0.98);
   }
 }
 
@@ -1620,13 +1674,13 @@ tbody tr:last-child .col-us {
   }
   .js-enabled [data-reveal] {
     opacity: 0;
-    translate: 0 28px;
+    translate: 0 20px;
     transition:
-      opacity 700ms var(--ease),
-      translate 700ms var(--ease),
+      opacity 800ms cubic-bezier(0.22, 1, 0.36, 1),
+      translate 800ms cubic-bezier(0.22, 1, 0.36, 1),
       transform 260ms var(--ease),
       box-shadow 260ms;
-    transition-delay: calc(var(--d, 0) * 90ms);
+    transition-delay: calc(var(--d, 0) * 70ms);
   }
   .js-enabled [data-reveal="left"] {
     translate: -40px 0;
@@ -1641,10 +1695,6 @@ tbody tr:last-child .col-us {
   .js-enabled .showcase-window {
     transform: rotateX(calc((1 - var(--t, 1)) * 22deg)) scale(calc(0.9 + var(--t, 1) * 0.1));
     opacity: calc(0.55 + var(--t, 1) * 0.45);
-  }
-  .js-enabled .hero-visual .float,
-  .js-enabled .player {
-    transition: translate 120ms linear;
   }
 }
 
@@ -1797,12 +1847,24 @@ tbody tr:last-child .col-us {
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
-    --sky-top: color-mix(in oklab, color-mix(in oklab, #10203f, #071226 var(--a, 100%)), #050a18 var(--b, 0%));
-    --sky-high: color-mix(in oklab, color-mix(in oklab, #15294d, #0b1b37 var(--a, 100%)), #08112a var(--b, 0%));
-    --sky-mid: color-mix(in oklab, color-mix(in oklab, #1b3159, #0f2446 var(--a, 100%)), #0c1838 var(--b, 0%));
-    --sky-low: color-mix(in oklab, color-mix(in oklab, #223a66, #142d55 var(--a, 100%)), #111f47 var(--b, 0%));
-    --sky-horizon: color-mix(in oklab, color-mix(in oklab, #2b4677, #1a3662 var(--a, 100%)), #172656 var(--b, 0%));
+    --sky-top: #071226;
+    --sky-high: #0b1b37;
+    --sky-mid: #0f2446;
+    --sky-low: #142d55;
+    --sky-horizon: #1a3662;
     --sky-haze: rgb(120 150 230 / 0.12);
+    --dawn-top: #10203f;
+    --dawn-high: #15294d;
+    --dawn-mid: #1b3159;
+    --dawn-low: #223a66;
+    --dawn-horizon: #2b4677;
+    --dawn-haze: rgb(140 170 240 / 0.16);
+    --dusk-top: #050a18;
+    --dusk-high: #08112a;
+    --dusk-mid: #0c1838;
+    --dusk-low: #111f47;
+    --dusk-horizon: #172656;
+    --dusk-haze: rgb(130 120 230 / 0.12);
     --sky-ray: rgb(190 210 255 / 0.05);
     --sun-core: #eef4ff;
     --sun-glow: rgb(170 200 255 / 0.22);
@@ -1824,6 +1886,11 @@ tbody tr:last-child .col-us {
     --warn-soft: rgb(251 191 36 / 0.14);
     --bad: #f87171;
     --gradient-text: linear-gradient(100deg, #7fb0ff 0%, #a7c8ff 45%, #d9e8ff 100%);
+    --surface: rgb(255 255 255 / 0.07);
+    --surface-hover: rgb(255 255 255 / 0.12);
+    --line: rgb(255 255 255 / 0.12);
+    --line-strong: rgb(255 255 255 / 0.22);
+    --control-shadow: none;
 
     --glass: linear-gradient(160deg, rgb(24 42 76 / 0.82), rgb(14 27 52 / 0.66));
     --glass-solid: rgb(14 27 52 / 0.72);
@@ -1834,13 +1901,17 @@ tbody tr:last-child .col-us {
       0 2px 6px rgb(0 0 0 / 0.25);
     --glass-shadow-hover: inset 0 1px 0 rgb(255 255 255 / 0.1), 0 34px 64px -26px rgb(0 0 0 / 0.8),
       0 4px 10px rgb(0 0 0 / 0.3);
-    --action-shadow: inset 0 1px 0 rgb(255 255 255 / 0.18), 0 10px 24px -10px rgb(59 130 246 / 0.6);
+    --action-shadow: 0 1px 2px rgb(0 0 0 / 0.4), 0 8px 18px -10px rgb(59 130 246 / 0.6);
   }
   ::selection {
     background: #24467e;
   }
   /* Stars instead of sun rays. */
-  .sky-rays {
+  .sky > .sky-rays {
+    inset: 0;
+    width: auto;
+    height: auto;
+    transform: none !important;
     opacity: 0.8;
     filter: none;
     mask-image: linear-gradient(#000 0%, rgb(0 0 0 / 0.6) 45%, transparent 85%);
@@ -1857,12 +1928,12 @@ tbody tr:last-child .col-us {
       radial-gradient(1px 1px at 79% 61%, #cddcff, transparent);
     background-size: 420px 360px;
   }
-  .sky-sun {
+  .sky > .sky-sun {
     width: 54px;
     height: 54px;
+    margin: -27px 0 0 -27px;
     box-shadow: 0 0 60px 24px var(--sun-glow), 0 0 160px 80px var(--sky-ray);
   }
-  .button.secondary:hover,
   .tabs [role="tab"][aria-selected="true"],
   .scrub-clips a:hover {
     background: #22406f;

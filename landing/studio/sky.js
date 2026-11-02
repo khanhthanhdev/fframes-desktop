@@ -165,87 +165,109 @@
   const clips = scrub ? [...scrub.querySelectorAll(".scrub-clips li")] : [];
   const tc = scrub?.querySelector("[data-scrub-tc]");
   const sceneName = scrub?.querySelector("[data-scrub-scene]");
+  // Layout is measured on load and resize only; the scroll path below just writes styles.
+  const showcase = document.querySelector("[data-showcase]");
   let starts = [];
+  let page = 0;
+  let clipBox = [];
+  let showcaseTop = 0;
   const measure = () => {
-    const page = document.documentElement.scrollHeight;
+    page = document.documentElement.scrollHeight;
     starts = scenes.map((s, i) => (i === 0 ? 0 : s.getBoundingClientRect().top + scrollY));
     starts.forEach((top, i) => {
       const end = i + 1 < starts.length ? starts[i + 1] : page;
       clips[i]?.style.setProperty("flex-grow", String(Math.max(1, end - top)));
     });
+    clipBox = clips.map(clip => [clip.offsetLeft, clip.offsetWidth]);
+    if (showcase) showcaseTop = showcase.getBoundingClientRect().top + scrollY;
   };
   const pad = n => String(Math.floor(n)).padStart(2, "0");
 
-  // Scroll-linked values, written once per frame.
+  // Scroll-linked values. The header and the page timeline follow the scroll exactly; the sky,
+  // the hero cards and the showcase follow an eased copy of it, so they glide instead of
+  // stepping with each wheel notch.
   const header = document.querySelector(".site-header");
-  const showcase = document.querySelector("[data-showcase]");
   const floats = [...document.querySelectorAll("[data-float]")];
+  const layer = name => document.querySelector(`.sky-${name}`);
+  const [dawn, dusk, sun, rays, far] = ["dawn", "dusk", "sun", "rays", "far"].map(layer);
+  let eased = scrollY;
+  let last = 0;
   let queued = false;
-  const update = () => {
-    queued = false;
-    const y = scrollY;
+  const schedule = () => {
+    if (queued) return;
+    queued = true;
+    requestAnimationFrame(frame);
+  };
+  const exact = y => {
     header?.toggleAttribute("data-scrolled", y > 8);
-    const page = document.documentElement.scrollHeight;
+    if (!scrub) return;
     const progress = Math.min(1, Math.max(0, y / Math.max(1, page - innerHeight)));
-    if (scrub) {
-      const at = y + innerHeight * progress;
-      let current = 0;
-      starts.forEach((top, i) => {
-        if (at >= top) current = i;
-      });
-      clips.forEach((clip, i) => clip.classList.toggle("is-on", i === current));
-      // Clips are at least as wide as their labels, so the playhead is placed inside the
-      // current clip rather than at the page's overall progress.
-      const end = starts[current + 1] ?? page;
-      const within = Math.min(1, (at - starts[current]) / Math.max(1, end - starts[current]));
-      const clip = clips[current];
-      if (clip) scrub.style.setProperty("--x", (clip.offsetLeft + within * clip.offsetWidth).toFixed(1) + "px");
-      scrub.toggleAttribute("data-show", y > innerHeight * 0.35);
-      // The page plays as one minute at 30 frames per second.
-      const seconds = progress * 60;
-      tc.textContent = `${pad(seconds / 60)}:${pad(seconds % 60)}:${pad((seconds * 30) % 30)}`;
-      sceneName.textContent = scenes[current]?.dataset.scene ?? "";
-    }
-    if (still) return;
-    // The sky goes from dawn (top) through noon to dusk (bottom); the sun crosses it.
-    root.style.setProperty("--a", (Math.min(1, progress * 2.5) * 100).toFixed(1) + "%");
-    root.style.setProperty("--b", (Math.max(0, progress * 1.6 - 0.6) * 100).toFixed(1) + "%");
-    root.style.setProperty("--sun-x", (90 - progress * 80).toFixed(2) + "%");
-    root.style.setProperty("--sun-y", (6 + 30 * (2 * progress - 1) ** 2).toFixed(2) + "%");
+    const at = y + innerHeight * progress;
+    let current = 0;
+    starts.forEach((top, i) => {
+      if (at >= top) current = i;
+    });
+    clips.forEach((clip, i) => clip.classList.toggle("is-on", i === current));
+    // Clips are at least as wide as their labels, so the playhead is placed inside the current
+    // clip rather than at the page's overall progress.
+    const end = starts[current + 1] ?? page;
+    const within = Math.min(1, (at - starts[current]) / Math.max(1, end - starts[current]));
+    const [left, width] = clipBox[current] ?? [0, 0];
+    scrub.style.setProperty("--x", (left + within * width).toFixed(1) + "px");
+    scrub.toggleAttribute("data-show", y > innerHeight * 0.35);
+    // The page plays as one minute at 30 frames per second.
+    const seconds = progress * 60;
+    tc.textContent = `${pad(seconds / 60)}:${pad(seconds % 60)}:${pad((seconds * 30) % 30)}`;
+    sceneName.textContent = scenes[current]?.dataset.scene ?? "";
+  };
+  const glide = s => {
+    const p = Math.min(1, Math.max(0, s / Math.max(1, page - innerHeight)));
+    // Dawn at the top fades into noon, noon into dusk at the bottom; the sun crosses the sky.
+    if (dawn) dawn.style.opacity = (1 - Math.min(1, p * 2.5)).toFixed(3);
+    if (dusk) dusk.style.opacity = Math.max(0, p * 1.6 - 0.6).toFixed(3);
+    const dx = ((6 - p * 80) / 100) * innerWidth;
+    const dy = ((30 * (2 * p - 1) ** 2 - 1) / 100) * innerHeight;
+    const move = `translate3d(${dx.toFixed(1)}px, ${dy.toFixed(1)}px, 0)`;
+    if (sun) sun.style.transform = move;
+    if (rays) rays.style.transform = move;
     // The far clouds move at a third of the page's speed.
-    document.body.style.setProperty("--sy", String(Math.round(y * -0.33)));
+    if (far) far.style.transform = `translate3d(0, ${(-(s * 0.33) % 2200).toFixed(1)}px, 0)`;
     // Hero cards drift apart as the hero scrolls away.
-    const p = Math.min(1, y / innerHeight);
-    for (const el of floats) el.style.setProperty("--f", String(p * Number(el.dataset.float)));
+    const h = Math.min(1, s / innerHeight);
+    for (const el of floats) el.style.setProperty("--f", (h * Number(el.dataset.float)).toFixed(2));
     // The showcase tilts upright between entering the view and reaching its upper third.
     if (showcase) {
-      const top = showcase.getBoundingClientRect().top;
-      const t = Math.min(1, Math.max(0, (innerHeight - top) / (innerHeight * 0.65)));
+      const t = Math.min(1, Math.max(0, (innerHeight - (showcaseTop - s)) / (innerHeight * 0.65)));
       showcase.style.setProperty("--t", t.toFixed(3));
     }
   };
-  addEventListener(
-    "scroll",
-    () => {
-      if (!queued) {
-        queued = true;
-        requestAnimationFrame(update);
-      }
-    },
-    { passive: true }
-  );
-  addEventListener("resize", () => {
+  const frame = now => {
+    queued = false;
+    const y = scrollY;
+    exact(y);
+    if (still) return;
+    // Close 18% of the gap every 16.7 ms, whatever the frame rate.
+    const dt = last ? Math.min(64, now - last) : 16.7;
+    eased += (y - eased) * (1 - 0.82 ** (dt / 16.7));
+    if (Math.abs(y - eased) < 0.5) {
+      eased = y;
+      last = 0;
+    } else {
+      last = now;
+      schedule();
+    }
+    glide(eased);
+  };
+  addEventListener("scroll", schedule, { passive: true });
+  const remeasure = () => {
     measure();
-    update();
-  });
+    eased = scrollY;
+    if (!still) glide(eased);
+    exact(scrollY);
+  };
+  addEventListener("resize", remeasure);
   // Lazy images change the page's height as they load.
-  addEventListener("load", () => {
-    measure();
-    update();
-  });
+  addEventListener("load", remeasure);
   // The first measurement waits for a frame so it does not force a layout before first paint.
-  requestAnimationFrame(() => {
-    measure();
-    update();
-  });
+  requestAnimationFrame(remeasure);
 })();
