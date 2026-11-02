@@ -29,6 +29,8 @@ pub struct Recent {
     pub name: String,
     pub path: PathBuf,
     pub missing: bool,
+    /// Encoded PNG of the last successful preview, read off the UI thread.
+    pub preview: Option<Arc<[u8]>>,
 }
 #[derive(Clone, Default)]
 pub struct Presentation {
@@ -622,6 +624,9 @@ impl Backend {
                 .into_iter()
                 .map(|r| Recent {
                     missing: !r.location.is_dir(),
+                    preview: std::fs::read(paths.project_preview(r.state.project()))
+                        .ok()
+                        .map(Arc::from),
                     id: r.state.project().clone(),
                     name: r.name,
                     path: r.location,

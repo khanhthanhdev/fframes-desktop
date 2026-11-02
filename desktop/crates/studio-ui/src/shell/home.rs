@@ -1,15 +1,15 @@
 //! The start screen while no project is open, after Oleafly's project shelf: a dotted
 //! surface, a floating dock of the project actions at its left edge, a top bar with the
 //! brand, a search over the recent projects and the grid or list switch, and the recent
-//! projects as book covers or as table rows. Also the compact recent-projects list the
+//! projects as video previews or as table rows. Also the compact recent-projects list the
 //! Project tab shows while a project is open.
 
 use std::path::Path;
 
 use gpui::{
     AppContext, Bounds, Context, Entity, InteractiveElement, IntoElement, MouseButton,
-    ParentElement, StatefulInteractiveElement, Styled, Window, canvas, div, fill, point,
-    prelude::FluentBuilder, px, size,
+    ParentElement, StatefulInteractiveElement, Styled, StyledImage, Window, canvas, div, fill, img,
+    point, prelude::FluentBuilder, px, size,
 };
 use studio_engine::engine::backend::{Command, Recent};
 use studio_theme::{AppTheme, METRICS, TextStyle, Theme, text_style};
@@ -37,12 +37,10 @@ const DOCK_RADIUS: f32 = 16.;
 const DOCK_PAD: f32 = 6.;
 /// The content keeps clear of the dock: its inset, its padding and a 32 px button.
 const DOCK_CLEARANCE: f32 = 72.;
-/// A book: 180 px wide at Oleafly's 8.5 : 11 page, a 10 px spine and a back cover peeking
-/// 6 px below the front one.
-const BOOK_W: f32 = 180.;
-const BOOK_H: f32 = BOOK_W * 11. / 8.5;
+/// Landscape video posters, with letterboxing for projects of other aspect ratios.
+const BOOK_W: f32 = 272.;
+const BOOK_H: f32 = BOOK_W * 9. / 16.;
 const BOOK_SPINE_W: f32 = 10.;
-const BOOK_EDGE: f32 = 6.;
 /// The shelf's column gap (Oleafly's `gap-x-8`), row gap and widest extent (`max-w-5xl`).
 const SHELF_GAP_X: f32 = 32.;
 const SHELF_GAP_Y: f32 = 28.;
@@ -50,7 +48,7 @@ const SHELF_MAX_W: f32 = 1024.;
 /// A list row (a 36 px cover thumbnail with room around it), its thumbnail, and the fixed
 /// Status and actions columns.
 const LIST_ROW_H: f32 = 56.;
-const LIST_THUMB_W: f32 = 28.;
+const LIST_THUMB_W: f32 = 64.;
 const LIST_THUMB_H: f32 = 36.;
 const LIST_STATUS_W: f32 = 112.;
 const LIST_ACTIONS_W: f32 = 112.;
@@ -352,7 +350,7 @@ impl StudioShell {
             )
     }
 
-    /// The recent projects as book covers, in rows that wrap.
+    /// The recent projects as video previews, in rows that wrap.
     fn render_shelf(&self, shown: &[&Recent], cx: &mut Context<Self>) -> gpui::AnyElement {
         let books: Vec<_> = shown.iter().map(|recent| self.book(recent, cx)).collect();
         div()
@@ -367,8 +365,7 @@ impl StudioShell {
             .into_any_element()
     }
 
-    /// One project as a book: the cover opens it, the caption below holds its path and
-    /// the row's actions.
+    /// One project: its preview opens it; the caption holds its name, path and actions.
     fn book(&self, recent: &Recent, cx: &mut Context<Self>) -> gpui::AnyElement {
         let theme = self.theme;
         let enabled = !self.busy;
@@ -421,16 +418,29 @@ impl StudioShell {
                             .line_clamp(3)
                             .child(recent.name.clone()),
                     ),
-            )
-            .when(recent.missing, |face| {
-                face.child(
-                    div()
-                        .absolute()
-                        .top(px(METRICS.space_2))
-                        .right(px(METRICS.space_2))
-                        .child(Badge::new("Missing").tone(Tone::Warning)),
+            );
+        let face = if let Some(bytes) = &recent.preview {
+            div()
+                .size_full()
+                .overflow_hidden()
+                .rounded_md()
+                .bg(theme.colors.stage)
+                .child(
+                    img(std::sync::Arc::new(gpui::Image::from_bytes(
+                        gpui::ImageFormat::Png,
+                        bytes.to_vec(),
+                    )))
+                    .w(px(BOOK_W))
+                    .h(px(BOOK_H))
+                    .min_h_0()
+                    .aspect_ratio(BOOK_W / BOOK_H)
+                    .flex_none()
+                    .object_fit(gpui::ObjectFit::Contain),
                 )
-            });
+                .into_any_element()
+        } else {
+            face.into_any_element()
+        };
 
         let open = {
             let entity = cx.entity();
@@ -444,21 +454,19 @@ impl StudioShell {
         let book = focusable(div().id(format!("recent-{id}")), &theme, disabled)
             .relative()
             .w(px(BOOK_W))
-            .h(px(BOOK_H + BOOK_EDGE))
+            .h(px(BOOK_H))
             .rounded_md()
             .when(!disabled, |book| book.cursor_pointer())
-            // The back cover, peeking below the front one: the book's thickness.
-            .child(
-                div()
-                    .absolute()
-                    .left_0()
-                    .top(px(BOOK_EDGE))
-                    .w(px(BOOK_W))
-                    .h(px(BOOK_H))
-                    .rounded_md()
-                    .bg(cover.spine),
-            )
-            .child(face);
+            .child(face)
+            .when(recent.missing, |book| {
+                book.child(
+                    div()
+                        .absolute()
+                        .top(px(METRICS.space_2))
+                        .right(px(METRICS.space_2))
+                        .child(Badge::new("Missing").tone(Tone::Warning)),
+                )
+            });
         let book = on_activate(book, disabled, Some(open));
         let book = with_tooltip(book, &theme, Some(path.clone().into()));
 
@@ -472,6 +480,12 @@ impl StudioShell {
             .flex_col()
             .gap(px(METRICS.space_2))
             .child(book)
+            .child(
+                text_style(div(), TextStyle::BodyStrong)
+                    .text_color(theme.colors.text_1)
+                    .truncate()
+                    .child(recent.name.clone()),
+            )
             .child(
                 div()
                     .flex()
@@ -592,6 +606,7 @@ impl StudioShell {
                             .flex_none()
                             .w(px(LIST_THUMB_W))
                             .h(px(LIST_THUMB_H))
+                            .relative()
                             .flex()
                             .overflow_hidden()
                             .rounded_sm()
@@ -604,7 +619,21 @@ impl StudioShell {
                                     .w(px(BOOK_SPINE_W / 2.))
                                     .h_full()
                                     .bg(cover.spine),
-                            ),
+                            )
+                            .when_some(recent.preview.clone(), |thumb, bytes| {
+                                thumb.child(
+                                    img(std::sync::Arc::new(gpui::Image::from_bytes(
+                                        gpui::ImageFormat::Png,
+                                        bytes.to_vec(),
+                                    )))
+                                    .absolute()
+                                    .w(px(LIST_THUMB_W))
+                                    .h(px(LIST_THUMB_H))
+                                    .aspect_ratio(LIST_THUMB_W / LIST_THUMB_H)
+                                    .bg(theme.colors.stage)
+                                    .object_fit(gpui::ObjectFit::Contain),
+                                )
+                            }),
                     )
                     .child(
                         text_style(div(), TextStyle::BodyMedium)
@@ -729,6 +758,7 @@ impl StudioShell {
         &mut self,
         state: usize,
         theme: Theme,
+        previews: &[std::sync::Arc<[u8]>],
         cx: &mut Context<Self>,
     ) -> gpui::AnyElement {
         self.presentation.project = None;
@@ -737,6 +767,9 @@ impl StudioShell {
         } else {
             fixture_recents()
         };
+        for (recent, preview) in self.presentation.recents.iter_mut().zip(previews) {
+            recent.preview = Some(preview.clone());
+        }
         self.home.layout = if state == 1 {
             HomeLayout::List
         } else {
@@ -801,6 +834,7 @@ fn fixture_recents() -> Vec<Recent> {
         name: name.into(),
         path: path.into(),
         missing,
+        preview: None,
     })
     .collect()
 }

@@ -62,3 +62,8 @@ features = ["wayland", "x11", "font-kit", "runtime_shaders"]
 # The preview converts every shown frame; unoptimised it takes ~50 ms at 1080p.
 [profile.dev.package.studio-ui]
 opt-level = 3
+
+# Every agent task hashes the adapter's executable (node.exe is ~90 MB) on the workflow
+# actor before its first prompt; unoptimised that takes ~1.8 s.
+[profile.dev.package.sha2]
+opt-level = 3

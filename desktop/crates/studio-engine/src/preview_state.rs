@@ -435,6 +435,18 @@ impl PreviewState {
             && f.response.frame_index == self.position.min(self.total_frames - 1)
             && self.status != PreviewStatus::Closed
     }
+    /// A frame rendered for an earlier request of the same run, from `since_serial` on:
+    /// playback shows it while the newest request still renders, so a render slower than
+    /// a frame interval shows every frame it finishes instead of none.
+    pub fn accepts_late_frame(&self, f: &PreviewFrame, since_serial: u64) -> bool {
+        self.displayed
+            .as_ref()
+            .is_some_and(|id| f.validate(id).is_ok())
+            && (since_serial..self.serial).contains(&f.response.seek_serial)
+            && f.response.scale == self.scale
+            && f.response.frame_index < self.total_frames
+            && self.status != PreviewStatus::Closed
+    }
     pub fn fail(&mut self, tag: &OperationTag, error: String) {
         if self.candidate.as_ref() == Some(tag) {
             self.candidate = None;

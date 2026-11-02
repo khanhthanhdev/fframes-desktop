@@ -166,6 +166,9 @@ pub struct StudioShell {
     muted: bool,
     resume_install: bool,
     requested_clock_epoch: u64,
+    /// The first seek serial asked for under `requested_clock_epoch`: playback shows late
+    /// frames from it on, never one from before a seek, pause or reinstall.
+    epoch_serial: u64,
     presented_serial: u64,
     clock_start: Instant,
     resume_scrub: bool,
@@ -604,6 +607,7 @@ impl StudioShell {
             muted: false,
             resume_install: false,
             requested_clock_epoch: 0,
+            epoch_serial: 0,
             presented_serial: 0,
             clock_start,
             playback_timer: None,

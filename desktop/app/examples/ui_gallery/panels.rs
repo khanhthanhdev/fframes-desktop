@@ -38,6 +38,7 @@ const PROPS_H: f32 = 600.;
 pub struct PanelFixtures {
     props: Option<[Entity<PropsPanel>; 2]>,
     presets: Option<Entity<PresetPanel>>,
+    home_previews: Option<Vec<std::sync::Arc<[u8]>>>,
     shown: Option<(Page, &'static str, Theme)>,
 }
 
@@ -57,7 +58,31 @@ impl Gallery {
         if page == Page::Home {
             let shell = self.fixture_shell(window, cx);
             let theme = *theme;
-            return Some(shell.update(cx, |shell, cx| shell.render_home_fixture(index, theme, cx)));
+            // Real rendered example frames; keep the final three projects without a
+            // poster so captures also exercise the fallback.
+            let previews = self.panels.home_previews.get_or_insert_with(|| {
+                let snapshots =
+                    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../e2e/snapshots");
+                [
+                    "signal-lab/datascene_3s.png",
+                    "made-of-motion/orbit_50p.png",
+                    "tiktok/30s.png",
+                ]
+                .map(|path| {
+                    let image = image::open(snapshots.join(path))
+                        .expect("rendered example snapshot")
+                        .thumbnail(480, 270);
+                    let mut bytes = std::io::Cursor::new(Vec::new());
+                    image
+                        .write_to(&mut bytes, image::ImageFormat::Png)
+                        .expect("encode gallery poster");
+                    std::sync::Arc::from(bytes.into_inner())
+                })
+                .to_vec()
+            });
+            return Some(shell.update(cx, |shell, cx| {
+                shell.render_home_fixture(index, theme, previews, cx)
+            }));
         }
         if page == Page::Shell {
             let shell = self.fixture_shell(window, cx);

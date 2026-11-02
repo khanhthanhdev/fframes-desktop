@@ -160,6 +160,36 @@ fn newest_seek_and_scale_only_and_failed_revision_does_not_invalidate_displayed_
     assert!(!p.accepts_frame(&frame(&t, 29, serial)));
 }
 #[test]
+fn playback_shows_late_frames_of_its_own_run_only() {
+    let mut s = state();
+    let mut p = PreviewState::default();
+    let t = s.queue(JobKind::Build).unwrap();
+    s.start(&t).unwrap();
+    p.begin(t.clone());
+    s.complete(&t, source('a'), JobResult::Built(source('a')))
+        .unwrap();
+    p.install(&ready(&t, 0, 0, 60), &s).unwrap();
+    let before_seek = p.seek(40, 1.).unwrap();
+    // Playback starts at 10: its ticks ask for 10, 11 and 12 while 10 still renders.
+    let run = p.seek(10, 1.).unwrap();
+    let tick = p.seek(11, 1.).unwrap();
+    let latest = p.seek(12, 1.).unwrap();
+    assert!(p.accepts_late_frame(&frame(&t, 10, run), run));
+    assert!(p.accepts_late_frame(&frame(&t, 11, tick), run));
+    assert!(
+        !p.accepts_late_frame(&frame(&t, 40, before_seek), run),
+        "a frame asked for before the run started is not shown"
+    );
+    assert!(!p.accepts_late_frame(&frame(&t, 12, latest + 1), run));
+    p.seek(12, 0.5).unwrap();
+    assert!(
+        !p.accepts_late_frame(&frame(&t, 11, tick), run),
+        "a frame of another scale is not shown"
+    );
+    p.close();
+    assert!(!p.accepts_late_frame(&frame(&t, 11, tick), run));
+}
+#[test]
 fn seek_during_preparation_rejects_old_frame_and_clamps_shorter_and_empty_revision() {
     let mut s = state();
     let mut p = PreviewState::default();

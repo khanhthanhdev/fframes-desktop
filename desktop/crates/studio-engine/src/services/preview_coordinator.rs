@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{OperationTag, PreviewFrame, PromotionAuthorization, ReadyPreview, preview_identity};
 use fframes_studio_protocol::*;
-use parking_lot::Mutex;
+use parking_lot::{Condvar, Mutex};
 use std::{collections::VecDeque, path::PathBuf, sync::Arc, time::Duration};
 use studio_bootstrap::ProcessTreeManager;
 
@@ -352,6 +352,9 @@ type Listener = Arc<Mutex<Option<Arc<dyn Fn() + Send + Sync>>>>;
 /// No mutex is held while hashing, compiling or talking to a worker.
 pub struct PreviewCoordinator {
     shared: Arc<Mutex<Mailbox>>,
+    /// Wakes the idle pump when a seek arrives, so a frame request never waits out its
+    /// idle tick; other news is picked up on the next tick.
+    seeked: Arc<Condvar>,
     listener: Listener,
     owner: ProcessTreeManager,
     task: Option<std::thread::JoinHandle<()>>,
@@ -359,12 +362,15 @@ pub struct PreviewCoordinator {
 impl PreviewCoordinator {
     pub fn new(owner: ProcessTreeManager) -> Self {
         let shared = Arc::new(Mutex::new(Mailbox::default()));
+        let seeked = Arc::new(Condvar::new());
         let listener = Listener::default();
         let mailbox = shared.clone();
+        let pump_seeked = seeked.clone();
         let wake = listener.clone();
-        let task = std::thread::spawn(move || pump(mailbox, wake));
+        let task = std::thread::spawn(move || pump(mailbox, pump_seeked, wake));
         Self {
             shared,
+            seeked,
             listener,
             owner,
             task: Some(task),
@@ -464,6 +470,7 @@ impl PreviewCoordinator {
         {
             s.desired = Some(intent);
             s.metrics.queue_high_water = 1;
+            self.seeked.notify_one();
         }
     }
     /// Plays `timing` from now on: the pump applies it to the displayed worker (preparing
@@ -643,6 +650,7 @@ impl PreviewCoordinator {
             s.props_info = None;
             s.displayed_scope.take()
         };
+        self.seeked.notify_one();
         self.fence_build().teardown_now();
         if let Some(displayed) = displayed {
             displayed.shutdown(Duration::ZERO);
@@ -925,7 +933,7 @@ fn publish_result(
     }
 }
 
-fn pump(shared: Arc<Mutex<Mailbox>>, listener: Listener) {
+fn pump(shared: Arc<Mutex<Mailbox>>, seeked: Arc<Condvar>, listener: Listener) {
     let mut displayed: Option<StagedPreview> = None;
     // Compilation, initial preparation and re-priming share one candidate lane.
     // Its blocking worker requests never run on the displayed-worker pump.
@@ -1072,10 +1080,16 @@ fn pump(shared: Arc<Mutex<Mailbox>>, listener: Listener) {
             ) {
                 Ok(f) => {
                     let mut s = shared.lock();
-                    if s.desired.as_ref() == Some(d) {
-                        s.frame = Some(f);
-                    } else {
+                    if s.desired.as_ref() != Some(d) {
                         s.metrics.late_frames += 1;
+                    }
+                    // A late frame of the same preview is still published: the shell shows
+                    // it during playback when it is newer than the frame on screen.
+                    if s.desired
+                        .as_ref()
+                        .is_some_and(|now| now.identity == d.identity)
+                    {
+                        s.frame = Some(f);
                     }
                 }
                 Err(e) => {
@@ -1172,7 +1186,19 @@ fn pump(shared: Arc<Mutex<Mailbox>>, listener: Listener) {
         if wake && let Some(listener) = listener.lock().clone() {
             listener();
         }
-        std::thread::sleep(Duration::from_millis(5));
+        // A playhead that moved on while the frame rendered is rendered at once; an idle
+        // pump waits for the next seek or tick. Checked under the lock `seek` notifies
+        // under, so a seek between the check and the wait is not missed.
+        let mut s = shared.lock();
+        let behind = displayed.as_deref().is_some_and(|c| {
+            c.ready.timeline.total_frames > 0
+                && s.desired.as_ref().is_some_and(|d| {
+                    d.identity == *c.ready.identity() && Some(d) != rendered.as_ref()
+                })
+        });
+        if !behind && !s.closed {
+            seeked.wait_for(&mut s, Duration::from_millis(5));
+        }
     }
     if let Some(t) = preparation {
         let _ = t.join();

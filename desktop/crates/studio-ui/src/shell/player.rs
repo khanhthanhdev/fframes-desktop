@@ -87,8 +87,7 @@ impl StudioShell {
             self.request_thumbnails(cx);
         }
         if let Some(frame) = events.frame
-            && self.preview_state.accepts_frame(&frame)
-            && self.requested_clock_epoch == self.transport.epoch()
+            && self.presents_frame(&frame)
         {
             self.pending_frame = Some(frame);
             self.notify_player(cx);
@@ -352,7 +351,10 @@ impl StudioShell {
         let Ok(serial) = self.preview_state.seek(position, scale) else {
             return false;
         };
-        self.requested_clock_epoch = self.transport.epoch();
+        if self.requested_clock_epoch != self.transport.epoch() {
+            self.requested_clock_epoch = self.transport.epoch();
+            self.epoch_serial = serial;
+        }
         if let Some(preview) = &self.preview {
             preview.seek(SeekIntent {
                 identity: id,
@@ -365,6 +367,17 @@ impl StudioShell {
         self.timeline.update(cx, |v, _| v.set_position(position));
         self.forward_playhead();
         true
+    }
+
+    /// Whether a finished frame goes on screen: the frame asked for last or, while playing,
+    /// a frame of this run newer than the one shown. Without the second, a render slower
+    /// than one frame interval would never be shown, since the playhead moved on meanwhile.
+    pub(super) fn presents_frame(&self, f: &studio_engine::PreviewFrame) -> bool {
+        self.requested_clock_epoch == self.transport.epoch()
+            && (self.preview_state.accepts_frame(f)
+                || self.transport.playing()
+                    && f.response.seek_serial > self.presented_serial
+                    && self.preview_state.accepts_late_frame(f, self.epoch_serial))
     }
 
     pub(super) fn toggle_playback(&mut self, cx: &mut Context<Self>) {

@@ -546,6 +546,7 @@ impl StudioShell {
             name: name.into(),
             path: path.into(),
             missing,
+            preview: None,
         };
         let recents = std::mem::replace(
             &mut self.presentation.recents,

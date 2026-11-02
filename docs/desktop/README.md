@@ -36,6 +36,11 @@ App data lives in `%LOCALAPPDATA%/fframes-studio` on Windows, `~/Library/Applica
 
 ## Projects
 
+Studio opens to the recent-project shelf. Grid cards and list thumbnails show a frame
+saved from each project's last successful preview build, kept in local app data across
+restarts. Build a project's preview once to replace its default cover; opening Studio
+does not compile projects. Missing folders keep their saved image and the Locate action.
+
 **Create** chooses a new folder and writes the template ([`desktop/crates/studio-project/templates`](../../desktop/crates/studio-project/templates)): a Rust crate whose scenes carry an `editor_instance_key`, a `timeline.json` opt-in in `src/main.rs`, a Studio worker entry, style tokens and `AGENTS.md`. **Import Rust** selects a package's `Cargo.toml`, keeps existing files, instructions and Git history, and adds only `studio.json`. Managed builds support contained workspace dependencies; external paths, symlinks, inherited Cargo configuration and overrides produce diagnostics instead of hidden rewrites.
 
 Source and copied assets travel with the folder; local history does not. A checkpoint saves bytes, not proof of a successful build. **Restore as copy** exports a checkpoint to a separately identified folder and never replaces the current source. **Locate** reconnects a moved, unchanged project; **Remove recent** removes only the list entry.

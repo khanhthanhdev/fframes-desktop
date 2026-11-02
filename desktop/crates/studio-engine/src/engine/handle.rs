@@ -694,6 +694,15 @@ fn gate(engine: &Inner, news: PreviewNews) -> PreviewGated {
         }
         c.state().clone()
     });
+    if error.is_none()
+        && let (Some(paths), Some(state), Some(ready)) = (&backend.paths, &state, &news.ready)
+        && (state.is_current_build(ready.tag())
+            || state.promotion().is_some_and(|p| p.tag() == ready.tag()))
+        && let Some(frame) = &ready.frame
+    {
+        // A poster is disposable app data: a cache failure must not fail a good build.
+        let _ = paths.save_project_preview(state.project(), frame);
+    }
     PreviewGated {
         session: backend.session,
         ready: news.ready,

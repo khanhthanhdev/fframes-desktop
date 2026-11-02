@@ -88,6 +88,7 @@ impl Render for StudioShell {
                                     self.output = install.audio;
                                     self.audio_ready_epoch = Some(self.transport.epoch());
                                     self.requested_clock_epoch = self.transport.epoch();
+                                    self.epoch_serial = ready.seek_serial;
                                     self.presented_serial = ready.seek_serial;
                                     self.painted_frame =
                                         ready.frame.as_ref().map(|f| f.response.frame_index);
@@ -157,8 +158,7 @@ impl Render for StudioShell {
             }
         }
         if let Some(f) = self.pending_frame.take()
-            && self.preview_state.accepts_frame(&f)
-            && self.requested_clock_epoch == self.transport.epoch()
+            && self.presents_frame(&f)
         {
             match create_render_image(&f.response.header, &f.pixels) {
                 Ok(image) => {
