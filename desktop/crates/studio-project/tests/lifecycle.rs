@@ -287,6 +287,104 @@ fn the_slide_deck_template_pins_the_kit_and_ships_its_documents() {
     assert!(!root.join("props.json").exists());
 }
 
+#[test]
+fn a_setup_sets_the_frame_rate_size_and_starting_style() {
+    use studio_project::{
+        ProjectSetup, StarterStyle, create_with_setup,
+        manifest::{PresetReference, VideoHints},
+    };
+    let temp = tempfile::tempdir().unwrap();
+    let vertical = VideoHints {
+        width: 1080,
+        height: 1920,
+        fps: 60,
+    };
+    let reference = PresetReference {
+        id: "sunset".into(),
+        sha256: "c".repeat(64),
+    };
+    let tokens =
+        br##"{"schema":1,"tokens":{"color.background":{"type":"color","value":"#2A1033"}}}"##;
+    let root = temp.path().join("vertical");
+    let project = create_with_setup(
+        &root,
+        "Vertical",
+        pin(),
+        "1.3.0",
+        "0.2.0",
+        &ProjectSetup {
+            template: ProjectTemplate::Blank,
+            format: vertical.clone(),
+            style: Some(StarterStyle {
+                reference: reference.clone(),
+                files: vec![
+                    (
+                        "style/tokens.json".to_owned().try_into().unwrap(),
+                        tokens.to_vec(),
+                    ),
+                    (
+                        "style/preset/licenses/OFL.txt"
+                            .to_owned()
+                            .try_into()
+                            .unwrap(),
+                        b"notice".to_vec(),
+                    ),
+                ],
+            }),
+        },
+    )
+    .unwrap();
+    assert_eq!(project.manifest.video_hints, Some(vertical.clone()));
+    assert_eq!(project.manifest.preset, Some(reference));
+    let video = fs::read_to_string(root.join("src/video.rs")).unwrap();
+    for line in [
+        "const FPS: usize = 60;",
+        "const WIDTH: usize = 1080;",
+        "const HEIGHT: usize = 1920;",
+        r#"viewBox="0 0 1080 1920""#,
+    ] {
+        assert!(video.contains(line), "{line}");
+    }
+    assert_eq!(fs::read(root.join("style/tokens.json")).unwrap(), tokens);
+    assert!(root.join("style/preset/licenses/OFL.txt").is_file());
+
+    // A deck keeps its 16:9 canvas and moves its frame stops to the new rate.
+    let deck = temp.path().join("deck");
+    let hd = VideoHints {
+        width: 1280,
+        height: 720,
+        fps: 60,
+    };
+    let setup = |format: &VideoHints| ProjectSetup {
+        template: ProjectTemplate::SlideDeck,
+        format: format.clone(),
+        style: None,
+    };
+    create_with_setup(&deck, "Deck", pin(), "1.3.0", "0.2.0", &setup(&hd)).unwrap();
+    let video = fs::read_to_string(deck.join("src/video.rs")).unwrap();
+    assert!(video.contains("const WIDTH: usize = 1280;"));
+    assert!(video.contains(r#"viewBox="0 0 1920 1080""#));
+    let slides: serde_json::Value =
+        serde_json::from_slice(&fs::read(deck.join("slides.json")).unwrap()).unwrap();
+    let frames: Vec<_> = slides["stops"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|stop| stop["at"].as_u64())
+        .collect();
+    assert_eq!(frames, [54, 90, 126, 54, 90, 126]);
+    let refused = create_with_setup(
+        &temp.path().join("tall-deck"),
+        "Deck",
+        pin(),
+        "1.3.0",
+        "0.2.0",
+        &setup(&vertical),
+    );
+    assert!(refused.is_err());
+    assert!(!temp.path().join("tall-deck").exists());
+}
+
 /// The template's kit is the one fframes-studio-kit (and so the SDK) is built with.
 #[test]
 fn the_slide_deck_kit_is_the_sdk_kit() {

@@ -9,7 +9,8 @@ pub mod revision;
 pub mod source_index;
 
 pub use lifecycle::{
-    OpenProject, ProjectTemplate, create, create_from_template, import, open, open_for_recovery,
+    OpenProject, ProjectSetup, ProjectTemplate, StarterStyle, create, create_from_template,
+    create_with_setup, import, open, open_for_recovery,
 };
 pub use manifest::{Manifest, ProjectError, ProjectId};
 pub use paths::ProjectPath;

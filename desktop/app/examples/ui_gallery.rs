@@ -35,7 +35,7 @@ use studio_engine::TimelineModel;
 use studio_engine::slides::{SlideStop, SlidesDoc, SlidesEditing, SlidesSnapshot, StopAt};
 use studio_project::ProjectTemplate;
 use studio_theme::{AppTheme, METRICS, TextStyle, Theme, text_style};
-use studio_ui::create_panel::CreatePanel;
+use studio_ui::create_panel::{self, CreatePanel};
 use studio_ui::export::panel::{ExportPanel, ExportPanelModel};
 use studio_ui::export::progress::ExportPhase;
 use studio_ui::export::settings::{DeckSummary, ExportSupport, ExportTarget};
@@ -72,7 +72,7 @@ struct Gallery {
     /// Stop markers: default stops, and explicit stops with one being dragged.
     markers: [Entity<TimelineView>; 2],
     /// The template chosen in the Create panel.
-    create_template: ProjectTemplate,
+    create_choice: studio_engine::engine::backend::NewProject,
     /// The page shown in capture mode; `None` shows everything (the interactive gallery).
     page: Option<Page>,
     scroll: ScrollHandle,
@@ -293,7 +293,7 @@ impl Gallery {
             compact_input,
             slides,
             markers,
-            create_template: ProjectTemplate::default(),
+            create_choice: Default::default(),
             page: None,
             scroll: ScrollHandle::new(),
             phase7: Phase7::default(),
@@ -308,10 +308,16 @@ impl Gallery {
         self.page = Some(page);
         self.menu = None;
         if page == Page::Create {
-            self.create_template = if state == "slide-deck" {
-                ProjectTemplate::SlideDeck
-            } else {
-                ProjectTemplate::Blank
+            let blank = studio_engine::engine::backend::NewProject::default();
+            self.create_choice = match state {
+                "slide-deck" => create_panel::with_template(&blank, ProjectTemplate::SlideDeck),
+                // A vertical 4K 60 fps video in the Sunset preset.
+                "styled" => studio_engine::engine::backend::NewProject {
+                    format: create_panel::frame((9, 16), 2160, 60),
+                    preset: studio_presets::builtin::get("sunset").map(|p| p.hash().to_owned()),
+                    ..blank
+                },
+                _ => blank,
             };
         }
         if let Some(state) = page.states().iter().find(|known| **known == state) {
@@ -876,12 +882,16 @@ impl Render for Gallery {
         let extras = show_kit.then(|| self.render_kit_extras(&theme, window, cx));
         let show_slides = matches!(self.page, None | Some(Page::Slides));
         let show_create = matches!(self.page, None | Some(Page::Create));
-        let choose = update(&this, |gallery, template: &ProjectTemplate, _, _| {
-            gallery.create_template = *template;
-        });
-        let create = div().h(px(380.)).flex().flex_col().child(
-            CreatePanel::new(&theme, self.create_template)
-                .on_choose(move |template, window, cx| choose(&template, window, cx)),
+        let choose = update(
+            &this,
+            |gallery, choice: &studio_engine::engine::backend::NewProject, _, _| {
+                gallery.create_choice = choice.clone();
+            },
+        );
+        let styles = studio_engine::presets::Catalog::default().entries(None);
+        let create = div().h(px(1040.)).flex().flex_col().child(
+            CreatePanel::new(&theme, &self.create_choice, &styles)
+                .on_change(move |choice, window, cx| choose(&choice, window, cx)),
         );
         let content = div()
             .flex()

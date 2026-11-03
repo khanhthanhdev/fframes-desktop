@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "token_schema": 1,
+  "id": "swiss",
+  "name": "Swiss",
+  "version": "1.0.0",
+  "description": "International style: black type on white, one signal red, square corners, heavy rules and precise, quick in-out motion.",
+  "author": "fframes contributors",
+  "design": {
+    "width": 1920,
+    "height": 1080,
+    "base_font_px": 16.0
+  },
+  "tokens": {
+    "path": "tokens.json",
+    "sha256": "8c99abb1989e050227fdb7a642fbca041f512fbb1a81e48a12762ebd48ec6ade",
+    "bytes": 4352
+  },
+  "guide": {
+    "path": "guide.md",
+    "sha256": "f0903abf0f09c6b2b164cfc9bf38b1ce75cae8456992a8a96875ed9d1530c864",
+    "bytes": 1255
+  },
+  "license": "LICENSE.txt",
+  "licenses": [
+    {
+      "spdx": "MIT",
+      "file": {
+        "path": "LICENSE.txt",
+        "sha256": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "bytes": 1079
+      }
+    },
+    {
+      "spdx": "OFL-1.1",
+      "file": {
+        "path": "licenses/DMSans-OFL.txt",
+        "sha256": "7ec15e79c59bc14b86436a17e5eb7926b46cbcaeb08e1a7e6c110b415e6eb2a2",
+        "bytes": 4388
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "family": "DM Sans",
+      "file": {
+        "path": "fonts/DMSans-Medium.ttf",
+        "sha256": "4f6a909db85e054e53cd180fe781cfe048416cdd87f7365ac2871c8d646a9033",
+        "bytes": 73300
+      },
+      "license": "licenses/DMSans-OFL.txt"
+    }
+  ],
+  "assets": [],
+  "examples": [
+    {
+      "file": {
+        "path": "examples/title-card.md",
+        "sha256": "a0a526113bae9d302c522c2aadf7b05aba3353d23cdd605b14a1814d7e25590a",
+        "bytes": 731
+      },
+      "license": "LICENSE.txt"
+    }
+  ]
+}

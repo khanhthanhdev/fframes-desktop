@@ -398,6 +398,7 @@ impl StudioShell {
             PresetEvent::Run(command) => self.run_preset(command, cx),
             PresetEvent::Pick(PresetPick::ImportFolder) => self.pick(Picker::PresetImport, cx),
             PresetEvent::Pick(PresetPick::ImportCss) => self.pick(Picker::PresetCss, cx),
+            PresetEvent::Pick(PresetPick::Source) => self.pick(Picker::PresetSource, cx),
             PresetEvent::Pick(PresetPick::Export { key }) => {
                 self.pick(Picker::PresetExport(key), cx)
             }
@@ -741,8 +742,12 @@ impl StudioShell {
             };
             let picker = cx.prompt_for_new_path(
                 &home,
-                Some(match kind {
-                    Picker::Create(studio_project::ProjectTemplate::SlideDeck) => "New slide deck",
+                Some(match &kind {
+                    Picker::Create(choice)
+                        if choice.template == studio_project::ProjectTemplate::SlideDeck =>
+                    {
+                        "New slide deck"
+                    }
                     Picker::Create(_) => "New video",
                     Picker::PresetExport(_) => "Exported preset",
                     Picker::Export => export_file_name,
@@ -769,8 +774,8 @@ impl StudioShell {
                         Ok(Ok(Some(path))) => {
                             if let Picker::PresetExport(key) = kind {
                                 shell.run_preset(PresetCommand::Export { key, dest: path }, cx);
-                            } else if let Picker::Create(template) = kind {
-                                shell.dispatch(Command::Create(path, template), cx);
+                            } else if let Picker::Create(choice) = kind {
+                                shell.dispatch(Command::Create(path, choice), cx);
                             } else if matches!(kind, Picker::Export) {
                                 shell.start_export(path, deck, cx);
                             } else if let Some(accepted) = accepted {
@@ -792,11 +797,18 @@ impl StudioShell {
                 Picker::Locate(_) => "Locate",
                 Picker::PresetImport => "Import preset folder",
                 Picker::PresetCss => "CSS report",
+                Picker::PresetSource => "Make a preset from",
                 _ => "Open",
             };
             let picker = cx.prompt_for_paths(gpui::PathPromptOptions {
-                files: matches!(kind, Picker::Asset | Picker::Import | Picker::PresetCss),
-                directories: !matches!(kind, Picker::Asset | Picker::Import | Picker::PresetCss),
+                files: matches!(
+                    kind,
+                    Picker::Asset | Picker::Import | Picker::PresetCss | Picker::PresetSource
+                ),
+                directories: !matches!(
+                    kind,
+                    Picker::Asset | Picker::Import | Picker::PresetCss | Picker::PresetSource
+                ),
                 multiple: false,
                 prompt: Some(format!("{label}…").into()),
             });
@@ -823,6 +835,12 @@ impl StudioShell {
                                 }
                                 Picker::PresetCss => {
                                     return shell.run_preset(PresetCommand::ImportCss(path), cx);
+                                }
+                                Picker::PresetSource => {
+                                    return shell.run_preset(
+                                        PresetCommand::FromSource(path.to_string_lossy().into()),
+                                        cx,
+                                    );
                                 }
                                 _ => Command::Open(path),
                             };

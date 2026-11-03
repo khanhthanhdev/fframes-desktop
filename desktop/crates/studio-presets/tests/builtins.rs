@@ -16,17 +16,30 @@ fn token(p: &Package, name: &str) -> TokenValue {
 }
 
 #[test]
-fn exactly_three_validated_bundles_with_stable_ids() {
+fn ten_validated_bundles_with_stable_ids() {
     let ids: Vec<&str> = packages().iter().map(Package::id).collect();
-    assert_eq!(ids, ["editorial", "pulse", "quiet-motion"]);
+    assert_eq!(
+        ids,
+        [
+            "editorial",
+            "pulse",
+            "quiet-motion",
+            "sunset",
+            "swiss",
+            "terminal",
+            "launch",
+            "promo",
+            "luxe",
+            "fresh"
+        ]
+    );
     assert_eq!(ids, builtin::IDS);
-    assert_eq!(packages().len(), 3);
     for id in ids {
         assert_eq!(builtin::get(id).unwrap().id(), id);
     }
     assert!(builtin::get("nope").is_none());
     let hashes: BTreeSet<&str> = packages().iter().map(Package::hash).collect();
-    assert_eq!(hashes.len(), 3);
+    assert_eq!(hashes.len(), 10);
 }
 
 #[test]
@@ -57,7 +70,7 @@ fn bundles_share_one_semantic_vocabulary_but_differ_in_typography_layout_and_mot
         "typography.body",
         "typography.caption",
     ] {
-        assert_eq!(distinct(t), 3, "{t}");
+        assert_eq!(distinct(t), packages().len(), "{t}");
     }
     // layout
     for t in [
@@ -68,7 +81,7 @@ fn bundles_share_one_semantic_vocabulary_but_differ_in_typography_layout_and_mot
         "stroke.regular",
         "shadow.card",
     ] {
-        assert_eq!(distinct(t), 3, "{t}");
+        assert_eq!(distinct(t), packages().len(), "{t}");
     }
     // motion
     for t in [
@@ -78,10 +91,10 @@ fn bundles_share_one_semantic_vocabulary_but_differ_in_typography_layout_and_mot
         "motion.easing.enter",
         "motion.stagger.tight",
     ] {
-        assert_eq!(distinct(t), 3, "{t}");
+        assert_eq!(distinct(t), packages().len(), "{t}");
     }
     for t in ["color.background", "color.accent"] {
-        assert_eq!(distinct(t), 3, "{t}");
+        assert_eq!(distinct(t), packages().len(), "{t}");
     }
     // Pulse is the only spring-based preset.
     let springs: Vec<&str> = packages()

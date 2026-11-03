@@ -18,6 +18,7 @@ pub mod export_options;
 pub mod export_source;
 pub mod journal;
 pub mod playback_clock;
+pub mod preset_source;
 pub mod preset_state;
 pub mod presets;
 pub mod preview_state;

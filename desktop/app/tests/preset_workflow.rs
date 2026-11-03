@@ -227,7 +227,7 @@ fn selection_lists_bundled_and_imported_presets_and_applies_the_chosen_one() {
             .iter()
             .map(|e| e.id.as_str())
             .collect::<Vec<_>>(),
-        ["editorial", "pulse", "quiet-motion"]
+        studio_presets::builtin::IDS
     );
     assert!(view.entries.iter().all(|e| e.bundled && !e.applied));
     assert!(view.applied.is_none());
@@ -558,4 +558,42 @@ fn panel_colors_never_come_from_preset_data() {
     assert!(!production.contains("runtime_tokens"));
     assert!(!production.contains("TokenValue"));
     assert!(!production.contains("Color::"));
+}
+
+#[test]
+fn a_preset_made_from_a_brand_file_is_stored_listed_and_applies() {
+    let mut w = world();
+    let guide = w.temp.path().join("acme-brand.md");
+    fs::write(
+        &guide,
+        "Primary: #FF5A1F\nBackground: #0B132B\nText color: #F4F4F9\nTypeface: Poppins\n",
+    )
+    .unwrap();
+    let report = w.run(PresetCommand::FromSource(guide.display().to_string()));
+    let Outcome::Done(text) = &report.outcome else {
+        panic!("{:?}", report.outcome)
+    };
+    assert!(report.catalog_changed);
+    assert!(text.contains("Poppins"), "{text}");
+    let key = w.key("brand-acme-brand");
+    // Stored in the app's preset store, so the next start lists it too.
+    assert!(
+        Catalog::load(&w.paths)
+            .entries(None)
+            .iter()
+            .any(|e| e.key == key && !e.bundled)
+    );
+    let report = w.run(PresetCommand::Apply { key });
+    assert!(report.committed(), "{:?}", report.outcome);
+    let tokens = String::from_utf8(w.read("style/tokens.json")).unwrap();
+    for color in ["#0B132B", "#F4F4F9", "#FF5A1F"] {
+        assert!(tokens.contains(color), "{color} in {tokens}");
+    }
+    // Material without colors is refused and adds nothing.
+    let empty = w.temp.path().join("notes.txt");
+    fs::write(&empty, "Nothing to see.").unwrap();
+    let before = w.view().entries.len();
+    let report = w.run(PresetCommand::FromSource(empty.display().to_string()));
+    assert!(report.refused());
+    assert_eq!(w.view().entries.len(), before);
 }

@@ -262,6 +262,7 @@ fn entry(key: &str, name: &str, description: &str, bundled: bool, applied: bool)
         bundled,
         applied,
         same_id_applied: applied,
+        swatch: [None; 3],
     }
 }
 

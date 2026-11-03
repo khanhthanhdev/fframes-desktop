@@ -298,7 +298,8 @@ impl StudioShell {
         value["export"]["panel_open"] = self.export_panel.open.into();
         value["create_template"] = self
             .create_choice
-            .map(|template| format!("{template:?}"))
+            .as_ref()
+            .map(|choice| format!("{:?}", choice.template))
             .into();
         value["export"]["support"] = self.export_panel.support.name().into();
         value["export"]["settings"] =

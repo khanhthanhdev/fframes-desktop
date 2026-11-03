@@ -64,8 +64,8 @@ use crate::{
 use left_column::SidebarTab;
 
 enum Picker {
-    /// The folder of a new project from the template.
-    Create(studio_project::ProjectTemplate),
+    /// The folder of a new project set up as chosen.
+    Create(studio_engine::engine::backend::NewProject),
     Restore,
     Open,
     Import,
@@ -75,6 +75,8 @@ enum Picker {
     Locate(ProjectId),
     PresetImport,
     PresetCss,
+    /// A file to make a preset from.
+    PresetSource,
     PresetExport(String),
     Export,
 }
@@ -231,7 +233,7 @@ pub struct StudioShell {
     /// The canvas message's toast at the foot of the stage; the player renders it.
     canvas_toast: std::cell::RefCell<player::CanvasToast>,
     /// The Create panel is open with this template chosen.
-    create_choice: Option<studio_project::ProjectTemplate>,
+    create_choice: Option<studio_engine::engine::backend::NewProject>,
     overflow_open: bool,
     /// Which menu `overflow_open` and `overflow_menu` belong to: the transport's or Export's.
     overflow_kind: overflow::OverflowMenu,

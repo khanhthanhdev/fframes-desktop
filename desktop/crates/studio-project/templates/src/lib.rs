@@ -1,17 +1,21 @@
 use fframes::{
-    Color, Duration, EditorObjectKey, Frame, Scene, Styles, StylesError, Svgr, Typography,
+    Color, Duration, EditorObjectKey, Frame, Scene, Styles, StylesError, Svgr, Typography, Video,
 };
 
 // How the scenes make the video: size, frame rate and the scene list.
 mod video;
 
-/// Design tokens every scene draws with, resolved once in [`StudioVideo::new`].
+/// Design tokens every scene draws with, resolved once in [`StudioVideo::new`] and
+/// scaled from the tokens' 1920x1080 design canvas to the video's frame.
 #[derive(Debug, Clone)]
 struct Look {
     background: Color,
     text: Color,
     title: Typography,
     margin: f32,
+    /// The video's frame, `Video::WIDTH` by `Video::HEIGHT`.
+    width: f32,
+    height: f32,
 }
 
 /// A title card. Studio's timeline finds it by `key` (its `editor_instance_key`), so keep
@@ -85,13 +89,15 @@ impl Scene for TitleScene {
             text,
             title,
             margin,
+            width,
+            height,
         } = &self.look;
         // studio-title-source-anchor
         fframes::svgr!(
             <g>
-                <rect width="1920" height="1080" fill={*background} />
+                <rect width={*width} height={*height} fill={*background} />
                 <g id={self.title_id.as_str()}>
-                    <text x={*margin} y="300" font-family={title.family.as_str()} font-size={title.size} font-weight={title.weight} fill={*text}>
+                    <text x={*margin} y={height * 0.28} font-family={title.family.as_str()} font-size={title.size} font-weight={title.weight} fill={*text}>
                         {self.headline}
                     </text>
                 </g>
@@ -109,11 +115,18 @@ impl StudioVideo {
     /// `render_frame` only reads the resolved values, so it never fails or parses.
     pub fn new() -> Result<Self, StylesError> {
         let styles = Styles::from_json_str(include_str!("../style/tokens.json"))?;
+        let (width, height) = (Self::WIDTH as f32, Self::HEIGHT as f32);
+        // Sizes in the tokens are for 1920x1080; fit them to a frame of another size or shape.
+        let scale = (width / 1920.0).min(height / 1080.0);
+        let mut title = styles.typography("typography.title")?.clone();
+        title.size *= scale;
         let look = Look {
             background: styles.color("color.background")?,
             text: styles.color("color.text")?,
-            title: styles.typography("typography.title")?.clone(),
-            margin: styles.dimension("spacing.margin")?,
+            title,
+            margin: styles.dimension("spacing.margin")? * scale,
+            width,
+            height,
         };
         Ok(Self {
             scenes: [

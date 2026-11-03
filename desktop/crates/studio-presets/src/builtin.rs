@@ -24,9 +24,41 @@ const PULSE: Bundle = bundle!("pulse":
 const QUIET_MOTION: Bundle = bundle!("quiet-motion":
     "preset.json", "tokens.json", "guide.md", "LICENSE.txt",
     "licenses/DMSans-OFL.txt", "fonts/DMSans-Regular.ttf", "examples/title-card.md");
+const SUNSET: Bundle = bundle!("sunset":
+    "preset.json", "tokens.json", "guide.md", "LICENSE.txt",
+    "licenses/DMSans-OFL.txt", "fonts/DMSans-Medium.ttf", "examples/title-card.md");
+const SWISS: Bundle = bundle!("swiss":
+    "preset.json", "tokens.json", "guide.md", "LICENSE.txt",
+    "licenses/DMSans-OFL.txt", "fonts/DMSans-Medium.ttf", "examples/title-card.md");
+const TERMINAL: Bundle = bundle!("terminal":
+    "preset.json", "tokens.json", "guide.md", "LICENSE.txt",
+    "licenses/JetBrainsMono-OFL.txt", "fonts/JetBrainsMono-Regular.ttf", "examples/title-card.md");
+const LAUNCH: Bundle = bundle!("launch":
+    "preset.json", "tokens.json", "guide.md", "LICENSE.txt",
+    "licenses/Geist-OFL.txt", "fonts/Geist-SemiBold.ttf", "examples/title-card.md");
+const PROMO: Bundle = bundle!("promo":
+    "preset.json", "tokens.json", "guide.md", "LICENSE.txt",
+    "licenses/Geist-OFL.txt", "fonts/Geist-SemiBold.ttf", "examples/title-card.md");
+const LUXE: Bundle = bundle!("luxe":
+    "preset.json", "tokens.json", "guide.md", "LICENSE.txt",
+    "licenses/DMSans-OFL.txt", "fonts/DMSans-Regular.ttf", "examples/title-card.md");
+const FRESH: Bundle = bundle!("fresh":
+    "preset.json", "tokens.json", "guide.md", "LICENSE.txt",
+    "licenses/Geist-OFL.txt", "fonts/Geist-Medium.ttf", "examples/title-card.md");
 
 /// Ids of the bundled presets, in registry order.
-pub const IDS: [&str; 3] = ["editorial", "pulse", "quiet-motion"];
+pub const IDS: [&str; 10] = [
+    "editorial",
+    "pulse",
+    "quiet-motion",
+    "sunset",
+    "swiss",
+    "terminal",
+    "launch",
+    "promo",
+    "luxe",
+    "fresh",
+];
 
 fn load(bundle: Bundle) -> Result<Package, PresetError> {
     let files: BTreeMap<ProjectPath, Vec<u8>> = bundle
@@ -46,10 +78,21 @@ pub fn packages() -> Result<&'static [Package], &'static PresetError> {
     static CACHE: OnceLock<Result<Vec<Package>, PresetError>> = OnceLock::new();
     CACHE
         .get_or_init(|| {
-            [EDITORIAL, PULSE, QUIET_MOTION]
-                .into_iter()
-                .map(load)
-                .collect()
+            [
+                EDITORIAL,
+                PULSE,
+                QUIET_MOTION,
+                SUNSET,
+                SWISS,
+                TERMINAL,
+                LAUNCH,
+                PROMO,
+                LUXE,
+                FRESH,
+            ]
+            .into_iter()
+            .map(load)
+            .collect()
         })
         .as_ref()
         .map(Vec::as_slice)

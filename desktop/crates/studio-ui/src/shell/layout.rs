@@ -410,8 +410,8 @@ impl Render for StudioShell {
                     // The setup and export replace the whole row: the setup's Agent step
                     // draws the same panel entity, which renders once per frame. They keep
                     // an inset; the workspace's panes run to the window's edges.
-                    .child(if let Some(template) = self.create_choice {
-                        inset(self.render_create(template, cx))
+                    .child(if let Some(choice) = &self.create_choice {
+                        inset(self.render_create(choice, cx))
                     } else if self.onboarding.is_some() {
                         inset(self.render_onboarding(cx))
                     } else if self.export_panel.open {

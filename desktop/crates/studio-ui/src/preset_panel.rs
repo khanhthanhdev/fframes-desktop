@@ -28,7 +28,11 @@ use crate::kit::{
 pub enum PresetPick {
     ImportFolder,
     ImportCss,
-    Export { key: String },
+    /// A file to make a preset from.
+    Source,
+    Export {
+        key: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -49,14 +53,16 @@ pub struct PresetPanel {
     css_open: bool,
     token: Entity<TextInputState>,
     value: Entity<TextInputState>,
+    /// The website a preset is made from.
+    source: Entity<TextInputState>,
     /// Refreshed at the top of every render.
     theme: Theme,
 }
 
-/// An override field: Return sets the override, Escape hands the keyboard back to the
-/// shell.
+/// A field: Return runs `confirm`, Escape hands the keyboard back to the shell.
 fn input(
     placeholder: &str,
+    confirm: fn(&mut PresetPanel, &mut Context<PresetPanel>),
     window: &mut Window,
     cx: &mut Context<PresetPanel>,
 ) -> Entity<TextInputState> {
@@ -66,11 +72,14 @@ fn input(
         input.set_placeholder(placeholder);
         input
     });
-    cx.subscribe(&input, |panel, _, event: &TextInputEvent, cx| match event {
-        TextInputEvent::Confirmed => panel.set_override(cx),
-        TextInputEvent::Cancelled => cx.emit(PresetEvent::Leave),
-        _ => (),
-    })
+    cx.subscribe(
+        &input,
+        move |panel, _, event: &TextInputEvent, cx| match event {
+            TextInputEvent::Confirmed => confirm(panel, cx),
+            TextInputEvent::Cancelled => cx.emit(PresetEvent::Leave),
+            _ => (),
+        },
+    )
     .detach();
     input
 }
@@ -83,8 +92,24 @@ impl PresetPanel {
             last: None,
             css: None,
             css_open: true,
-            token: input("Token, for example color.accent", window, cx),
-            value: input("Value, for example #ff5533 or 120", window, cx),
+            token: input(
+                "Token, for example color.accent",
+                Self::set_override,
+                window,
+                cx,
+            ),
+            value: input(
+                "Value, for example #ff5533 or 120",
+                Self::set_override,
+                window,
+                cx,
+            ),
+            source: input(
+                "Website, for example stripe.com",
+                Self::make_from_site,
+                window,
+                cx,
+            ),
             theme: Theme::for_window(window, cx),
         }
     }
@@ -162,6 +187,7 @@ impl PresetPanel {
         use gpui::Focusable;
         self.token.focus_handle(cx).is_focused(window)
             || self.value.focus_handle(cx).is_focused(window)
+            || self.source.focus_handle(cx).is_focused(window)
     }
 
     // ---- building blocks ---------------------------------------------------------------
@@ -395,6 +421,54 @@ impl PresetPanel {
             .children(skipped)
     }
 
+    /// Makes a preset from the website in the field.
+    fn make_from_site(&mut self, cx: &mut Context<Self>) {
+        let site = self.source.read(cx).text().trim().to_owned();
+        if !site.is_empty() {
+            self.run(PresetCommand::FromSource(site), cx);
+        }
+    }
+
+    /// A preset from a website or a file: its colors and corners on a bundled preset's
+    /// type, spacing and motion, added to the list.
+    fn source_section(&self, cx: &mut Context<Self>) -> PanelSection {
+        let theme = self.theme;
+        let site = self.field("preset-source", self.source.clone(), cx);
+        PanelSection::new(&theme, "Make a preset")
+            .description(
+                "From a website, a brand guide (Markdown, text, design tokens, SVG, CSS) or an \
+                 image such as a logo or screenshot.",
+            )
+            .child(FormField::stacked(&theme, "Website", site))
+            .child(
+                Self::button_row()
+                    .child(
+                        self.action_button(
+                            "preset-from-site",
+                            "Make from website",
+                            true,
+                            Emphasis::Neutral,
+                            Some(Icon::Globe),
+                            cx,
+                            |this, cx| this.make_from_site(cx),
+                        )
+                        .size(ButtonSize::Sm),
+                    )
+                    .child(
+                        self.action_button(
+                            "preset-from-file",
+                            "From a file…",
+                            true,
+                            Emphasis::Neutral,
+                            Some(Icon::FileImage),
+                            cx,
+                            |_, cx| cx.emit(PresetEvent::Pick(PresetPick::Source)),
+                        )
+                        .size(ButtonSize::Sm),
+                    ),
+            )
+    }
+
     /// Project overrides: the user's layer, kept across Reapply and reopen.
     fn overrides_section(
         &self,
@@ -587,6 +661,7 @@ impl Render for PresetPanel {
         );
         let mut root = root
             .child(self.presets_section(&view, enabled, cx))
+            .child(self.source_section(cx))
             .child(files)
             .child(self.overrides_section(&view, enabled, cx));
         if let Some(last) = &self.last {
@@ -663,6 +738,7 @@ mod keyboard {
                 bundled: true,
                 applied: false,
                 same_id_applied: false,
+                swatch: [None; 3],
             }],
             skipped: Vec::new(),
             applied: None,

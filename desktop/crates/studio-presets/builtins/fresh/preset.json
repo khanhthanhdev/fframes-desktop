@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "token_schema": 1,
+  "id": "fresh",
+  "name": "Fresh",
+  "version": "1.0.0",
+  "description": "Lifestyle and wellness look: mint background, deep green type, coral accents, pill shapes and gentle, lively motion.",
+  "author": "fframes contributors",
+  "design": {
+    "width": 1920,
+    "height": 1080,
+    "base_font_px": 16.0
+  },
+  "tokens": {
+    "path": "tokens.json",
+    "sha256": "b82baa6ef534fddc8beaca7167e29e009f6d51f5b4aa4ae5e75bf7239274af6e",
+    "bytes": 4277
+  },
+  "guide": {
+    "path": "guide.md",
+    "sha256": "fc92c75fdf76893565210a8357fe13c85118e861e13aa0f60a2cb35f348f3b21",
+    "bytes": 1198
+  },
+  "license": "LICENSE.txt",
+  "licenses": [
+    {
+      "spdx": "MIT",
+      "file": {
+        "path": "LICENSE.txt",
+        "sha256": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "bytes": 1079
+      }
+    },
+    {
+      "spdx": "OFL-1.1",
+      "file": {
+        "path": "licenses/Geist-OFL.txt",
+        "sha256": "c683bfbcc7e087f5d37a54ef628f10387c451a83ddc459b151403a164ac46c90",
+        "bytes": 4383
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "family": "Geist",
+      "file": {
+        "path": "fonts/Geist-Medium.ttf",
+        "sha256": "4cc4316402cf88b65bb7a8cfef007388778371530f187e062f02dc922324dd70",
+        "bytes": 127660
+      },
+      "license": "licenses/Geist-OFL.txt"
+    }
+  ],
+  "assets": [],
+  "examples": [
+    {
+      "file": {
+        "path": "examples/title-card.md",
+        "sha256": "b7ed412acc455e788dbbc91f2171dfa3a6c8dec83cd5c620517c4207b3100656",
+        "bytes": 731
+      },
+      "license": "LICENSE.txt"
+    }
+  ]
+}

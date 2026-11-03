@@ -529,7 +529,17 @@ pub fn import_preset(
     paths: &crate::app_paths::AppPaths,
     source: &Path,
 ) -> Result<Package, PresetStateError> {
-    let package = Package::from_files(studio_presets::package::read_dir_files(source)?)?;
+    store_preset(
+        paths,
+        Package::from_files(studio_presets::package::read_dir_files(source)?)?,
+    )
+}
+
+/// Publishes a verified `package` in the app's preset store, unless it is already there.
+pub fn store_preset(
+    paths: &crate::app_paths::AppPaths,
+    package: Package,
+) -> Result<Package, PresetStateError> {
     let dest = paths
         .presets()
         .join(format!("{}-{}", package.id(), &package.hash()[..12]));

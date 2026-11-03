@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "token_schema": 1,
+  "id": "promo",
+  "name": "Promo",
+  "version": "1.0.0",
+  "description": "Sale and promo look: loud yellow, hard black type, red price tags, chunky strokes and punchy spring motion.",
+  "author": "fframes contributors",
+  "design": {
+    "width": 1920,
+    "height": 1080,
+    "base_font_px": 16.0
+  },
+  "tokens": {
+    "path": "tokens.json",
+    "sha256": "2744633e5e8980fb2f673d19eedb72a0e79d8e2386f294c690464733dc3f1b3a",
+    "bytes": 4324
+  },
+  "guide": {
+    "path": "guide.md",
+    "sha256": "fabc9b53ae35584b2f90d588d125ded45e382565f619a5002615949713730784",
+    "bytes": 1267
+  },
+  "license": "LICENSE.txt",
+  "licenses": [
+    {
+      "spdx": "MIT",
+      "file": {
+        "path": "LICENSE.txt",
+        "sha256": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "bytes": 1079
+      }
+    },
+    {
+      "spdx": "OFL-1.1",
+      "file": {
+        "path": "licenses/Geist-OFL.txt",
+        "sha256": "c683bfbcc7e087f5d37a54ef628f10387c451a83ddc459b151403a164ac46c90",
+        "bytes": 4383
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "family": "Geist",
+      "file": {
+        "path": "fonts/Geist-SemiBold.ttf",
+        "sha256": "75b3483f0cb023a01c6ca667f8e3d61d7a7772e81ec38f0a52c2fd6752ac1b24",
+        "bytes": 127872
+      },
+      "license": "licenses/Geist-OFL.txt"
+    }
+  ],
+  "assets": [],
+  "examples": [
+    {
+      "file": {
+        "path": "examples/title-card.md",
+        "sha256": "4215da1a745ddb6e8b2a933ddb47561e51258e56937cf321d917bd2f8b313ce3",
+        "bytes": 731
+      },
+      "license": "LICENSE.txt"
+    }
+  ]
+}

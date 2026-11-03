@@ -69,6 +69,6 @@ Props panel through Deck::with_props; edited values live in props.json. Speaker
 notes and accepted stops live in slides.json; Slide::notes supplies proposed notes
 when scanning for suggestions. The template stops
 after each bullet (at the scene frame where reveal_times() says it is in, times
-30 fps, rounded up) and at "end" of every slide; update those frames when you
+the video's FPS, rounded up) and at "end" of every slide; update those frames when you
 change a slide's bullets, build or stagger. Code slides use JetBrains Mono:
 ship the font and its license in media/ before adding one. Images go in media/.

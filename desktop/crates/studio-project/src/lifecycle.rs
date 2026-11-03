@@ -6,7 +6,10 @@ use std::{
 
 use crate::{
     Manifest, ProjectError, ProjectPath, SourceInventory,
-    manifest::{CURRENT_INSTRUCTION_VERSION, CargoEntry, DisplayMetadata, SCHEMA_VERSION, SdkPin},
+    manifest::{
+        CURRENT_INSTRUCTION_VERSION, CargoEntry, DisplayMetadata, PresetReference, SCHEMA_VERSION,
+        SdkPin, VideoHints,
+    },
     paths::io_error,
 };
 
@@ -410,6 +413,71 @@ const SLIDES_FILES: [(&str, &[u8]); 7] = [
     ),
 ];
 
+/// How a new project is set up, besides its folder, name and SDK.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ProjectSetup {
+    pub template: ProjectTemplate,
+    /// The frame size and rate written into `src/video.rs` and `studio.json`'s hints. A
+    /// Slide deck draws on a 16:9 canvas, so its size must be 16:9.
+    pub format: VideoHints,
+    /// The style preset the project starts with, instead of the template's starter tokens.
+    pub style: Option<StarterStyle>,
+}
+
+/// A style preset's materialized project files (`style/*`, `media/preset-*`) and the
+/// reference `studio.json` keeps to it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StarterStyle {
+    pub reference: PresetReference,
+    pub files: Vec<(ProjectPath, Vec<u8>)>,
+}
+
+/// `source` (a template's `src/video.rs`) with `format`'s frame rate and size; the
+/// viewBox follows the size only when the scenes draw on the video's own frame.
+fn with_format(source: &[u8], format: &VideoHints, view_box: bool) -> Vec<u8> {
+    let mut text = String::from_utf8(source.to_vec()).expect("templates are UTF-8");
+    let mut set = |from: &str, to: String| {
+        assert!(text.contains(from), "template lacks `{from}`");
+        text = text.replacen(from, &to, 1);
+    };
+    set(
+        "const FPS: usize = 30;",
+        format!("const FPS: usize = {};", format.fps),
+    );
+    set(
+        "const WIDTH: usize = 1920;",
+        format!("const WIDTH: usize = {};", format.width),
+    );
+    set(
+        "const HEIGHT: usize = 1080;",
+        format!("const HEIGHT: usize = {};", format.height),
+    );
+    if view_box {
+        set(
+            r#"viewBox="0 0 1920 1080""#,
+            format!(r#"viewBox="0 0 {} {}""#, format.width, format.height),
+        );
+    }
+    text.into_bytes()
+}
+
+/// The Slide deck's `slides.json`, written for 30 fps, with its frame stops moved to `fps`
+/// (rounded up, as the template's stops are).
+fn slides_at_fps(source: &[u8], fps: u32) -> Vec<u8> {
+    if fps == 30 {
+        return source.to_vec();
+    }
+    let mut slides: serde_json::Value = serde_json::from_slice(source).expect("valid template");
+    for stop in slides["stops"].as_array_mut().expect("template stops") {
+        if let Some(frame) = stop["at"].as_u64() {
+            stop["at"] = (frame * u64::from(fps)).div_ceil(30).into();
+        }
+    }
+    let mut bytes = serde_json::to_vec_pretty(&slides).expect("serializes");
+    bytes.push(b'\n');
+    bytes
+}
+
 /// [`create`] from `template`.
 pub fn create_from_template(
     destination: &Path,
@@ -419,6 +487,42 @@ pub fn create_from_template(
     runtime_version: &str,
     template: ProjectTemplate,
 ) -> Result<OpenProject, ProjectError> {
+    create_with_setup(
+        destination,
+        name,
+        sdk,
+        fframes_version,
+        runtime_version,
+        &ProjectSetup {
+            template,
+            ..ProjectSetup::default()
+        },
+    )
+}
+
+/// [`create`] from `setup`'s template, at its format, with its style.
+pub fn create_with_setup(
+    destination: &Path,
+    name: &str,
+    sdk: SdkPin,
+    fframes_version: &str,
+    runtime_version: &str,
+    setup: &ProjectSetup,
+) -> Result<OpenProject, ProjectError> {
+    let ProjectSetup {
+        template,
+        format,
+        style,
+    } = setup;
+    let template = *template;
+    if template == ProjectTemplate::SlideDeck && format.width * 9 != format.height * 16 {
+        return Err(ProjectError::new(
+            destination,
+            "video_hints",
+            "a slide deck is drawn on a 16:9 canvas",
+            "Choose a 16:9 size for a slide deck",
+        ));
+    }
     let parent = destination
         .parent()
         .ok_or_else(|| io_error(destination, "missing parent"))?;
@@ -448,8 +552,8 @@ pub fn create_from_template(
             "media/OFL.txt".to_owned().try_into()?,
         ],
         generated_instruction_version: CURRENT_INSTRUCTION_VERSION,
-        video_hints: None,
-        preset: None,
+        video_hints: Some(format.clone()),
+        preset: style.as_ref().map(|style| style.reference.clone()),
     };
     manifest.validate()?;
     // Parse the assembled TOML before writing; versions cannot inject extra declarations.
@@ -506,7 +610,19 @@ pub fn create_from_template(
             .collect(),
     };
     for (path, bytes) in files {
-        atomic_write(&root.join(path), bytes)?;
+        let bytes = match path {
+            "src/video.rs" => with_format(bytes, format, template == ProjectTemplate::Blank),
+            "slides.json" => slides_at_fps(bytes, format.fps),
+            _ => bytes.to_vec(),
+        };
+        atomic_write(&root.join(path), &bytes)?;
+    }
+    // The preset's files replace the starter style/tokens.json.
+    for (path, bytes) in style.iter().flat_map(|style| &style.files) {
+        let path = root.join(path.as_str());
+        fs::create_dir_all(path.parent().expect("a project file has a parent"))
+            .map_err(|e| io_error(root, e))?;
+        atomic_write(&path, bytes)?;
     }
     atomic_write(
         &root.join("Cargo.toml"),

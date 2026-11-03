@@ -35,7 +35,7 @@ pub enum Page {
     Kit,
     /// The Slides tab in its three review states and the timeline's stop markers.
     Slides,
-    /// The Create panel's template choice: Blank (the default) and Slide deck chosen.
+    /// The Create panel: Blank (the default), Slide deck, and a vertical Sunset video chosen.
     Create,
     /// The phase 3 kit additions: ListRow, EmptyState, PanelSection, FormField, Divider,
     /// ResizeGrip, Progress, Spinner, Chip, Toast.
@@ -115,7 +115,7 @@ impl Page {
     pub fn states(self) -> &'static [&'static str] {
         match self {
             Page::Kit | Page::Slides | Page::Additions => &[""],
-            Page::Create => &["", "slide-deck"],
+            Page::Create => &["", "slide-deck", "styled"],
             Page::Export => &["settings", "running", "done", "failed"],
             // In nav order, then the Agent page's CLI agents tab, a search, and its MCP servers
             // and Tools tabs; the index is

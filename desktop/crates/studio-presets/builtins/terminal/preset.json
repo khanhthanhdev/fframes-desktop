@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "token_schema": 1,
+  "id": "terminal",
+  "name": "Terminal",
+  "version": "1.0.0",
+  "description": "Phosphor-green monospace on near-black, square corners, thin glowing rules and quick, linear motion.",
+  "author": "fframes contributors",
+  "design": {
+    "width": 1920,
+    "height": 1080,
+    "base_font_px": 16.0
+  },
+  "tokens": {
+    "path": "tokens.json",
+    "sha256": "ff18b5003964b0ab94d2916c6e032ed61983352ca67a86e5f3c59a842e4b6812",
+    "bytes": 4212
+  },
+  "guide": {
+    "path": "guide.md",
+    "sha256": "478c57c6fdb9bb2f1b47254d95eed8eeb12e68a560d4c08f447ea375f3b989ad",
+    "bytes": 1340
+  },
+  "license": "LICENSE.txt",
+  "licenses": [
+    {
+      "spdx": "MIT",
+      "file": {
+        "path": "LICENSE.txt",
+        "sha256": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "bytes": 1079
+      }
+    },
+    {
+      "spdx": "OFL-1.1",
+      "file": {
+        "path": "licenses/JetBrainsMono-OFL.txt",
+        "sha256": "a76abf002c49097d146e86740a3105a5d00450b1592e820a1109a8c5680cd697",
+        "bytes": 4399
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "family": "JetBrains Mono",
+      "file": {
+        "path": "fonts/JetBrainsMono-Regular.ttf",
+        "sha256": "4391a6a20152f6c1cd05524e81c594b1a556117e027332a1c7042e799b7777e8",
+        "bytes": 114320
+      },
+      "license": "licenses/JetBrainsMono-OFL.txt"
+    }
+  ],
+  "assets": [],
+  "examples": [
+    {
+      "file": {
+        "path": "examples/title-card.md",
+        "sha256": "8f424a76ae7ae1ed6cf740299a5ca37f4663f43de3939c6e12f91f41278e2d82",
+        "bytes": 734
+      },
+      "license": "LICENSE.txt"
+    }
+  ]
+}

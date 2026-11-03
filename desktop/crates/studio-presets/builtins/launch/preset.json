@@ -1,0 +1,65 @@
+{
+  "schema": 1,
+  "token_schema": 1,
+  "id": "launch",
+  "name": "Launch",
+  "version": "1.0.0",
+  "description": "Product-launch look: crisp white, electric indigo, confident semibold type, soft cards and smooth eased motion.",
+  "author": "fframes contributors",
+  "design": {
+    "width": 1920,
+    "height": 1080,
+    "base_font_px": 16.0
+  },
+  "tokens": {
+    "path": "tokens.json",
+    "sha256": "d86fb7acab11e9e31e520a9ae528e7b18faeefe74579b7b665cfd687eb896216",
+    "bytes": 4357
+  },
+  "guide": {
+    "path": "guide.md",
+    "sha256": "df55a1d3b606892fe9edc318897fd9a181547fe9679ca5b22e199236df53055f",
+    "bytes": 1322
+  },
+  "license": "LICENSE.txt",
+  "licenses": [
+    {
+      "spdx": "MIT",
+      "file": {
+        "path": "LICENSE.txt",
+        "sha256": "648577feb8515d23cb9c762aafcb295397bc2f3a88f0dc3358c9eafc64c48d33",
+        "bytes": 1079
+      }
+    },
+    {
+      "spdx": "OFL-1.1",
+      "file": {
+        "path": "licenses/Geist-OFL.txt",
+        "sha256": "c683bfbcc7e087f5d37a54ef628f10387c451a83ddc459b151403a164ac46c90",
+        "bytes": 4383
+      }
+    }
+  ],
+  "fonts": [
+    {
+      "family": "Geist",
+      "file": {
+        "path": "fonts/Geist-SemiBold.ttf",
+        "sha256": "75b3483f0cb023a01c6ca667f8e3d61d7a7772e81ec38f0a52c2fd6752ac1b24",
+        "bytes": 127872
+      },
+      "license": "licenses/Geist-OFL.txt"
+    }
+  ],
+  "assets": [],
+  "examples": [
+    {
+      "file": {
+        "path": "examples/title-card.md",
+        "sha256": "c4915b248468fc25329440f2bada5a886d050ba1de1f5b792c74e15cd9ecf838",
+        "bytes": 732
+      },
+      "license": "LICENSE.txt"
+    }
+  ]
+}

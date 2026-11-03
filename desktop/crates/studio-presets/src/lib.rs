@@ -5,10 +5,12 @@
 //! * [`package`]: preset directory packages (verify, import, export, canonical hash).
 //! * [`css_import`]: allowlisted CSS custom-property importer with a per-declaration report.
 //! * [`builtin`]: the bundled, read-only presets.
+//! * [`extract`]: a preset made from a website, a brand document or an image.
 //! * [`project`]: the project-local file set (`style/*`, preset media) the engine writes.
 
 pub mod builtin;
 pub mod css_import;
+pub mod extract;
 pub mod model;
 pub mod package;
 pub mod project;

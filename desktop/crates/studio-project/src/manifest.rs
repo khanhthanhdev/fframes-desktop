@@ -121,6 +121,17 @@ pub struct VideoHints {
     pub height: u32,
     pub fps: u32,
 }
+
+/// 1920x1080 at 30 fps, the frame the project templates are written for.
+impl Default for VideoHints {
+    fn default() -> Self {
+        Self {
+            width: 1920,
+            height: 1080,
+            fps: 30,
+        }
+    }
+}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PresetReference {

@@ -932,7 +932,17 @@ fn rename_noreplace(from: &Path, to: &Path) -> Result<(), PresetError> {
 /// Authoring helper: recompute every size/digest in `preset.json` from the files beside it.
 /// Run through `cargo run -p studio-presets --example seal -- <preset-dir>`.
 pub fn seal_dir(dir: &Path) -> Result<(), PresetError> {
-    let files = read_dir_files(dir)?;
+    let files = seal_files(read_dir_files(dir)?)?;
+    let manifest_path = ProjectPath::try_from(MANIFEST_FILE.to_owned()).expect("valid");
+    let target = dir.join(MANIFEST_FILE);
+    fs::write(&target, &files[&manifest_path]).map_err(|e| io_diag(Code::Io, &target, e))
+}
+
+/// `files` with every size and digest in their `preset.json` recomputed from the files
+/// beside it, as [`seal_dir`] does on disk.
+pub fn seal_files(
+    mut files: BTreeMap<ProjectPath, Vec<u8>>,
+) -> Result<BTreeMap<ProjectPath, Vec<u8>>, PresetError> {
     let manifest_path = ProjectPath::try_from(MANIFEST_FILE.to_owned()).expect("valid");
     let raw = files.get(&manifest_path).ok_or_else(|| {
         PresetError::one(
@@ -961,6 +971,6 @@ pub fn seal_dir(dir: &Path) -> Result<(), PresetError> {
     }
     let mut text = serde_json::to_string_pretty(&manifest).expect("manifest serializes");
     text.push('\n');
-    let target = dir.join(MANIFEST_FILE);
-    fs::write(&target, text).map_err(|e| io_diag(Code::Io, &target, e))
+    files.insert(manifest_path, text.into_bytes());
+    Ok(files)
 }

@@ -51,6 +51,8 @@ pub struct Presentation {
     pub sdk_update: Option<String>,
     /// Style-preset controls state of the open project (`None` when none is open).
     pub preset: Option<PresetView>,
+    /// The style presets a new project can start with, bundled first.
+    pub styles: Vec<crate::presets::EntryView>,
     /// The open project's timing document, its clips and what can be edited now.
     pub timeline: Option<crate::timing::TimelineSnapshot>,
     /// The open project's props document and what can be edited now.
@@ -84,10 +86,20 @@ pub struct AgentSdk {
     pub compatibility: CompatibilityManifest,
 }
 
+/// What a new project starts from, its frame and its style.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct NewProject {
+    pub template: studio_project::ProjectTemplate,
+    pub format: studio_project::manifest::VideoHints,
+    /// The catalog key of the style preset it starts with; `None` keeps the template's
+    /// starter tokens.
+    pub preset: Option<String>,
+}
+
 pub enum Command {
     Initialize,
-    /// A new project in the folder, from the template.
-    Create(PathBuf, studio_project::ProjectTemplate),
+    /// A new project in the folder, set up as chosen.
+    Create(PathBuf, NewProject),
     Open(PathBuf),
     Locate(PathBuf, ProjectId),
     Import(PathBuf),
@@ -176,23 +188,44 @@ impl Backend {
             .clone();
         match command {
             Command::Initialize => (),
-            Command::Create(path, template) => {
+            Command::Create(path, new) => {
                 let compatibility = self
                     .compatibility
                     .as_ref()
                     .ok_or_else(|| self.compatibility_error.clone())?;
-                template_supported(template, compatibility.kit_version.as_deref())?;
+                template_supported(new.template, compatibility.kit_version.as_deref())?;
+                let style = match &new.preset {
+                    None => None,
+                    Some(key) => {
+                        let package = self.catalog.find(key).ok_or(
+                            "The chosen style preset is no longer available; choose another style",
+                        )?;
+                        let style = studio_presets::materialize(package, &Default::default())
+                            .map_err(|e| e.to_string())?;
+                        Some(studio_project::StarterStyle {
+                            reference: studio_project::manifest::PresetReference {
+                                id: package.id().to_owned(),
+                                sha256: package.hash().to_owned(),
+                            },
+                            files: style.files,
+                        })
+                    }
+                };
                 let name = path
                     .file_name()
                     .and_then(|s| s.to_str())
                     .unwrap_or("New video");
-                studio_project::create_from_template(
+                studio_project::create_with_setup(
                     &path,
                     name,
                     sdk_pin(compatibility),
                     &compatibility.fframes_version,
                     &compatibility.runtime_version,
-                    template,
+                    &studio_project::ProjectSetup {
+                        template: new.template,
+                        format: new.format,
+                        style,
+                    },
                 )
                 .map_err(|e| e.to_string())?;
                 self.open(&path, &paths)?;
@@ -791,6 +824,7 @@ impl Backend {
             sdk: self.sdk.clone(),
             state: open.as_ref().map(|(_, state, ..)| state.clone()),
             preset: open.as_ref().map(|(_, _, _, preset, ..)| preset.clone()),
+            styles: self.catalog.entries(None),
             timeline: open.as_ref().map(|(.., timeline, _, _)| timeline.clone()),
             props: open.as_ref().map(|(.., props, _)| props.clone()),
             slides: open.as_ref().map(|(.., slides)| slides.clone()),

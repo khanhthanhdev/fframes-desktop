@@ -76,6 +76,7 @@ impl Catalog {
                 bundled,
                 applied: applied.is_some_and(|a| a.hash == p.hash()),
                 same_id_applied: applied.is_some_and(|a| a.id == p.id()),
+                swatch: swatch(p),
             })
             .collect()
     }
@@ -107,6 +108,17 @@ pub struct EntryView {
     pub applied: bool,
     /// The project applied a preset with this id (possibly another version).
     pub same_id_applied: bool,
+    /// The preset's `color.background`, `color.text` and `color.accent`, each when it
+    /// defines one, for a picture of it.
+    pub swatch: [Option<studio_presets::Color>; 3],
+}
+
+fn swatch(package: &Package) -> [Option<studio_presets::Color>; 3] {
+    let snapshot = package.snapshot(None, None);
+    ["color.background", "color.text", "color.accent"].map(|name| match snapshot.get(name) {
+        Some(studio_presets::TokenValue::Color(color)) => Some(*color),
+        _ => None,
+    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +191,10 @@ pub enum PresetCommand {
         dest: PathBuf,
     },
     ImportCss(PathBuf),
+    /// Make a preset from a website (an `http(s)://` address or a domain) or a file (a
+    /// page, style sheet, brand document, design tokens, SVG or image) and add it to the
+    /// catalog.
+    FromSource(String),
 }
 
 /// Why a command did not change the project.
@@ -472,6 +488,40 @@ pub fn execute(
                 Err(error) => refuse(Refusal::Invalid(format!("Export failed: {error}"))),
             },
         },
+        PresetCommand::FromSource(source) => {
+            let made = crate::preset_source::derive_from(&source).and_then(|derived| {
+                let stored = preset_state::store_preset(paths, derived.package.clone())
+                    .map_err(|e| e.to_string())?;
+                Ok((derived, stored))
+            });
+            match made {
+                Err(error) => refuse(Refusal::Invalid(format!("No preset made: {error}"))),
+                Ok((derived, package)) => {
+                    let fonts = if derived.fonts.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " It names {}, which are not bundled; the preset uses {}'s font.",
+                            derived.fonts.join(", "),
+                            derived.base
+                        )
+                    };
+                    let text = format!(
+                        "Made preset {}: background {}, text {}, accent {}, on {}.{fonts} Select it and Apply to use it.",
+                        package.manifest().name,
+                        derived.background.to_hex(),
+                        derived.text.to_hex(),
+                        derived.accent.to_hex(),
+                        derived.base,
+                    );
+                    catalog.adopt(package);
+                    PresetReport {
+                        catalog_changed: true,
+                        ..PresetReport::outcome(Outcome::Done(text))
+                    }
+                }
+            }
+        }
         PresetCommand::ImportCss(file) => {
             let design = controller
                 .lock()
