@@ -44,8 +44,10 @@ fn hello_world_frames_without_timing_are_unchanged() {
         );
         let differing = expected
             .as_raw()
-            .chunks_exact(4)
-            .zip(actual.pixels.chunks_exact(4))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .zip(actual.pixels.as_chunks::<4>().0)
             .filter(|(e, a)| {
                 e.iter()
                     .zip(*a)

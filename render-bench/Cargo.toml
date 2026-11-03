@@ -7,7 +7,7 @@ publish = false
 
 [dependencies]
 clap = { version = "4.3.4", features = ["derive"] }
-fframes = { workspace = true, features = ["compile-time-svgtree", "h264", "libav-agree-gpl"] }
+fframes = { workspace = true, features = ["compile-time-svgtree"] }
 fframes_skia_renderer = { workspace = true, features = ["vulkan"] }
 skia-safe = "0.153.3"
 svgr.workspace = true
@@ -26,6 +26,12 @@ pixel-example = { path = "../examples/pixel-memory" }
 podcast-example = { path = "../examples/podcast" }
 teej_podcast_example = { path = "../examples/teej-podcast" }
 tiktok-example = { path = "../examples/tiktok" }
+
+# libx264 for the static FFmpeg that is built on these targets. Windows links the prebuilt
+# FFmpeg of FFMPEG_DIR (see fframes-media/Cargo.toml), a GPL build that already has it;
+# requesting it there would build FFmpeg from source, which needs MSYS2.
+[target.'cfg(not(windows))'.dependencies]
+fframes = { workspace = true, features = ["h264", "libav-agree-gpl"] }
 
 [lints]
 workspace = true

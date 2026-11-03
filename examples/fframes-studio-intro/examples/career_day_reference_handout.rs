@@ -55,8 +55,11 @@ fn main() -> std::process::ExitCode {
     let assets = dir.process_media_source().expect("media");
     let media = CombinedMediaProvider::from([&fonts as &dyn MediaProvider, &assets]);
     let surface = fframes_skia_renderer::SkiaCpuCtx::new(Handout::WIDTH, Handout::HEIGHT);
-    let backend = fframes_skia_renderer::SkiaFFramesRenderer::new_cpu(&surface, Default::default())
-        .expect("print renderer");
+    let backend = fframes_skia_renderer::SkiaFFramesRenderer::new_cpu(
+        &surface,
+        fframes_skia_renderer::SkiaPipelineConfig::default(),
+    )
+    .expect("print renderer");
     fframes::cli::new(
         &Handout,
         RenderOptions {
