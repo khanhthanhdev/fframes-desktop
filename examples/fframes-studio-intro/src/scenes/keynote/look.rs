@@ -236,6 +236,7 @@ pub fn clip(
         start_from,
         looping: true,
         editor_fallback_image: ctx.get_image(poster),
+        ..Default::default()
     };
     let Some(image) = frame
         .get_synced_video_frame(ctx, name, &input)
