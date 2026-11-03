@@ -33,3 +33,5 @@ ede = "ede"
 flate = "flate"
 threed = "threed"
 convnet = "convnet"
+# Prefix of the Consolas font family in the preset font matcher
+consol = "consol"
