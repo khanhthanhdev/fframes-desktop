@@ -13,3 +13,11 @@
 #   counted, so named painter sizes stay; px( literals in code are counted.
 # - agent/syntax/ may use the theme's `syntax` colour set (phase 1); those role names match no
 #   pattern here.
+
+create_panel.rs gpui::black() 1
+create_panel.rs gpui::white() 1
+create_panel.rs opacity(<literal> 1
+create_panel.rs px(<digit> 9
+create_panel.rs rgb( 2
+create_panel.rs rgba( 1
+create_panel.rs rounded(px( 3
