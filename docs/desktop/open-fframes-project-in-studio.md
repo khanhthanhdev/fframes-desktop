@@ -68,7 +68,7 @@ Note which framework versions the SDK ships. They are in
 
 ```json
 "sdk_id": "studio-sdk-x86_64-pc-windows-msvc-v4",
-"fframes_version": "1.3.0",
+"fframes_version": "1.4.1",
 "runtime_version": "0.2.0",
 ```
 
@@ -111,7 +111,7 @@ default-run = "my-video"      # needed once there are two binaries (main + studi
 [workspace]                   # this folder is the workspace root
 
 [dependencies]
-fframes = { version = "=1.3.0", features = ["cli", "compile-time-svgtree"] }
+fframes = { version = "=1.4.1", features = ["cli", "compile-time-svgtree"] }
 fframes-studio-runtime = "=0.2.0"
 fframes-studio-protocol = "=0.2.0"
 ```
@@ -307,7 +307,7 @@ There is no renderer setting in the UI yet. For testing, start Studio with
 
 ## Building outside Studio
 
-`fframes 1.3.0` and the `fframes-studio-*` crates ship inside the SDK and are not published
+`fframes 1.4.1` and the `fframes-studio-*` crates ship inside the SDK and are not published
 on crates.io (the newest published `fframes` is `1.2.1-rc.45`). A plain `cargo build` in the
 project therefore fails with "failed to select a version". To check the project from a
 terminal, point Cargo at the SDK's framework on the command line instead of in the project.

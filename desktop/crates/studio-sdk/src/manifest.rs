@@ -337,7 +337,7 @@ mod tests {
         assert!(!json.contains("preview_contract"));
         assert_eq!(
             manifest.digest(),
-            "c54573a5a322642969a34277dc11b61932e24d392eb025642eb6177d0e428354"
+            "3c80a0f2d43cec6a3239a14520251159bed81d4bddb548548baf44d9db95ddff"
         );
     }
 

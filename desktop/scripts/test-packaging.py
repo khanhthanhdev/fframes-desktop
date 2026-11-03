@@ -59,7 +59,7 @@ ffmpeg-sys-fframes = "9.0.0"
         raw = json.loads((assembly.ROOT / "desktop/packaging/sdk/phase-zero-sdk.json").read_text())
         self.assertNotIn("preview_contract_versions", raw)
         canonical = json.dumps(raw, separators=(",", ":"))
-        self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "c54573a5a322642969a34277dc11b61932e24d392eb025642eb6177d0e428354")
+        self.assertEqual(__import__("hashlib").sha256(canonical.encode()).hexdigest(), "3c80a0f2d43cec6a3239a14520251159bed81d4bddb548548baf44d9db95ddff")
         fframes_version = tomllib.loads((assembly.ROOT / "fframes/Cargo.toml").read_text())["package"]["version"]
         cargo_fframes_version = tomllib.loads((assembly.ROOT / "cargo-fframes/Cargo.toml").read_text())["package"]["version"]
         self.assertEqual(raw["fframes_version"], fframes_version)
