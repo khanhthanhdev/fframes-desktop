@@ -29,6 +29,7 @@ pub mod sdk_setup;
 pub mod services;
 pub mod slides;
 pub mod state;
+pub mod storage;
 pub mod store;
 pub mod task_scope;
 pub mod timeline;

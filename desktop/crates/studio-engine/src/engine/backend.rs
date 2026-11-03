@@ -49,6 +49,8 @@ pub struct Presentation {
     pub sdk_upgrade: Option<SdkUpgrade>,
     /// See [`Backend::sdk_update`].
     pub sdk_update: Option<String>,
+    /// The folder of installed SDKs (`active` and `previous`).
+    pub sdk_home: Option<PathBuf>,
     /// Style-preset controls state of the open project (`None` when none is open).
     pub preset: Option<PresetView>,
     /// The style presets a new project can start with, bundled first.
@@ -119,6 +121,8 @@ pub enum Command {
     UpgradeProjectSdk,
     InstallSdk,
     ImportSdkBundle(PathBuf),
+    /// Removes the SDK the last install replaced, unless the open project builds with it.
+    RemoveRollbackSdk,
     Restore(PathBuf, studio_project::SourceRevision),
     Independent(PathBuf),
     /// A style-preset operation, fenced by the source revision the UI last showed.
@@ -485,6 +489,19 @@ impl Backend {
                 // An imported SDK may be the first manifest this host has.
                 self.refresh_compatibility();
             }
+            Command::RemoveRollbackSdk => {
+                let home = self.sdk_home.as_deref().ok_or("SDK home unavailable")?;
+                let previous = home.join("previous");
+                if self.controller.is_some()
+                    && self.project_sdk().as_deref() == Some(previous.as_path())
+                {
+                    return Err("The open project builds with the previous SDK; upgrade it to the active SDK first".into());
+                }
+                studio_sdk::install::SdkInstaller::new(home)
+                    .remove_previous()
+                    .map_err(|e| format!("Cannot remove the previous SDK: {e}"))?;
+                self.check_sdk();
+            }
             Command::Restore(path, revision) => self
                 .current()?
                 .lock()
@@ -833,6 +850,7 @@ impl Backend {
             agent_sdk: self.agent_sdk.clone(),
             sdk_upgrade: self.sdk_upgrade.clone(),
             sdk_update: self.sdk_update.clone(),
+            sdk_home: self.sdk_home.clone(),
         })
     }
 }

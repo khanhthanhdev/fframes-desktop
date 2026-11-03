@@ -19,6 +19,7 @@ mod sections;
 mod settings;
 mod settings_dialog;
 mod status_strip;
+mod storage;
 mod timeline_edits;
 mod transport;
 
@@ -222,6 +223,10 @@ pub struct StudioShell {
     /// Whether this launch already installed (or tried to install) a shipped SDK update
     /// by itself; a failed install is not retried until the next launch.
     sdk_auto_update_tried: bool,
+    /// What the SDK and its build caches use, for Settings → SDK.
+    storage: storage::StorageState,
+    /// Whether the unused build caches were removed since launch or the last SDK install.
+    storage_cleaned: bool,
     /// The last check for a newer Studio and its answer.
     update: settings::UpdateCheck,
     /// The "update available" notice was closed for this launch.
@@ -649,6 +654,8 @@ impl StudioShell {
             update_check_disabled: false,
             sdk_auto_update_disabled: false,
             sdk_auto_update_tried: false,
+            storage: storage::StorageState::NotMeasured,
+            storage_cleaned: false,
             update: settings::UpdateCheck::NotChecked,
             update_dismissed: false,
             relaunch_after_update: false,

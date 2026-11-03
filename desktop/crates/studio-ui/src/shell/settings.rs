@@ -166,7 +166,17 @@ impl SettingsPage {
                 "MCP",
                 "Status",
             ],
-            SettingsPage::Sdk => &["Managed SDK", "Install SDK", "Rust", "FFmpeg"],
+            SettingsPage::Sdk => &[
+                "Managed SDK",
+                "Install SDK",
+                "Rust",
+                "FFmpeg",
+                "Storage",
+                "Previous SDK",
+                "Build cache",
+                "Clean up",
+                "Disk space",
+            ],
             SettingsPage::Presets => &["Style presets", "Colors", "Fonts"],
             SettingsPage::Export => &["Export defaults", "Format", "Size", "Frame rate"],
             SettingsPage::Shortcuts => &["Keys", "Hotkeys", "Player", "Timeline", "Present"],
@@ -378,6 +388,8 @@ impl StudioShell {
         self.overflow_open = false;
         // The Export page shows them; a render cannot read the file.
         self.export_defaults();
+        // Settings → SDK shows what the SDK and its build caches use now.
+        self.measure_storage(cx);
         // The main window's next render builds the dialog: its search field needs the window.
         self.settings_open = true;
         cx.notify();
@@ -956,14 +968,18 @@ impl StudioShell {
                 .into_any_element(),
             SettingsPage::Appearance => self.render_appearance(cx),
             SettingsPage::Agent => self.render_agent(chrome.agent_tab, chrome.on_agent_tab, cx),
-            SettingsPage::Sdk => PanelSection::new(&theme, "Managed SDK")
-                .description(
-                    "Studio builds previews and exports with this SDK. Selecting an installed \
-                     one applies to the open project.",
+            SettingsPage::Sdk => settings_page()
+                .child(
+                    PanelSection::new(&theme, "Managed SDK")
+                        .description(
+                            "Studio builds previews and exports with this SDK. Selecting an \
+                             installed one applies to the open project.",
+                        )
+                        .children([setting_card(&theme)
+                            .child(self.sdk_controls(cx))
+                            .into_any_element()]),
                 )
-                .children([setting_card(&theme)
-                    .child(self.sdk_controls(cx))
-                    .into_any_element()])
+                .child(self.render_storage(cx))
                 .into_any_element(),
             SettingsPage::Presets => self.preset_panel.clone().into_any_element(),
             SettingsPage::Export => self.render_export_defaults(cx),
@@ -1085,7 +1101,30 @@ impl StudioShell {
         self.presentation.sdk = String::new();
         self.presentation.sdk_upgrade = None;
         self.update = UpdateCheck::NotChecked;
+        const GB: u64 = 1024 * 1024 * 1024;
+        self.storage = super::storage::StorageState::Measured {
+            usage: studio_engine::storage::StorageUsage {
+                sdk: 1460 * GB / 1024,
+                rollback_sdk: None,
+                build_cache: 2300 * GB / 1024,
+                unused: 0,
+            },
+            freed: None,
+        };
         match state {
+            // 30 the SDK page with a previous SDK and the caches of replaced SDKs.
+            30 => {
+                self.settings_page = SettingsPage::Sdk;
+                self.storage = super::storage::StorageState::Measured {
+                    usage: studio_engine::storage::StorageUsage {
+                        sdk: 1460 * GB / 1024,
+                        rollback_sdk: Some(1460 * GB / 1024),
+                        build_cache: 2300 * GB / 1024,
+                        unused: 16200 * GB / 1024,
+                    },
+                    freed: None,
+                };
+            }
             // 29 Help & About with a downloaded update waiting to install.
             29 => {
                 self.settings_page = SettingsPage::About;

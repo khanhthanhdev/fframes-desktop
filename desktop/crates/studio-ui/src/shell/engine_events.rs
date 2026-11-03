@@ -18,7 +18,7 @@ use studio_engine::services::preview_coordinator::{
     PreviewCoordinator, PreviewProps, PreviewTiming, SeekIntent,
 };
 
-use super::{Picker, StudioShell};
+use super::{Picker, StudioShell, storage};
 use crate::agent::Attachment;
 use crate::export::settings::{ExportTarget, deck_settings};
 use crate::preset_panel::{PresetEvent, PresetPick};
@@ -139,6 +139,12 @@ impl StudioShell {
         if matches!(command, Command::Close) {
             self.detach_preview(cx);
         }
+        match command {
+            // A new SDK leaves the caches of the one it replaces unused.
+            Command::InstallSdk | Command::ImportSdkBundle(_) => self.storage_cleaned = false,
+            Command::RemoveRollbackSdk => self.storage = storage::StorageState::NotMeasured,
+            _ => {}
+        }
         // A command that replaces the open project closes the project's agent workflow
         // first (cancelling its task and reaping its scopes), on the background thread and
         // before the controller it shares is closed.
@@ -192,6 +198,13 @@ impl StudioShell {
                 // Preview news held back while the command ran.
                 self.drain_preview(cx);
                 self.install_sdk_update(cx);
+                self.clean_storage_automatically(cx);
+                if self.settings_open
+                    && !self.busy
+                    && self.storage == storage::StorageState::NotMeasured
+                {
+                    self.measure_storage(cx);
+                }
             }
             EngineEvent::PreviewGated(gated) => {
                 self.preview_gated(*gated, cx);

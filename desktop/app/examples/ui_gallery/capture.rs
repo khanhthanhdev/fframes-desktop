@@ -151,6 +151,7 @@ impl Page {
                 "agent-cli-linked",
                 "sdk-upgrade",
                 "about-update-ready",
+                "sdk-storage",
             ],
             Page::Agent => &[
                 "empty",

@@ -755,7 +755,35 @@ impl SdkInstaller {
         self.recover_interrupted_rollback_locked()?;
         Ok(true)
     }
+
+    /// Removes the previous SDK (the one the last install replaced) to free its space.
+    /// It is first renamed to a [`REMOVED_SDK_PREFIX`] folder, so an interrupted removal
+    /// never leaves a partial `previous` that looks installed. Returns whether there was one.
+    pub fn remove_previous(&self) -> Result<bool, InstallError> {
+        let _lock = self.acquire_install_lock()?;
+        self.recover_interrupted_transactions_locked()?;
+        let previous = self.previous_sdk_dir();
+        if !previous.exists() {
+            return Ok(false);
+        }
+        let removed = self.sdk_home.join(format!(
+            "{REMOVED_SDK_PREFIX}{}.{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        fs::rename(&previous, &removed)?;
+        sync_directory(&self.sdk_home)?;
+        fs::remove_dir_all(&removed)?;
+        Ok(true)
+    }
 }
+
+/// Name prefix of a previous SDK being removed by [`SdkInstaller::remove_previous`]; a
+/// folder left with it by an interrupted removal is safe to delete.
+pub const REMOVED_SDK_PREFIX: &str = "previous.removed.";
 
 fn validate_artifact_set<P>(
     manifest: &CompatibilityManifest,
@@ -916,6 +944,24 @@ mod tests {
             fs::read_to_string(installer.previous_sdk_dir().join("generation.txt")).unwrap(),
             "second"
         );
+
+        // Removing the previous SDK keeps the active one and leaves nothing behind.
+        assert!(installer.remove_previous().unwrap());
+        assert!(!installer.previous_sdk_dir().exists());
+        assert_eq!(
+            fs::read_to_string(installer.active_sdk_dir().join("generation.txt")).unwrap(),
+            "first"
+        );
+        assert!(
+            fs::read_dir(tmp.path().join("sdk_home"))
+                .unwrap()
+                .flatten()
+                .all(|e| !e
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with(REMOVED_SDK_PREFIX))
+        );
+        assert!(!installer.remove_previous().unwrap());
     }
 
     #[test]
