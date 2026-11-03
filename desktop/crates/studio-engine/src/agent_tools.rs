@@ -1,7 +1,7 @@
-//! The nine project tools an agent may call, behind one typed dispatcher.
+//! The ten project tools an agent may call, behind one typed dispatcher.
 //!
 //! `project_context`, `timeline`, `render_frame`, `render_strip`, `inspect`,
-//! `build_status`, `selection_context`, `source_lookup` and `style_context` are the whole
+//! `build_status`, `selection_context`, `source_lookup`, `style_context` and `captions` are the whole
 //! surface: there is no shell, no filesystem write, no
 //! generalized filesystem access and no export tool. The app, the
 //! `studio-tools` CLI and the `studio-mcp` stdio server all reach the same
@@ -25,7 +25,7 @@ pub mod mcp;
 #[doc(hidden)]
 pub mod transport;
 
-pub const TOOL_NAMES: [&str; 9] = [
+pub const TOOL_NAMES: [&str; 10] = [
     "project_context",
     "timeline",
     "render_frame",
@@ -35,7 +35,11 @@ pub const TOOL_NAMES: [&str; 9] = [
     "selection_context",
     "source_lookup",
     "style_context",
+    "captions",
 ];
+/// Cues one `captions` call lists.
+pub const MAX_CAPTION_CUES: usize = 200;
+pub const DEFAULT_CAPTION_CUES: usize = 50;
 /// Queued tool calls (waiting for one of the tool workers) before `busy`.
 pub const MAX_QUEUED_CALLS: usize = 16;
 /// Concurrent tool executions; tool workers never use the displayed/thumbnail lanes.
@@ -223,6 +227,12 @@ pub enum ToolCall {
         identity: Option<fframes_studio_protocol::EditorObjectIdentity>,
         frame_geometry_digest: Option<String>,
     },
+    /// Every caption track under `media/`, or the cues of the track at `path`.
+    Captions {
+        path: Option<studio_project::ProjectPath>,
+        offset: usize,
+        limit: usize,
+    },
 }
 
 impl ToolCall {
@@ -237,6 +247,7 @@ impl ToolCall {
             Self::SelectionContext { .. } => "selection_context",
             Self::SourceLookup { .. } => "source_lookup",
             Self::StyleContext { .. } => "style_context",
+            Self::Captions { .. } => "captions",
         }
     }
 }
@@ -323,6 +334,16 @@ struct StyleParams {
     object_key: Option<String>,
     repeat_key: Option<String>,
     frame_geometry_digest: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct CaptionsParams {
+    project: Option<String>,
+    revision: Option<String>,
+    path: Option<String>,
+    offset: Option<u64>,
+    limit: Option<u64>,
 }
 
 pub const DEFAULT_RENDER_SCALE: f64 = 0.5;
@@ -681,6 +702,36 @@ impl ToolRequest {
                     },
                 )
             }
+            "captions" => {
+                let p: CaptionsParams = parsed(params)?;
+                let path = p
+                    .path
+                    .map(studio_project::ProjectPath::try_from)
+                    .transpose()
+                    .map_err(|error| ToolError::invalid(error.to_string()))?;
+                if path.is_none() && (p.offset.is_some() || p.limit.is_some()) {
+                    return Err(ToolError::invalid(
+                        "offset and limit page one track's cues: give `path`",
+                    ));
+                }
+                let limit = p.limit.unwrap_or(DEFAULT_CAPTION_CUES as u64);
+                if limit == 0 || limit as usize > MAX_CAPTION_CUES {
+                    return Err(ToolError::invalid(format!(
+                        "limit must be 1..={MAX_CAPTION_CUES}"
+                    )));
+                }
+                (
+                    Assertions {
+                        project: p.project,
+                        revision: p.revision,
+                    },
+                    ToolCall::Captions {
+                        path,
+                        offset: index(p.offset.unwrap_or(0), "offset")?,
+                        limit: limit as usize,
+                    },
+                )
+            }
             other => {
                 return Err(ToolError::new(
                     ToolErrorCode::MethodNotFound,
@@ -849,6 +900,7 @@ pub fn tool_descriptions() -> Vec<Value> {
         json!({"name": "selection_context", "description": "Read the validated semantic objects on an exact source-revision frame and optional frozen object key. Supply the displayed frame and seek serial; include frame_geometry_digest when validating a frozen selection. It does not infer source locations.", "inputSchema": with(json!({"frame": {"type": "integer", "minimum": 0}, "seek_serial": {"type": "integer", "minimum": 0}, "scene_instance_key": {"type": "string"}, "component_key": {"type": "string"}, "object_key": {"type": "string"}, "repeat_key": {"type": "string"}, "frame_geometry_digest": {"type": "string", "pattern": "^[a-f0-9]{64}$"}}), &["frame", "seek_serial"])}),
         json!({"name": "source_lookup", "description": "Provide exactly one query: either a project-relative path and symbol (optionally a marker), or a complete frame/seek/object identity tuple. The parser rejects mixed or incomplete forms. Reads hash-verified Rust syntax; no macro expansion, type resolution, code execution, or live filesystem access.", "inputSchema": source_lookup_schema}),
         json!({"name": "style_context", "description": "Read the active preset identity, typed token values and explicitly registered bindings for this immutable revision. Optionally filter by token, and optionally provide a complete frame/seek/object identity tuple; partial tuples are rejected.", "inputSchema": style_context_schema}),
+        json!({"name": "captions", "description": "Subtitle and caption tracks (WebVTT, or JSON with a top-level `cues` array) under media/, read with the parser the video's media loader uses. Without `path`: every track's status, the error with the failing field (`cues[3].words[1].end`) when invalid, cue/word counts, time span, speakers and `media_name` (the name Captions::from_media takes). With `path`: that track's cues from `offset` (at most `limit`, default 50): times in seconds, text, speaker, words with times, and metadata. Needs no build.", "inputSchema": with(json!({"path": {"type": "string", "description": "Project-relative path of one track, e.g. media/speech.json."}, "offset": {"type": "integer", "minimum": 0}, "limit": {"type": "integer", "minimum": 1, "maximum": MAX_CAPTION_CUES}}), &[])}),
     ]
 }
 

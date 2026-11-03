@@ -1043,6 +1043,26 @@ impl ToolBackend for ProjectToolBackend {
         if let ToolCall::ProjectContext = request.call {
             return Ok(self.project_context(&binding.task, &base, &opened, label));
         }
+        if let ToolCall::Captions {
+            path,
+            offset,
+            limit,
+        } = &request.call
+        {
+            let project = &opened.restored.project;
+            return Ok(ToolReply {
+                revision: self.info(&opened, label),
+                result: super::captions::captions(
+                    &project.root,
+                    &project.inventory.files,
+                    path.as_ref(),
+                    *offset,
+                    *limit,
+                    cancelled,
+                )?,
+                artifacts: vec![],
+            });
+        }
         if let ToolCall::SourceLookup {
             path,
             symbol,
@@ -1296,7 +1316,8 @@ impl ToolBackend for ProjectToolBackend {
             ToolCall::ProjectContext
             | ToolCall::BuildStatus
             | ToolCall::SourceLookup { .. }
-            | ToolCall::StyleContext { .. } => unreachable!("handled above"),
+            | ToolCall::StyleContext { .. }
+            | ToolCall::Captions { .. } => unreachable!("handled above"),
         }
     }
 }

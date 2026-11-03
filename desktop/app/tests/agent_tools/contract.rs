@@ -5,8 +5,8 @@ use super::*;
 #[test]
 fn all_unique_tools_are_listed_by_mcp_and_descriptions() {
     let names: HashSet<&str> = TOOL_NAMES.iter().copied().collect();
-    assert_eq!(TOOL_NAMES.len(), 9);
-    assert_eq!(names.len(), 9, "tool names must be unique");
+    assert_eq!(TOOL_NAMES.len(), 10);
+    assert_eq!(names.len(), 10, "tool names must be unique");
     let described: Vec<String> = tool_descriptions()
         .iter()
         .map(|tool| tool["name"].as_str().unwrap().to_string())
@@ -295,6 +295,36 @@ fn request_parsing_rejects_bad_shapes_and_accepts_documented_ones() {
         code("style_context", json!({"frame": 12, "seek_serial": 44})),
         ToolErrorCode::InvalidParams
     );
+    assert_eq!(
+        ok("captions", json!({})).call,
+        ToolCall::Captions {
+            path: None,
+            offset: 0,
+            limit: 50,
+        }
+    );
+    assert_eq!(
+        ok(
+            "captions",
+            json!({"path": "media/speech.json", "offset": 50, "limit": 200})
+        )
+        .call,
+        ToolCall::Captions {
+            path: Some(
+                studio_project::ProjectPath::try_from("media/speech.json".to_owned()).unwrap()
+            ),
+            offset: 50,
+            limit: 200,
+        }
+    );
+    for params in [
+        json!({"offset": 10}),
+        json!({"path": "media/speech.json", "limit": 0}),
+        json!({"path": "media/speech.json", "limit": 201}),
+        json!({"path": "../speech.json"}),
+    ] {
+        assert_eq!(code("captions", params), ToolErrorCode::InvalidParams);
+    }
 }
 
 #[test]

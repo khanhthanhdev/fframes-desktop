@@ -161,6 +161,7 @@ fn build_error(error: BuildError) -> ToolError {
 }
 
 mod artifacts;
+mod captions;
 mod project;
 mod writer_gate;
 

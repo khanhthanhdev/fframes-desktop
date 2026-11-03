@@ -86,6 +86,10 @@ pub(crate) fn tool_copy(tool: &str) -> (&'static str, &'static str) {
             "Style",
             "The active preset's design tokens and where they are used.",
         ),
+        "captions" => (
+            "Captions",
+            "Subtitle tracks in media: whether they load, and their cues and word timings.",
+        ),
         _ => ("Tool", ""),
     }
 }

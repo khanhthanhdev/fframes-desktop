@@ -427,7 +427,10 @@ fn mcp_flags_and_a_missing_broker() {
     mcp.send(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion": MCP_PROTOCOL_VERSION}}));
     assert!(mcp.recv().get("result").is_some());
     mcp.send(&json!({"jsonrpc":"2.0","id":2,"method":"tools/list"}));
-    assert_eq!(mcp.recv()["result"]["tools"].as_array().unwrap().len(), 9);
+    assert_eq!(
+        mcp.recv()["result"]["tools"].as_array().unwrap().len(),
+        TOOL_NAMES.len()
+    );
     mcp.send(&json!({"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"timeline"}}));
     let call = mcp.recv();
     assert_eq!(call["result"]["isError"], true);
