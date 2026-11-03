@@ -85,7 +85,7 @@ pub fn play<'a, 'media: 'a, TVideo: Video + Sync>(
         time_base,
         timeline,
         mut font_source,
-    } = FFramesRendererRuntime::with_audio_sample_rate(
+    } = FFramesRendererRuntime::with_timing_and_audio_sample_rate(
         TimeBase {
             fps: TVideo::FPS,
             sample_rate: 44100,
@@ -93,6 +93,7 @@ pub fn play<'a, 'media: 'a, TVideo: Video + Sync>(
         video,
         &scenes,
         options.media,
+        options.timing,
         audio_sample_rate,
     )?;
 
@@ -273,6 +274,7 @@ pub fn cli_preview<'a, 'media: 'a, TVideo: Video + Sync>(
             audio: request.audio,
             software_decode: request.software_decode,
             audio_mix: options.audio_mix,
+            timing: options.timing.as_ref(),
             ..Default::default()
         },
     )

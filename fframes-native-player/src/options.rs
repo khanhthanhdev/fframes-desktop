@@ -54,6 +54,9 @@ pub struct PlayerOptions<'a, 'media> {
     pub prefetch_frames: usize,
     /// Master bus of the audio mix, see `RenderOptions::audio_mix`.
     pub audio_mix: fframes::AudioMixOptions,
+    /// Scene layout from a timing document, see `RenderOptions::timing`. `None` plays the
+    /// scenes in code order.
+    pub timing: Option<&'a fframes::TimingDoc>,
 }
 
 impl Default for PlayerOptions<'_, '_> {
@@ -74,6 +77,7 @@ impl Default for PlayerOptions<'_, '_> {
             render_threads: None,
             prefetch_frames: usize::MAX,
             audio_mix: fframes::AudioMixOptions::default(),
+            timing: None,
         }
     }
 }

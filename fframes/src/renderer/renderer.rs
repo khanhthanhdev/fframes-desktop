@@ -136,7 +136,7 @@ impl<'a, 'media: 'a> FFramesRendererRuntime<'a> {
         media: Option<&'media dyn MediaProvider<'media>>,
         timing: Option<&crate::TimingDoc>,
     ) -> FFramesRendererResult<Self> {
-        Self::build(time_base, video, scenes, media, timing, || {
+        Self::with_timing_and_audio_sample_rate(time_base, video, scenes, media, timing, || {
             time_base.sample_rate
         })
     }
@@ -150,10 +150,18 @@ impl<'a, 'media: 'a> FFramesRendererRuntime<'a> {
         media: Option<&'media dyn MediaProvider<'media>>,
         audio_sample_rate: impl FnOnce() -> usize,
     ) -> FFramesRendererResult<Self> {
-        Self::build(time_base, video, scenes, media, None, audio_sample_rate)
+        Self::with_timing_and_audio_sample_rate(
+            time_base,
+            video,
+            scenes,
+            media,
+            None,
+            audio_sample_rate,
+        )
     }
 
-    fn build<TVideo: Video>(
+    /// [`Self::with_audio_sample_rate`] with the scenes laid out by a timing document.
+    pub fn with_timing_and_audio_sample_rate<TVideo: Video>(
         mut time_base: TimeBase,
         video: &'a TVideo,
         scenes: &Scenes<'a>,
@@ -208,16 +216,6 @@ impl<'a, 'media: 'a> FFramesRendererRuntime<'a> {
             media,
             timing,
         )
-    }
-
-    #[cfg(feature = "cli")]
-    pub(super) fn resolve_video_timeline<TVideo: Video>(
-        time_base: TimeBase,
-        video: &'a TVideo,
-        scenes: &Scenes<'a>,
-        media: Option<&'media dyn MediaProvider<'media>>,
-    ) -> FFramesRendererResult<ResolvedRenderingTimeline<'a, AudioTimelineSamples>> {
-        Self::resolve_timeline(time_base, video, scenes, media, None)
     }
 
     fn resolve_audio_timeline<TVideo: Video>(

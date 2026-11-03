@@ -667,11 +667,12 @@ fn preview<'a, 'media: 'a, V: Video>(
             fps: V::FPS,
             sample_rate: options.audio_encoder_options.sample_rate,
         };
-        let timeline = crate::FFramesRendererRuntime::resolve_video_timeline(
+        let timeline = crate::FFramesRendererRuntime::resolve_timeline(
             time_base,
             video,
             &video.define_scenes(),
             options.media,
+            options.timing.as_ref(),
         )
         .map_err(err)?;
         crate::TimelineIndex::new(
@@ -1971,6 +1972,45 @@ mod tests {
         let (_, code) = first_frame_red(Some(&timing), &temp.path().join("malformed"));
         assert_ne!(code, success);
         assert!(!temp.path().join("malformed/0.png").exists());
+    }
+
+    #[test]
+    fn preview_starts_and_plays_in_the_timing_file_order() {
+        let timing = std::env::temp_dir().join(format!(
+            "fframes-cli-preview-timing-{}.json",
+            uuid::Uuid::new_v4()
+        ));
+        std::fs::write(
+            &timing,
+            r#"{"version":1,"clips":[
+                {"key":"red","trim_start_frames":2,"trim_end_frames":0},
+                {"key":"blue","trim_start_frames":0,"trim_end_frames":0}]}"#,
+        )
+        .unwrap();
+        let video = TwoScenes([Fill("red", "#ff0000"), Fill("blue", "#0000ff")]);
+        let preview_end = |timing_file: Option<&Path>| {
+            let args = Cli::<NoArgs>::try_parse_from(["video", "preview", "100%"]).unwrap();
+            let mut runner = new(&video, RenderOptions::default());
+            if let Some(path) = timing_file {
+                runner = runner.timing_file(path);
+            }
+            let mut opened = None;
+            let code = runner
+                .args(args)
+                .preview(|_, options, request| {
+                    opened = Some((request.start_frame, options.timing.is_some()));
+                    Ok(())
+                })
+                .run();
+            assert_eq!(format!("{code:?}"), format!("{:?}", ExitCode::SUCCESS));
+            opened
+        };
+        let code_order = preview_end(None);
+        let timed = preview_end(Some(&timing));
+        std::fs::remove_file(&timing).unwrap();
+        // Two scenes of 5 frames; the timing file trims 2 frames off the first one.
+        assert_eq!(code_order, Some((9, false)));
+        assert_eq!(timed, Some((7, true)));
     }
 
     #[test]
