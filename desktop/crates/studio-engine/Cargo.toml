@@ -17,7 +17,7 @@ studio-sdk = { workspace = true }
 studio-bootstrap = { workspace = true }
 tempfile = { workspace = true }
 toml = "0.8"
-rusqlite = { version = "0.38", features = ["bundled", "backup"] }
+rusqlite = { version = "0.41", features = ["bundled", "backup"] }
 notify = "8"
 sha2 = { workspace = true }
 parking_lot = { workspace = true }
