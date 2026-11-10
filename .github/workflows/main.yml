@@ -143,6 +143,9 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y g++-16 llvm ninja-build libgl1 libgl1-mesa-dev libgles2-mesa-dev libssl-dev libfontconfig1-dev mesa-common-dev libwayland-dev yasm nasm ffmpeg libx264-dev libx265-dev libopus-dev libvpx-dev libasound2-dev
+          # The cached FFmpeg links the image's libx264 and libx265 by their soname version
+          # (x264_encoder_open_164), so a new runner image (ubuntu26) needs a new cache.
+          echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
 
       - name: Install Vulkan SDK
         uses: humbletim/setup-vulkan-sdk@v1.2.1
@@ -175,7 +178,7 @@ jobs:
           # A failed job left a near-empty target that later runs restored as an exact hit
           cache-on-failure: false
           # Discard FFmpeg libraries previously compiled for a runner's native CPU.
-          cache-key: "v4-portable-ffmpeg"
+          cache-key: "v4-portable-ffmpeg-${{ env.IMAGE_OS }}"
           # PR scoped caches are only visible to that PR and push main's cache out
           # of the 10GB quota, so only main saves. PRs restore main's cache.
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -230,13 +233,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y llvm yasm nasm libx264-dev libx265-dev libopus-dev libvpx-dev
+          # A new runner image needs a new FFmpeg cache, see build-rust.
+          echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
           cache: true
           # A failed job left a near-empty target that later runs restored as an exact hit
           cache-on-failure: false
-          cache-key: "v4-portable-ffmpeg-wasm"
+          cache-key: "v4-portable-ffmpeg-wasm-${{ env.IMAGE_OS }}"
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
           target: wasm32-unknown-unknown
 
@@ -405,10 +410,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y llvm nasm yasm libx264-dev libx265-dev libvpx-dev libopus-dev \
             libfontconfig1-dev libasound2-dev libwayland-dev mesa-vulkan-drivers libvulkan1
+          # A new runner image needs a new FFmpeg cache, see build-rust.
+          echo "IMAGE_OS=$ImageOS" >> "$GITHUB_ENV"
 
       - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          cache-key: "v1-e2e"
+          cache-key: "v1-e2e-${{ env.IMAGE_OS }}"
           cache-on-failure: false
           cache-save-if: ${{ github.ref == 'refs/heads/main' }}
 
