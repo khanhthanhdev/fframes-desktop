@@ -1,0 +1,27 @@
+FFmpeg in the fframes Studio managed SDK: license and source
+
+Windows (x86_64-pc-windows-msvc)
+  The SDK's ffmpeg folder holds the libavcodec, libavformat, libavutil, libswscale and
+  libswresample DLLs of an unmodified BtbN FFmpeg build:
+
+    ffmpeg-n9.0.2-22-g46d8f462ee-win64-gpl-shared-9.0
+    https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-10-07-13-07
+
+  It is configured with --enable-gpl --enable-version3 and links GPL libraries such as
+  x264 and x265, so these DLLs are licensed under the GNU General Public License,
+  version 3; its text is ffmpeg/LICENSE.txt in the SDK.
+
+  Corresponding source:
+    FFmpeg at n9.0.2-22-g46d8f462ee:
+      https://github.com/FFmpeg/FFmpeg/commit/46d8f462ee
+    The build scripts, which pin the source of every bundled library:
+      https://github.com/BtbN/FFmpeg-Builds/tree/autobuild-2026-10-07-13-07
+
+macOS and Linux
+  FFmpeg is compiled from the FFmpeg source by the ffmpeg-sys-fframes crate of fframes
+  (https://github.com/khanhthanhdev/fframes-desktop), with the codecs listed in the SDK's
+  compatibility.json. Builds that enable x264 or x265 are licensed under the GPL.
+
+To receive the complete corresponding source on a physical medium for three years from
+the date you received the SDK, open an issue at
+https://github.com/khanhthanhdev/fframes-desktop/issues.

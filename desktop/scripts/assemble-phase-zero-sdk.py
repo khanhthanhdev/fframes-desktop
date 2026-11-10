@@ -116,6 +116,10 @@ def copy_ffmpeg(prefix, destination, link_mode):
     Static builds need no `bin`, and nothing runs the ffmpeg, ffprobe or ffplay programs."""
     for subdir in ["include", "lib"]:
         shutil.copytree(prefix / subdir, destination / subdir, symlinks=False)
+    # A prebuilt FFmpeg's license (BtbN's Windows builds are GPLv3) goes with its DLLs;
+    # notices/ffmpeg-SOURCE.txt says where its source is.
+    if (prefix / "LICENSE.txt").is_file():
+        shutil.copy(prefix / "LICENSE.txt", destination / "LICENSE.txt")
     if link_mode == "shared":
         (destination / "bin").mkdir()
         for library in FFMPEG_LIBRARIES:
