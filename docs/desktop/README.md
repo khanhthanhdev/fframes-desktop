@@ -2,7 +2,9 @@
 
 fframes Studio is a native GPUI app in Rust where a person describes a video, watches it, selects a scene or visible object, and asks a coding agent to change it. The agent edits an ordinary fframes Rust project. The app owns project setup, style presets, agent connections, compilation, preview, validation, history and export. Rust source remains the authority for the video; templates are starting points.
 
-**Install the unsigned Windows preview** (per user, no administrator rights): `irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex`, Scoop, or the Setup.exe from the [latest release](https://github.com/khanhthanhdev/fframes-desktop/releases/latest). The script first offers to install the only thing Studio does not bring, Visual Studio Build Tools with C++ and clang (through winget; that installer asks for administrator rights; `-Prerequisites Install` or `Skip` to not be asked). Rust, FFmpeg and fframes come with the managed SDK. winget follows once `khanhthanhdev.fframesStudio` is accepted into the community repository. See [preview releases](phase-zero-feasibility.md#unsigned-preview-releases).
+**Install the unsigned Windows preview** (per user, no administrator rights): `irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex`, Scoop, or the Setup.exe from the [latest release](https://github.com/khanhthanhdev/fframes-desktop/releases/latest). The script first offers to install the only thing Studio does not bring, Visual Studio Build Tools with C++ and clang (through winget; that installer asks for administrator rights; `-Prerequisites Install` or `Skip` to not be asked). Rust, FFmpeg and fframes come with the managed SDK. winget follows once `khanhthanhdev.fframesStudio` is accepted into the community repository.
+
+**macOS (Apple silicon) and Linux (x86_64) previews**: `curl -fsSL https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.sh | sh` ([`install.sh`](../../desktop/packaging/unix/install.sh)). It checks the package against the release's `SHA256SUMS.txt` and installs `~/Applications/fframes Studio.app` or `~/.local/share/fframes-studio`, with an `fframes-studio` command in `~/.local/bin`; `sh -s -- --version v0.2.9 --no-launch` picks a release. The app is unsigned, but curl marks nothing as quarantined, so Gatekeeper does not stop it. `https://fframes-studio.pages.dev/install.sh` and `/install.ps1` redirect to the latest release's scripts ([`_redirects`](../../landing/studio/_redirects)). See [preview releases](phase-zero-feasibility.md#unsigned-preview-releases).
 
 Documents:
 
@@ -14,7 +16,7 @@ Documents:
 
 ## Setup
 
-Desktop releases build Windows only. For a preview release dry run, dispatch [Desktop Release](../../.github/workflows/desktop-release.yml) on the source branch with `preview_release=true`, `dry_run=true` and `consumer_release=false`. Set `tag` to `v` plus the app version. It prepares the ZIP, installer, checksums and install manifests as the `studio-preview-dry-run` artifact and publishes nothing. Consumer publishing retains its separate signing and eligibility gates.
+Desktop releases build Windows on the self-hosted runner and macOS (arm64) and Linux (x86_64) on hosted runners; a preview release needs all three. For a preview release dry run, dispatch [Desktop Release](../../.github/workflows/desktop-release.yml) on the source branch with `preview_release=true`, `dry_run=true` and `consumer_release=false`. Set `tag` to `v` plus the app version. It prepares the ZIP, installer, checksums and install manifests as the `studio-preview-dry-run` artifact and publishes nothing. Consumer publishing retains its separate signing and eligibility gates.
 
 Run Studio from a checkout:
 

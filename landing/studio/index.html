@@ -2607,7 +2607,7 @@ color: #cfe0ff;
       <section class="section install" id="install" data-scene="Install" aria-labelledby="install-title">
         <div class="container">
           <div class="section-head" data-reveal>
-            <p class="badge badge-quiet"><span class="dot" aria-hidden="true"></span>Windows preview</p>
+            <p class="badge badge-quiet"><span class="dot" aria-hidden="true"></span>Windows · macOS · Linux preview</p>
             <h2 id="install-title">Make your first move.</h2>
             <p>Install Studio, open an example, then make it yours.</p>
           </div>
@@ -2629,11 +2629,19 @@ color: #cfe0ff;
               >
             </div>
             <div class="glass card install-card" data-reveal style="--d: 1">
-              <h3>Or install with PowerShell</h3>
+              <h3>Or install from a terminal</h3>
               <p>One command, no administrator rights.</p>
+              <p class="small">macOS (Apple silicon) and Linux x64</p>
+              <div class="command" data-copy-box>
+                <code><span class="prompt" aria-hidden="true">$</span> curl -fsSL https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.sh | sh</code>
+                <button type="button" class="copy js-only" data-copy="curl -fsSL https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.sh | sh" aria-label="Copy the macOS and Linux install command">
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a1 1 0 0 1 1-1h10" /></svg>
+                </button>
+              </div>
+              <p class="small">Windows PowerShell</p>
               <div class="command" data-copy-box>
                 <code><span class="prompt" aria-hidden="true">PS&gt;</span> irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex</code>
-                <button type="button" class="copy js-only" data-copy="irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex" aria-label="Copy the install command">
+                <button type="button" class="copy js-only" data-copy="irm https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 | iex" aria-label="Copy the Windows install command">
                   <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2" /><path d="M5 15V5a1 1 0 0 1 1-1h10" /></svg>
                 </button>
               </div>
@@ -2645,8 +2653,8 @@ color: #cfe0ff;
             </div>
           </div>
           <p class="status-note" data-reveal>
-            Windows is the tested platform and the preview is unsigned. Linux
-            runs the tests in CI. macOS is not fully tested yet.
+            Windows is the tested platform. The macOS and Linux builds are
+            early previews, and no build is code-signed yet.
           </p>
         </div>
       </section>
@@ -2698,9 +2706,9 @@ color: #cfe0ff;
             <details>
               <summary>Which platforms are supported?</summary>
               <p>
-                Windows x64 is the tested platform, and the preview installer
-                is unsigned. Linux runs the test suite in CI. macOS is not fully
-                tested yet.
+                Windows x64 is the tested platform. macOS on Apple silicon and
+                Linux x64 have early preview builds, installed with
+                <code>install.sh</code>. No build is code-signed yet.
               </p>
             </details>
             <details>
@@ -2761,8 +2769,8 @@ color: #cfe0ff;
               your next idea.
             </p>
             <span class="badge badge-quiet"
-              ><span class="dot" aria-hidden="true"></span>Windows preview
-              available</span
+              ><span class="dot" aria-hidden="true"></span>Preview for Windows, macOS
+              and Linux</span
             >
           </div>
           <nav class="footer-column" aria-label="Product links">

@@ -153,7 +153,8 @@ ffmpeg-sys-fframes = "9.0.0"
             dist = Path(temporary)
             (dist / github_release.SETUP).write_bytes(b"MZ setup")
             (dist / github_release.WINDOWS_ZIP).write_bytes(b"PK windows")
-            (dist / "fframes-studio-x86_64-unknown-linux-gnu.deb").write_bytes(b"deb")
+            for name in github_release.UNIX_ZIPS:
+                (dist / name).write_bytes(b"PK " + name.encode())
             with self.assertRaisesRegex(ValueError, "does not match the app version"):
                 github_release.prepare("v99.0.0", dist)
             github_release.prepare(tag, dist, "someone/fork")
@@ -180,6 +181,10 @@ ffmpeg-sys-fframes = "9.0.0"
             self.assertIn(b'[string]$Repository = "someone/fork"', script)
             self.assertNotIn(github_release.DEFAULT_REPOSITORY.encode(), script)
             script.decode("ascii")
+            unix_script = (dist / "install.sh").read_bytes()
+            self.assertIn(b'REPOSITORY="someone/fork"', unix_script)
+            self.assertNotIn(github_release.DEFAULT_REPOSITORY.encode(), unix_script)
+            self.assertNotIn(b"\r", unix_script)
 
             sums = dict(reversed(line.split("  ", 1)) for line in (dist / "SHA256SUMS.txt").read_text().splitlines())
             published = sorted(path.name for path in dist.iterdir() if path.name not in {"SHA256SUMS.txt", "release-notes.md"})
@@ -188,6 +193,7 @@ ffmpeg-sys-fframes = "9.0.0"
                 self.assertEqual(github_release.sha256(dist / name), digest)
             notes = (dist / "release-notes.md").read_text()
             self.assertIn("irm https://github.com/someone/fork/releases/latest/download/install.ps1 | iex", notes)
+            self.assertIn("curl -fsSL https://github.com/someone/fork/releases/latest/download/install.sh | sh", notes)
             self.assertIn("not code-signed", notes)
             with self.assertRaisesRegex(ValueError, "already contains generated files"):
                 github_release.prepare(tag, dist, "someone/fork")

@@ -1,0 +1,5 @@
+# Short install commands, always the latest release:
+#   curl -fsSL https://fframes-studio.pages.dev/install.sh | sh
+#   irm https://fframes-studio.pages.dev/install.ps1 | iex
+/install.sh https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.sh 302
+/install.ps1 https://github.com/khanhthanhdev/fframes-desktop/releases/latest/download/install.ps1 302

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Add winget and Scoop manifests, install.ps1, checksums and notes to an unsigned preview release."""
+"""Add winget and Scoop manifests, install.ps1, install.sh, checksums and notes to an unsigned preview release."""
 import argparse
 import hashlib
 import json
@@ -10,11 +10,14 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[2]
 INSTALL_SCRIPT = ROOT / "desktop/packaging/windows/install.ps1"
+UNIX_INSTALL_SCRIPT = ROOT / "desktop/packaging/unix/install.sh"
 INNO_SCRIPT = ROOT / "desktop/packaging/windows/fframes-studio.iss"
 DEFAULT_REPOSITORY = "khanhthanhdev/fframes-desktop"
 WINDOWS_TARGET = "x86_64-pc-windows-msvc"
 SETUP = f"fframes-studio-{WINDOWS_TARGET}-setup.exe"
 WINDOWS_ZIP = f"fframes-studio-{WINDOWS_TARGET}.zip"
+# install.sh installs these.
+UNIX_ZIPS = ("fframes-studio-aarch64-apple-darwin.zip", "fframes-studio-x86_64-unknown-linux-gnu.zip")
 SCOOP_MANIFEST = "fframes-studio.json"
 WINGET_ID = "khanhthanhdev.fframesStudio"
 WINGET_MANIFEST_VERSION = "1.12.0"
@@ -162,6 +165,20 @@ def release_notes(tag, repository, packages, sums):
         "",
         "Uninstall from Settings > Apps (or `scoop uninstall fframes-studio`); projects, the managed SDK and app data are kept.",
         "",
+        "## Install on macOS (Apple silicon) and Linux (x86_64)",
+        "",
+        "Per user, no administrator rights. The script checks the download against `SHA256SUMS.txt`; "
+        "curl marks nothing as quarantined, so macOS Gatekeeper does not stop the unsigned app:",
+        "",
+        "```sh",
+        f"curl -fsSL {latest}/install.sh | sh",
+        "```",
+        "",
+        "It installs `~/Applications/fframes Studio.app` on macOS or `~/.local/share/fframes-studio` on Linux, "
+        "and an `fframes-studio` command in `~/.local/bin`. "
+        "Compiling projects also needs the Xcode Command Line Tools (`xcode-select --install`) on macOS, "
+        "or clang, cmake and pkg-config on Linux (`sudo apt install clang libclang-dev cmake pkg-config`).",
+        "",
         "## Downloads",
         "",
     ]
@@ -178,10 +195,10 @@ def prepare(tag, dist, repository=DEFAULT_REPOSITORY):
         raise ValueError(f"repository must be owner/name: {repository}")
     version = release_version(tag)
     dist = Path(dist)
-    for name in (SETUP, WINDOWS_ZIP):
+    for name in (SETUP, WINDOWS_ZIP, *UNIX_ZIPS):
         if not (dist / name).is_file():
             raise ValueError(f"release directory is missing {name}")
-    generated = [SCOOP_MANIFEST, "install.ps1", "SHA256SUMS.txt", "release-notes.md", *winget_manifests(version, repository, "", "")]
+    generated = [SCOOP_MANIFEST, "install.ps1", "install.sh", "SHA256SUMS.txt", "release-notes.md", *winget_manifests(version, repository, "", "")]
     existing = [name for name in generated if (dist / name).exists()]
     if existing:
         raise ValueError(f"release directory already contains generated files: {', '.join(existing)}")
@@ -201,6 +218,13 @@ def prepare(tag, dist, repository=DEFAULT_REPOSITORY):
         raise ValueError("install.ps1 has no default repository line")
     (dist / "install.ps1").write_text(
         script.replace(DEFAULT_REPOSITORY, repository), newline="\r\n", encoding="ascii"
+    )
+    unix_script = UNIX_INSTALL_SCRIPT.read_text()
+    unix_marker = f'REPOSITORY="{DEFAULT_REPOSITORY}"'
+    if unix_script.count(unix_marker) != 1:
+        raise ValueError("install.sh has no default repository line")
+    (dist / "install.sh").write_text(
+        unix_script.replace(DEFAULT_REPOSITORY, repository), newline="\n", encoding="ascii"
     )
 
     assets = sorted(path.name for path in dist.iterdir() if path.is_file() and path.name != "release-notes.md")
