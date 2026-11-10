@@ -790,6 +790,9 @@ fn native_defaults_detect_the_cli_without_node_or_an_acp_adapter() {
         assert_eq!(found.adapter.as_ref(), Some(&executable));
         assert!(scan.is_ready(id));
     }
-    assert!(scan.node.is_none());
+    // Detection always searches /opt/homebrew/bin and /usr/local/bin, where a CI Mac has Node.
+    if studio_harness::find_executable("node", &studio_harness::DetectionEnv::default()).is_none() {
+        assert!(scan.node.is_none());
+    }
     assert!(scan.installed.is_empty());
 }

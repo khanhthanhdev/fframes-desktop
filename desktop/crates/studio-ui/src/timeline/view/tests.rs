@@ -850,12 +850,13 @@ fn ctrl_z_undoes_a_marker_drag_before_the_trim_made_before_it(cx: &mut gpui::Tes
 
     // Ctrl+Z in the timeline: the marker returns, the trim stays.
     view.update_in(cx, |view, window, cx| view.focus(window, cx));
-    cx.simulate_keystrokes("ctrl-z");
+    // `secondary` is Ctrl, or Cmd on macOS, as in the keymap.
+    cx.simulate_keystrokes("secondary-z");
     cx.run_until_parked();
     assert_eq!(stop_of(&controller), (StopAt::Frame(10), 30));
     assert_eq!(trim_end(&controller), 10);
     // Again: the trim goes.
-    cx.simulate_keystrokes("ctrl-z");
+    cx.simulate_keystrokes("secondary-z");
     cx.run_until_parked();
     assert_eq!(trim_end(&controller), 0);
     assert_eq!(stop_of(&controller), (StopAt::Frame(10), 40));
